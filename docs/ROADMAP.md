@@ -16,8 +16,8 @@ No milestone is marked complete until its mandatory tests pass.
 | M7 — Self-contained release packages | Complete | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` passed on 2026-10-12; the archive manifest and all four images validated in an isolated daemon. |
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
-| M10 — Full automated release validation | Complete | `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13; report explicitly blocks release readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
+| M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
+| M11 — Version 1.0.0 release | Blocked | Actual Ubuntu VPS/provider firewall, public DNS/ACME, and native Windows client checks cannot be run in this environment. No stable release tag or publication has been made. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -249,14 +249,22 @@ merge commit `7470ef3`.
 
 ### M11 — Version 1.0.0 release
 
-- **Status:** Not Started
+- **Status:** Blocked pending production-host access
 - **Dependencies:** M10.
 - **Deliverables:** Validated promotion from `dev` to `main`, verified release
   commit and tag, official artifacts where permissions allow, install/update
   docs, and automated first-deployment checks.
 - **Tests:** All release gates and artifact verification.
 - **Gate:** No mandatory failures; no claim of VPS deployment without access.
-- **Completion evidence / open issues:** Pending.
+- **Completed preparation:** M10 local release validation passes. The installer
+  automatically waits for healthy WireGuard/Caddy/admin services and public
+  HTTPS; the isolated package gate exercises installation and rollback. The
+  first-deployment procedure is documented in `docs/DEPLOYMENT.md`.
+- **Blocker:** No operator-controlled Ubuntu 26.04 VPS/provider firewall,
+  public DNS/ACME environment, or native Windows WireGuard client is available
+  here. These required checks cannot be replaced with Docker simulation. The
+  development package is not a 1.0.0 release; no `v1.0.0` tag, `main`
+  promotion, or public artifact has been created.
 
 ## Change and test log
 
@@ -270,4 +278,5 @@ merge commit `7470ef3`.
 | 2026-10-12 | M5 WireGuard peer, shared network namespace, tunnel outage/recovery integration. | Commit `5e7fcb3`; [PR #5](https://github.com/Mytob/project_j/pull/5), merged as `19fa619` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M6 protected peer generation and authenticated Windows config download. | Commit `6451858`; [PR #6](https://github.com/Mytob/project_j/pull/6), merged as `f05fc7b` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M7 production container definitions and self-contained package builder. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` — PASS, exit 0; all four images loaded and verified offline in an isolated daemon. |
-| 2026-10-13 | M10 full local release validation runner and JSON blocker report. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev` — PASS, exit 0; local gates pass, production-host checks explicitly BLOCKED. |
+| 2026-10-13 | M10 full local release validation runner and JSON blocker report. | [PR #10](https://github.com/Mytob/project_j/pull/10), merged as `da9d281` | `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev` — PASS, exit 0; local gates pass, production-host checks explicitly BLOCKED. |
+| 2026-10-13 | M11 release-readiness audit. | Feature branch / PR pending | M10 local gates PASS; production VPS, public network, and native Windows release checks unavailable. No tag or release artifact published. |

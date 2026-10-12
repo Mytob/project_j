@@ -21,6 +21,12 @@ automated gate. The command writes a JSON report to
 and any host-specific blockers. A passing local gate is not a publish-ready
 release while production-host checks remain blocked.
 
+The current `1.0.0-dev` validation passed locally. Do not promote `dev` to
+`main`, create the `v1.0.0` tag, or publish the 1.0.0 artifacts until the
+Ubuntu VPS/kernel, provider firewall, public DNS/ACME, and native Windows
+WireGuard/Firewall checks recorded in the report have passed on their actual
+target hosts.
+
 ## Required release gates
 
 - All Go unit and integration tests pass.
