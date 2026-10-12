@@ -5,12 +5,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$projectName = "jellyfin-proxy-m5-$PID"
+$projectName = "jellyfin-proxy-m6-$PID"
 $composeFile = Join-Path $PSScriptRoot 'compose.yaml'
 $policyFile = Join-Path $PSScriptRoot 'whitelist.caddy.generated'
 $credentialFile = Join-Path $PSScriptRoot 'admin-credential.generated.json'
-$wireguardServerFile = Join-Path $PSScriptRoot 'wireguard-server.generated.conf'
-$wireguardPeerFile = Join-Path $PSScriptRoot 'wireguard-peer.generated.conf'
+$wireguardConfigDir = Join-Path $PSScriptRoot 'wireguard.generated'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $subnetOctet = 1 + ($PID % 250)
 $subnetPrefix = "172.29.$subnetOctet"
@@ -130,11 +129,11 @@ function Get-MockRequestCount {
 
 function New-WireGuardTestConfigs {
     if (Get-Command go -ErrorAction SilentlyContinue) {
-        & go run ./tests/integration/wireguardgen --server $wireguardServerFile --peer $wireguardPeerFile --endpoint 'wireguard:51820'
+        & go run ./tests/integration/wireguardgen --directory $wireguardConfigDir --endpoint 'wireguard:51820'
     }
     else {
         $repoPath = $repoRoot.Replace('\', '/')
-        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.25.2-alpine3.22 go run ./tests/integration/wireguardgen --server ./tests/integration/wireguard-server.generated.conf --peer ./tests/integration/wireguard-peer.generated.conf --endpoint 'wireguard:51820'
+        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.25.2-alpine3.22 go run ./tests/integration/wireguardgen --directory ./tests/integration/wireguard.generated --endpoint 'wireguard:51820'
     }
     if ($LASTEXITCODE -ne 0) { throw "WireGuard test config generation failed with exit code $LASTEXITCODE" }
 }
@@ -220,6 +219,8 @@ try {
         throw "Admin service returned 502. Container logs:`n$($adminLogs -join "`n")"
     }
     Assert-Equal '303' ([string][int]$unauthorized.StatusCode) 'Unauthenticated admin dashboard did not redirect to sign-in.'
+    $anonymousWireGuard = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '303' ([string][int]$anonymousWireGuard.StatusCode) 'Unauthenticated request downloaded the WireGuard config.'
     $loginPage = Invoke-AdminRequest -Path '/' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$loginPage.StatusCode) 'Admin sign-in page was unavailable.'
     $csrfMatch = [regex]::Match($loginPage.Body, 'name="csrf" value="([^"]+)"')
@@ -235,6 +236,17 @@ try {
     Assert-Equal '303' ([string][int]$login.StatusCode) 'Valid administrator password did not sign in.'
     $dashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$dashboard.StatusCode) 'Authenticated administrator could not open dashboard.'
+    if ($dashboard.Body -notmatch '/wireguard/config') { throw 'Dashboard did not provide the Windows WireGuard download.' }
+    $wireguardDownload = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$wireguardDownload.StatusCode) 'Authenticated administrator could not download the Windows WireGuard config.'
+    if ($wireguardDownload.Headers -notmatch '(?i)Content-Disposition: attachment; filename="jellyfin-proxy.conf"') { throw 'WireGuard config response lacks an attachment filename.' }
+    if ($wireguardDownload.Headers -notmatch '(?i)Content-Type: application/octet-stream') { throw 'WireGuard config response has an unexpected content type.' }
+    if ($wireguardDownload.Headers -notmatch '(?i)Cache-Control: no-store') { throw 'WireGuard config download is cacheable.' }
+    foreach ($expected in @('[Interface]', 'Address = 10.66.66.2/32', 'Endpoint = wireguard:51820', 'AllowedIPs = 10.66.66.1/32', 'PersistentKeepalive = 25')) {
+        if ($wireguardDownload.Body -notmatch [regex]::Escape($expected)) { throw "WireGuard config download is missing '$expected'." }
+    }
+    $wireguardDownloadAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal $wireguardDownload.Body $wireguardDownloadAgain.Body 'Repeated WireGuard downloads did not return the retained peer config.'
     $logoutCsrfMatch = [regex]::Match($dashboard.Body, 'name="csrf" value="([^"]+)"')
     if (-not $logoutCsrfMatch.Success) { throw 'Admin dashboard did not include a logout CSRF token.' }
     $logout = Invoke-AdminRequest -Path '/logout' -Method 'POST' -CookieJar $adminJar -CSRF $logoutCsrfMatch.Groups[1].Value
@@ -281,6 +293,9 @@ try {
     $freshCsrf = [regex]::Match($freshLoginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $freshLogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $freshCsrf -Password 'integration-test-admin-password'
     Assert-Equal '303' ([string][int]$freshLogin.StatusCode) 'Admin could not sign in after service restart.'
+    $wireguardAfterRestart = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$wireguardAfterRestart.StatusCode) 'Windows WireGuard config was unavailable after admin restart.'
+    Assert-Equal $wireguardDownload.Body $wireguardAfterRestart.Body 'Admin restart changed the retained Windows WireGuard config.'
     $emptyDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$emptyDashboard.StatusCode) 'Whitelist dashboard was unavailable.'
     if ($emptyDashboard.Body -notmatch 'No allowed addresses') { throw 'Persistent whitelist unexpectedly contained entries before management tests.' }
@@ -339,11 +354,17 @@ try {
     $adminContainer = $mockRows | Where-Object { $_.Service -eq 'admin' } | Select-Object -First 1
     $adminInspection = (& docker inspect $adminContainer.ID | ConvertFrom-Json)[0]
     if ($adminInspection.NetworkSettings.Ports.'8080/tcp') { throw 'Admin unexpectedly has a published host port.' }
+    $clientConfigMode = & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin stat -c '%a %u:%g' /opt/jellyfin-proxy/config/wireguard/windows.conf
+    Assert-Equal '640 0:65532' ([string]$clientConfigMode).Trim() 'Retained Windows config does not have restricted admin-group permissions.'
+    $serverConfigMode = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard stat -c '%a %u:%g' /etc/wireguard/wg0.conf
+    Assert-Equal '600 0:0' ([string]$serverConfigMode).Trim() 'WireGuard server private config is not root-only.'
+    & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin sh -c 'test ! -e /opt/jellyfin-proxy/config/wireguard/server.conf && test ! -e /etc/wireguard/wg0.conf' 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Admin container unexpectedly has access to the WireGuard server private key file.' }
     $caddyContainer = $mockRows | Where-Object { $_.Service -eq 'caddy' } | Select-Object -First 1
     $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
-    Write-Host 'M5 integration checks passed: encrypted WireGuard reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M4 gates, and isolated test resources.'
+    Write-Host 'M6 integration checks passed: retained WireGuard config generation, authenticated repeat download, encrypted tunnel reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M5 gates, and isolated test resources.'
 }
 finally {
     try {
@@ -352,8 +373,7 @@ finally {
     finally {
         Remove-Item $policyFile -ErrorAction SilentlyContinue
         Remove-Item $credentialFile -ErrorAction SilentlyContinue
-        Remove-Item $wireguardServerFile -ErrorAction SilentlyContinue
-        Remove-Item $wireguardPeerFile -ErrorAction SilentlyContinue
+        if (Test-Path $wireguardConfigDir) { Remove-Item $wireguardConfigDir -Recurse -Force -ErrorAction SilentlyContinue }
         if ($adminTempDir) { Remove-Item $adminTempDir -Recurse -Force -ErrorAction SilentlyContinue }
         Remove-Item Env:HTTP_PORT -ErrorAction SilentlyContinue
         Remove-Item Env:HTTPS_PORT -ErrorAction SilentlyContinue

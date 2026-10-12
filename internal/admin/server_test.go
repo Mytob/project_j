@@ -3,12 +3,16 @@ package admin
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/wireguard"
 )
 
 var csrfPattern = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
@@ -122,6 +126,99 @@ func TestWrongPasswordAndLogoutCSRF(t *testing.T) {
 	}
 	if badLogout := request(handler, "POST", "/logout", url.Values{"csrf": {"wrong"}}, cookie); badLogout.Code != http.StatusForbidden {
 		t.Fatalf("bad logout CSRF status %d", badLogout.Code)
+	}
+}
+
+func TestWireGuardDownloadRequiresAuthenticationAndIsNonCacheable(t *testing.T) {
+	root := t.TempDir()
+	paths, err := wireguard.EnsureProvisioned(filepath.Join(root, "wireguard"), wireguard.ProvisionOptions{
+		Endpoint: "vpn.example.test:51820", ListenPort: 51820,
+		ServerAddress: netip.MustParsePrefix("10.66.66.1/24"),
+		ClientAddress: netip.MustParsePrefix("10.66.66.2/32"), Keepalive: 25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.ReadFile(paths.ClientPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialPath := filepath.Join(root, "admin.json")
+	if err := auth.SaveCredential(credentialPath, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(credentialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(credential, nil)
+	if err := server.ConfigureWireGuardConfig(paths.ClientPath); err != nil {
+		t.Fatal(err)
+	}
+	handler := server.Handler()
+	unauthorized := request(handler, "GET", "/wireguard/config", nil, nil)
+	if unauthorized.Code != http.StatusSeeOther || unauthorized.Header().Get("Location") != "/" {
+		t.Fatalf("anonymous config download status/location = %d %q", unauthorized.Code, unauthorized.Header().Get("Location"))
+	}
+
+	id, _, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: "admin_session", Value: id}
+	dashboard := request(handler, "GET", "/dashboard", nil, cookie)
+	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), "/wireguard/config") {
+		t.Fatalf("dashboard did not expose config download: %d %s", dashboard.Code, dashboard.Body.String())
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		response := request(handler, "GET", "/wireguard/config", nil, cookie)
+		if response.Code != http.StatusOK {
+			t.Fatalf("download status %d: %s", response.Code, response.Body.String())
+		}
+		if response.Body.String() != string(expected) {
+			t.Fatal("download did not return the retained Windows config")
+		}
+		if response.Header().Get("Cache-Control") == "" || !strings.Contains(response.Header().Get("Cache-Control"), "no-store") {
+			t.Fatal("WireGuard download is cacheable")
+		}
+		if response.Header().Get("Content-Type") != "application/octet-stream" || response.Header().Get("Content-Disposition") != `attachment; filename="jellyfin-proxy.conf"` {
+			t.Fatalf("unexpected download headers: %#v", response.Header())
+		}
+	}
+}
+
+func TestWireGuardDownloadFailsClosedWhenRetainedFilePermissionsChange(t *testing.T) {
+	root := t.TempDir()
+	paths, err := wireguard.EnsureProvisioned(filepath.Join(root, "wireguard"), wireguard.ProvisionOptions{
+		Endpoint: "vpn.example.test:51820", ListenPort: 51820,
+		ServerAddress: netip.MustParsePrefix("10.66.66.1/24"),
+		ClientAddress: netip.MustParsePrefix("10.66.66.2/32"), Keepalive: 25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialPath := filepath.Join(root, "admin.json")
+	if err := auth.SaveCredential(credentialPath, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(credentialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(credential, nil)
+	if err := server.ConfigureWireGuardConfig(paths.ClientPath); err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(paths.ClientPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	response := request(server.Handler(), "GET", "/wireguard/config", nil, &http.Cookie{Name: "admin_session", Value: id})
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("download with broad file permissions returned %d", response.Code)
 	}
 }
 

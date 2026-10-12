@@ -1,4 +1,13 @@
 services:
+  wireguard-config-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - ./wireguard.generated:/source:ro
+      - wireguard_server:/server
+      - wireguard_client:/client
+    command: ["sh", "-c", "cp /source/server.conf /server/wg0.conf && chown 0:0 /server/wg0.conf && chmod 600 /server/wg0.conf && chmod 700 /server && cp /source/windows.conf /client/windows.conf && chown 0:65532 /client/windows.conf && chmod 640 /client/windows.conf && chown 0:65532 /client && chmod 750 /client"]
+
   wireguard:
     build:
       context: ../..
@@ -9,7 +18,10 @@ services:
       - "127.0.0.1:${HTTP_PORT:-18080}:80"
       - "127.0.0.1:${HTTPS_PORT:-18443}:443"
     volumes:
-      - ./wireguard-server.generated.conf:/etc/wireguard/wg0.conf:ro
+      - wireguard_server:/etc/wireguard:ro
+    depends_on:
+      wireguard-config-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   home-peer:
@@ -19,7 +31,10 @@ services:
     cap_add:
       - NET_ADMIN
     volumes:
-      - ./wireguard-peer.generated.conf:/etc/wireguard/wg0.conf:ro
+      - wireguard_client:/etc/wireguard:ro
+    environment:
+      WIREGUARD_CONFIG: /etc/wireguard/windows.conf
+      WIREGUARD_INTERFACE: windows
     depends_on:
       wireguard:
         condition: service_healthy
@@ -72,9 +87,10 @@ services:
     build:
       context: ../..
       dockerfile: tests/integration/Dockerfile.admin
-    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile"]
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
+      - wireguard_client:/opt/jellyfin-proxy/config/wireguard:ro
       - caddy_admin_socket:/run/caddy-admin
       - admin_data:/opt/jellyfin-proxy/data
       - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
@@ -86,6 +102,8 @@ services:
       caddy:
         condition: service_started
       admin-data-init:
+        condition: service_completed_successfully
+      wireguard-config-init:
         condition: service_completed_successfully
 
   admin-data-init:
@@ -112,6 +130,8 @@ services:
         ipv4_address: ${UNTRUSTED_CLIENT_IP:-172.29.254.20}
 
 volumes:
+  wireguard_server:
+  wireguard_client:
   caddy_data:
   caddy_config:
   caddy_admin_socket:

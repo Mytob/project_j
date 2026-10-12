@@ -29,8 +29,11 @@ Compose project to the Internet.
 
 ## Windows WireGuard and firewall
 
-The final release will provide an authenticated downloadable `.conf` for the
-official Windows client. It will use split tunnelling and persistent keepalive.
+The admin service provides an authenticated, non-cacheable downloadable `.conf`
+for the official Windows client when the retained WireGuard pair is provisioned.
+The generated file uses split tunnelling and persistent keepalive. The M8
+installer will provision the files and set the narrow file ownership needed by
+the admin service.
 The Windows firewall instructions will permit Jellyfin TCP traffic only from
 the VPS WireGuard address. They will not add router forwarding or home LAN
 routes.

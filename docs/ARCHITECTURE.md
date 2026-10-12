@@ -1,7 +1,7 @@
 # Architecture
 
 This document distinguishes the frozen 1.0 target from the currently
-implemented M1–M5 local test environment.
+implemented M1–M6 local test environment.
 
 ## Target components and request path
 
@@ -23,7 +23,7 @@ admin container remains separate and can reach Caddy's admin API only over a
 private Unix socket with narrowly scoped filesystem permissions. It never
 receives Docker socket access. All services use `restart: unless-stopped`.
 
-## M1–M5 local environment
+## M1–M6 local environment
 
 The local integration Compose project is under `tests/integration/`. Caddy
 serves `domain.test`, proxies `admin.domain.test` to the Go admin service, and
@@ -49,8 +49,12 @@ and shares its network namespace with Caddy. A separate home-peer container
 initiates the WireGuard tunnel. The mock Jellyfin service shares the home
 peer's namespace and listens only on the peer's tunnel address; the integration
 runner verifies the encrypted path, loss of reachability on tunnel shutdown,
-and recovery after a fresh peer handshake. Generated keys are disposable test
-fixtures and are deleted during cleanup.
+and recovery after a fresh peer handshake. The test config-init service copies
+the generated pair into isolated named volumes: the server private key remains
+root-only and only the Windows peer config is readable by the non-root admin
+group for authenticated downloads. The peer file uses persistent `/32` routes
+and a 25-second keepalive; the real Windows config and server config are
+retained together by the WireGuard package and are not regenerated on restart.
 
 This is not a production deployment and does not establish public certificate,
 production file ownership, public admin operation, public UDP ingress, or

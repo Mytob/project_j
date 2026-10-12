@@ -11,18 +11,20 @@ import (
 
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/whitelist"
+	"github.com/Mytob/project_j/internal/wireguard"
 )
 
 //go:embed templates/*.html
 var templateFiles embed.FS
 
 type Server struct {
-	credential *auth.Credential
-	sessions   *auth.Sessions
-	limiter    *auth.LoginLimiter
-	whitelist  *WhitelistManager
-	templates  *template.Template
-	logger     *slog.Logger
+	credential            *auth.Credential
+	sessions              *auth.Sessions
+	limiter               *auth.LoginLimiter
+	whitelist             *WhitelistManager
+	wireguardClientConfig string
+	templates             *template.Template
+	logger                *slog.Logger
 }
 
 func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*WhitelistManager) *Server {
@@ -44,7 +46,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /dashboard", s.dashboard)
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
+	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
 	return s.securityHeaders(mux)
+}
+
+// ConfigureWireGuardConfig verifies the protected retained Windows peer file
+// before making it available to authenticated administrators.
+func (s *Server) ConfigureWireGuardConfig(path string) error {
+	if path == "" {
+		return errors.New("Windows WireGuard configuration path is empty")
+	}
+	if _, err := wireguard.LoadRetainedClientConfig(path); err != nil {
+		return err
+	}
+	s.wireguardClientConfig = path
+	return nil
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
@@ -139,7 +155,30 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.render(w, "dashboard.html", map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil})
+	s.render(w, "dashboard.html", map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil, "WireGuardEnabled": s.wireguardClientConfig != ""})
+}
+
+func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request) {
+	_, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if s.wireguardClientConfig == "" {
+		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	data, err := wireguard.LoadRetainedClientConfig(s.wireguardClientConfig)
+	if err != nil {
+		s.logger.Error("load retained Windows WireGuard configuration", "error", err)
+		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="jellyfin-proxy.conf"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) addWhitelistEntry(w http.ResponseWriter, r *http.Request) {
