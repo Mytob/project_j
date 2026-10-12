@@ -1,0 +1,25 @@
+services:
+  caddy:
+    image: caddy:2.10.2-alpine
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-18080}:80"
+      - "127.0.0.1:${HTTPS_PORT:-18443}:443"
+    volumes:
+      - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
+      - ../../deploy/site:/srv/site:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      jellyfin-mock:
+        condition: service_started
+
+  jellyfin-mock:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.mock-jellyfin
+    expose:
+      - "8096"
+
+volumes:
+  caddy_data:
+  caddy_config:

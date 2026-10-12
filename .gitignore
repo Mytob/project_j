@@ -1,0 +1,19 @@
+# Go build output
+/bin/
+/dist/
+*.test
+*.out
+
+# Local runtime and generated test data
+.env
+.env.*
+!.env.example
+*.log
+/data/
+/releases/
+
+# Editor and OS files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

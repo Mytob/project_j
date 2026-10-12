@@ -32,7 +32,7 @@ mandatory release check before M10 can pass.
 
 | Area | Planned automated coverage | Status |
 | --- | --- | --- |
-| M1 Caddy HTTP/HTTPS, site, mock forwarding, unpublished mock port | Compose integration | Not run yet |
+| M1 Caddy HTTP/HTTPS, site, mock forwarding, unpublished mock port | Compose integration | PASS 2026-10-12 |
 | Whitelist parsing and enforcement | Unit + Caddy integration, empty default deny, spoofed headers | Not implemented |
 | Authentication and sessions | Unit + HTTP integration, expiry, logout, CSRF, attempts, persistence | Not implemented |
 | Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | Not implemented |
@@ -53,6 +53,18 @@ these limits explicitly and use VPS preflight checks.
 
 ## Results log
 
-No automated results have been recorded in the documentation commit yet. Add
-the actual command, result, environment, and blocker after implementation tests
-run.
+### Verified M1 run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 test`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Native Go was not installed, so `build.ps1` ran `go test ./...` in
+  `golang:1.25.2-alpine3.22`.
+- Covered: Go package compilation; all three local HTTP hostnames redirect to
+  HTTPS; static site served over HTTPS; admin hostname reaches the M1 503
+  placeholder; access hostname reaches the mock Jellyfin public-info endpoint
+  over HTTPS; mock port has no host binding; containers, network, test volumes,
+  and the locally built mock image are removed at completion.
+- Limits: This run does not test access control, authentication, WireGuard,
+  public ACME, or Ubuntu host firewall behaviour. WSL2 access was denied but
+  was not needed for M1.
