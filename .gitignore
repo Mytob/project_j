@@ -1,7 +1,6 @@
 # Go build output
 /bin/
 /dist/
-*.test
 *.out
 
 # Local runtime and generated test data
@@ -11,6 +10,7 @@
 *.log
 /data/
 /releases/
+/tests/integration/whitelist.caddy.generated
 
 # Editor and OS files
 .vscode/

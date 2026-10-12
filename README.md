@@ -5,10 +5,11 @@ on a Windows PC. The planned 1.0 deployment uses Caddy and WireGuard containers
 on an Ubuntu VPS, with a small Go application for administration and a native
 Linux `proxyctl` installer.
 
-The repository is at the first implementation milestone. The local M1 test
-environment routes a static site and a simulated Jellyfin service through
-Caddy. Authentication, access control, WireGuard, installation, and release
-packaging are roadmap work and are not yet available.
+The repository has completed Milestones 1 and 2. Its local test environment
+routes a static site and simulated Jellyfin through Caddy, with an IPv4/IPv6/
+CIDR default-deny allowlist for the access hostname. Authentication, admin
+management, WireGuard deployment, installation, and release packaging remain
+roadmap work.
 
 ## Supported platforms
 
