@@ -9,7 +9,7 @@ a blocker when unavailable and must not be represented as proven by simulation.
 
 ## Local environment
 
-M1–M5 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
+M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
 and Docker Compose v2. WSL2 is intended for Linux-specific packaging and
 network checks. Do not run the local M1 Compose project as a public service.
 
@@ -20,11 +20,12 @@ go test ./...
 ./build.ps1 test
 ```
 
-`build.ps1 test` runs Go unit tests and the M1–M5 Compose integration runner.
+`build.ps1 test` runs Go unit tests and the M1–M6 Compose integration runner.
 The runner builds the Go admin and mock Jellyfin images, starts a uniquely
 named temporary Compose project, verifies routing, authentication, and access
-control, exercises the encrypted WireGuard tunnel including outage and
-recovery, then removes only that project's containers, network, volumes, and
+control, exercises protected WireGuard config generation and authenticated
+repeat downloads plus the encrypted tunnel outage and recovery, then removes
+only that project's containers, network, volumes, and
 images. It publishes test web ports on loopback only.
 
 The full command is `./build.ps1 release`; it must be expanded to cover each
@@ -39,7 +40,7 @@ mandatory release check before M10 can pass.
 | Authentication and sessions | Unit + HTTPS integration, expiry, logout, CSRF, attempts, persistence | PASS 2026-10-12 |
 | Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | PASS 2026-10-12 |
 | WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; outage and recovery | PASS 2026-10-12 |
-| Windows client config | Key/config validation, repeat authenticated downloads, permissions | Not implemented |
+| Windows client config | Key/config validation, repeat authenticated downloads, restricted permissions, persistence | PASS 2026-10-12 |
 | Package | Extract/load images in clean Docker daemon without registry pulls | Not implemented |
 | Installer/updater | Fresh install, preservation, failure rollback, SSH/firewall preservation, scoped cleanup | Not implemented; Ubuntu host checks required |
 | Full release | All prior gates, package compatibility, restart and unrelated Docker resource checks | Not implemented |
@@ -135,3 +136,18 @@ these limits explicitly and use VPS preflight checks.
 - Limits: This validates the Docker Desktop Linux kernel and test topology.
   It does not establish Ubuntu VPS firewall rules, public UDP ingress, Windows
   WireGuard client configuration, or production deployment.
+
+### Verified M6 run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 test`.
+- Result: PASS (exit 0).
+- Covered: generated X25519 keys and valid server/Windows peer configs;
+  `/32` split routes and 25-second keepalive; atomically retained pair and
+  repeated generation without key rotation; authenticated config download,
+  repeated byte-identical download and persistence after admin restart;
+  no-store response headers; rejection of anonymous downloads, malformed
+  configs, and broad file permissions; client config mode 0640 for only the
+  admin group; root-only server config mode 0600; server private config absent
+  from admin mounts; all M1–M5 gates including real tunnel outage/recovery.
+- Limits: The test uses Linux container permission checks. Native Windows
+  import and Windows Firewall behaviour still need host verification.

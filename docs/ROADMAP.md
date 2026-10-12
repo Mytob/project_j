@@ -11,8 +11,8 @@ No milestone is marked complete until its mandatory tests pass.
 | M2 — Default-deny IP whitelist | Complete | Go unit tests and live Caddy/Docker enforcement passed on 2026-10-12. |
 | M3 — Administrator authentication | Complete | PR #3 merged as `0b1b11f`; Go tests and M1–M3 integration passed. |
 | M4 — Admin whitelist management | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12. |
-| M5 — WireGuard connectivity | Complete | Real encrypted tunnel, outage, recovery, and prior integration checks passed on 2026-10-12. |
-| M6 — Windows WireGuard configuration | Not Started | Depends on M5. |
+| M5 — WireGuard connectivity | Complete | PR #5 merged as `19fa619`; real encrypted tunnel, outage, recovery, and prior integration checks passed on 2026-10-12. |
+| M6 — Windows WireGuard configuration | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; authenticated repeat downloads, restart persistence, split routes, keepalive, and restricted permissions verified. |
 | M7 — Self-contained release packages | Not Started | Depends on application and deployment artifacts. |
 | M8 — Guided VPS installer | Not Started | Depends on M7. |
 | M9 — Updater, recovery, retention | Not Started | Depends on M8. |
@@ -27,6 +27,8 @@ M3 commit `18c6a96` was merged through
 [PR #3](https://github.com/Mytob/project_j/pull/3) at merge commit `0b1b11f`.
 M4 commit `7954bfb` was merged through
 [PR #4](https://github.com/Mytob/project_j/pull/4) at merge commit `024b7f2`.
+M5 commit `5e7fcb3` was merged through
+[PR #5](https://github.com/Mytob/project_j/pull/5) at merge commit `19fa619`.
 
 ## Milestone plan
 
@@ -130,14 +132,25 @@ M4 commit `7954bfb` was merged through
 
 ### M6 — Windows WireGuard configuration
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** M5.
-- **Deliverables:** Key generation, securely retained Windows `.conf`,
-  split-tunnel routes, persistent keepalive, and authenticated download.
+- **Deliverables:** X25519 key generation, atomically retained protected
+  server/Windows peer configurations, `/32` split-tunnel routes, persistent
+  keepalive, and an authenticated non-cacheable config download.
 - **Tests:** Key and peer syntax, permissions, repeat downloads, and
   persistence.
 - **Gate:** Generated config is valid and repeatably downloadable.
-- **Completion evidence / open issues:** Pending.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 test` passed on
+  2026-10-12. Go tests verify X25519 keypair generation, exact host routes,
+  config validation, atomic protected persistence, stable re-provisioning,
+  rejection of broad permissions and malformed files, and authenticated
+  non-cacheable downloads. Docker integration verifies the Windows config is
+  downloadable repeatedly and after admin restart, verifies route and
+  keepalive values, and checks group-only client file and root-only server
+  key permissions. The real WireGuard tunnel and all prior milestone checks
+  also pass.
+- **Open issues:** Import into the native Windows WireGuard client and the
+  Windows Firewall rule still require actual Windows-host verification.
 
 ### M7 — Self-contained release packages
 
@@ -208,4 +221,5 @@ M4 commit `7954bfb` was merged through
 | 2026-10-12 | M2 whitelist parser, persistence, Caddy policy, and access tests. | Commit `5f285cb`; [PR #2](https://github.com/Mytob/project_j/pull/2), merged as `e81e422` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M3 password auth, file credentials, sessions, CSRF, throttling, and admin HTTPS integration. | Commit `18c6a96`; [PR #3](https://github.com/Mytob/project_j/pull/3), merged as `0b1b11f` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M4 admin whitelist management, private Caddy Unix API, transaction handling, and persistence. | Commit `7954bfb`; [PR #4](https://github.com/Mytob/project_j/pull/4), merged as `024b7f2` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
-| 2026-10-12 | M5 WireGuard peer, shared network namespace, tunnel outage/recovery integration. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M5 WireGuard peer, shared network namespace, tunnel outage/recovery integration. | Commit `5e7fcb3`; [PR #5](https://github.com/Mytob/project_j/pull/5), merged as `19fa619` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M6 protected peer generation and authenticated Windows config download. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |

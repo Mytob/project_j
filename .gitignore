@@ -12,8 +12,7 @@
 /releases/
 /tests/integration/whitelist.caddy.generated
 /tests/integration/admin-credential.generated.json
-/tests/integration/wireguard-server.generated.conf
-/tests/integration/wireguard-peer.generated.conf
+/tests/integration/wireguard.generated/
 
 # Editor and OS files
 .vscode/
