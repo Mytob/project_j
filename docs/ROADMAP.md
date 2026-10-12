@@ -8,7 +8,7 @@ No milestone is marked complete until its mandatory tests pass.
 | Milestone | Status | Evidence / blocker |
 | --- | --- | --- |
 | M1 — Minimal working proxy | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; see test log below. |
-| M2 — Default-deny IP whitelist | Not Started | Depends on M1. |
+| M2 — Default-deny IP whitelist | Complete | Go unit tests and live Caddy/Docker enforcement passed on 2026-10-12. |
 | M3 — Administrator authentication | Not Started | Depends on M1. |
 | M4 — Admin whitelist management | Not Started | Depends on M2 and M3. |
 | M5 — WireGuard connectivity | Not Started | Depends on M1 and M4 configuration boundaries. |
@@ -19,11 +19,9 @@ No milestone is marked complete until its mandatory tests pass.
 | M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
 | M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
 
-Documentation commit `c8aedb7` is on `main`; `dev` and `feature/m1-foundation`
-were created from it and published. M1 commit `613ff18` is published on the
-feature branch. Pull request [#1](https://github.com/Mytob/project_j/pull/1)
-is open into `dev` for review. The GitHub CLI login is invalid, but the
-configured Git credential path allowed branch publishing.
+Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
+`5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
+at merge commit `f042820`.
 
 ## Milestone plan
 
@@ -50,14 +48,22 @@ configured Git credential path allowed branch publishing.
 
 ### M2 — Default-deny IP whitelist
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** M1.
-- **Deliverables:** IPv4, IPv6, and CIDR parser; persisted whitelist; Caddy
-  enforcement; default deny for empty configuration.
+- **Deliverables:** `internal/whitelist` IPv4, IPv6, and CIDR parser; canonical
+  versioned JSON persistence with atomic replacement; Caddy policy renderer;
+  default deny for empty or invalid configuration; isolated live Caddy tests.
 - **Tests:** Allow/deny cases, CIDR boundaries, invalid input, IPv4/IPv6,
   spoofed forwarding headers, empty whitelist, and no unintended mock access.
 - **Gate:** All access-control tests pass.
-- **Completion evidence / open issues:** Pending.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 test` passed on
+  Windows 11 x64 using Docker Desktop. Go tests passed for IPv4/IPv6 parsing,
+  CIDR boundaries, invalid and ambiguous input, canonicalization, fail-closed
+  policy generation, corrupt persistence, and invalid-save preservation. Live
+  Caddy tests passed for empty-list 403, CIDR allow, spoofed header rejection,
+  and zero Jellyfin forwarding for denied requests.
+- **Open issues:** Admin-managed live updates are M4. Actual public VPS firewall
+  behaviour remains an Ubuntu host check.
 
 ### M3 — Administrator authentication
 
@@ -169,4 +175,5 @@ configured Git credential path allowed branch publishing.
 | Date (UTC) | Change | Commit / PR | Tests and result |
 | --- | --- | --- | --- |
 | 2026-10-12 | Initial repository inspection. | None | Docker Desktop 29.8.2 and Compose 5.6.0 present. WSL access denied; native Go absent. |
-| 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `613ff18` (M1); [PR #1](https://github.com/Mytob/project_j/pull/1), open | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `613ff18` (M1); [PR #1](https://github.com/Mytob/project_j/pull/1), merged as `f042820` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M2 whitelist parser, persistence, Caddy policy, and access tests. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |

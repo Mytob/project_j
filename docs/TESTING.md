@@ -33,7 +33,7 @@ mandatory release check before M10 can pass.
 | Area | Planned automated coverage | Status |
 | --- | --- | --- |
 | M1 Caddy HTTP/HTTPS, site, mock forwarding, unpublished mock port | Compose integration | PASS 2026-10-12 |
-| Whitelist parsing and enforcement | Unit + Caddy integration, empty default deny, spoofed headers | Not implemented |
+| Whitelist parsing and enforcement | Unit + Caddy integration, empty default deny, spoofed headers | PASS 2026-10-12 |
 | Authentication and sessions | Unit + HTTP integration, expiry, logout, CSRF, attempts, persistence | Not implemented |
 | Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | Not implemented |
 | WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; recovery | Not implemented; Linux kernel capability required |
@@ -68,3 +68,19 @@ these limits explicitly and use VPS preflight checks.
 - Limits: This run does not test access control, authentication, WireGuard,
   public ACME, or Ubuntu host firewall behaviour. WSL2 access was denied but
   was not needed for M1.
+
+### Verified M2 run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 test`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Go unit tests ran in the pinned Go 1.25.2 container.
+- Covered: IPv4/IPv6/IP/CIDR parsing, CIDR boundaries, invalid and ambiguous
+  values, deterministic deduplication, default-deny policy generation,
+  versioned persistence, invalid-file rejection, invalid-save preservation,
+  actual Caddy empty-list denial, an allowed IPv4 CIDR source, a denied source
+  spoofing `X-Forwarded-For`, and no forwarding of denied requests to mock
+  Jellyfin.
+- Limits: IPv6 parsing and boundary enforcement are unit tested; live Docker
+  client traffic in this test environment is IPv4. The run does not prove
+  public VPS firewall behaviour.

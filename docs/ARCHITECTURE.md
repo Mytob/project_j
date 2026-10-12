@@ -27,9 +27,12 @@ receives Docker socket access. All services use `restart: unless-stopped`.
 
 The local integration Compose project is under `tests/integration/`. Caddy
 serves `domain.test`, returns an explicit not-yet-implemented response for
-`admin.domain.test`, and reverse proxies `access.domain.test` to a small Go
-mock of Jellyfin. Caddy uses its internal test CA. Only Caddy's HTTP and HTTPS
-ports are published, bound to loopback. The mock has no host port.
+`admin.domain.test`, and enforces a generated allowlist policy before
+reverse-proxying `access.domain.test` to a small Go mock of Jellyfin. An empty
+list generates only a 403 handler. Caddy uses its internal test CA. Only
+Caddy's HTTP and HTTPS ports are published, bound to loopback. The mock has no
+host port. The test uses two isolated source addresses to prove CIDR allow,
+default deny, and rejection of spoofed forwarding headers.
 
 This is not a production deployment and does not establish public certificate,
 whitelist, admin, or WireGuard behaviour.
