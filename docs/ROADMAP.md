@@ -19,10 +19,11 @@ No milestone is marked complete until its mandatory tests pass.
 | M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
 | M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
 
-Documentation commit `c8aedb7` is on `main`; the local `dev` and
-`feature/m1-foundation` branches were created from it. The linked GitHub
-repository is private and empty. Local GitHub CLI authentication is invalid,
-so no push or pull request has been made.
+Documentation commit `c8aedb7` is on `main`; `dev` and `feature/m1-foundation`
+were created from it and published. M1 commit `613ff18` is published on the
+feature branch. Pull request [#1](https://github.com/Mytob/project_j/pull/1)
+is open into `dev` for review. The GitHub CLI login is invalid, but the
+configured Git credential path allowed branch publishing.
 
 ## Milestone plan
 
@@ -168,4 +169,4 @@ so no push or pull request has been made.
 | Date (UTC) | Change | Commit / PR | Tests and result |
 | --- | --- | --- | --- |
 | 2026-10-12 | Initial repository inspection. | None | Docker Desktop 29.8.2 and Compose 5.6.0 present. WSL access denied; native Go absent. |
-| 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `feat: add M1 local Caddy proxy foundation` on `feature/m1-foundation` (this commit) | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `613ff18` (M1); [PR #1](https://github.com/Mytob/project_j/pull/1), open | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
