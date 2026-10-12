@@ -7,29 +7,47 @@ services:
     volumes:
       - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
       - ./whitelist.caddy.generated:/etc/caddy/whitelist.caddy:ro
+      - caddy_admin_socket:/run/caddy-admin
       - ../../deploy/site:/srv/site:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      jellyfin-mock:
-        condition: service_started
-      trusted-client:
-        condition: service_started
-      untrusted-client:
-        condition: service_started
-      admin:
-        condition: service_started
+      caddy-socket-init:
+        condition: service_completed_successfully
+
+  caddy-socket-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - caddy_admin_socket:/run/caddy-admin
+    command: ["sh", "-c", "chown 0:65532 /run/caddy-admin && chmod 2750 /run/caddy-admin"]
 
   admin:
     build:
       context: ../..
       dockerfile: tests/integration/Dockerfile.admin
-    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json"]
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
+      - caddy_admin_socket:/run/caddy-admin
+      - admin_data:/opt/jellyfin-proxy/data
+      - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
+    group_add:
+      - "65532"
     expose:
       - "8080"
+    depends_on:
+      caddy:
+        condition: service_started
+      admin-data-init:
+        condition: service_completed_successfully
 
+  admin-data-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - admin_data:/data
+    command: ["sh", "-c", "chown 65532:65532 /data && chmod 700 /data"]
   jellyfin-mock:
     build:
       context: ../..
@@ -56,6 +74,8 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  caddy_admin_socket:
+  admin_data:
 
 networks:
   default:

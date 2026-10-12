@@ -124,3 +124,40 @@ func TestWrongPasswordAndLogoutCSRF(t *testing.T) {
 		t.Fatalf("bad logout CSRF status %d", badLogout.Code)
 	}
 }
+
+func TestWhitelistChangesRequireAuthenticatedSessionAndCSRF(t *testing.T) {
+	path := t.TempDir() + "/admin.json"
+	if err := auth.SaveCredential(path, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryWhitelistStore{}
+	applier := &recordingPolicy{}
+	manager := newManager(store, applier)
+	server := New(credential, nil, manager)
+	handler := server.Handler()
+	anonymous := request(handler, "POST", "/whitelist/add", url.Values{"csrf": {"wrong"}, "entry": {"192.0.2.1"}}, nil)
+	if anonymous.Code != http.StatusSeeOther {
+		t.Fatalf("anonymous whitelist change status %d", anonymous.Code)
+	}
+
+	id, csrf, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: "admin_session", Value: id}
+	badCSRF := request(handler, "POST", "/whitelist/add", url.Values{"csrf": {"wrong"}, "entry": {"192.0.2.1"}}, cookie)
+	if badCSRF.Code != http.StatusForbidden {
+		t.Fatalf("invalid CSRF status %d", badCSRF.Code)
+	}
+	if len(store.entries) != 0 || len(applier.applied) != 1 {
+		t.Fatal("invalid CSRF request changed the whitelist or Caddy")
+	}
+	valid := request(handler, "POST", "/whitelist/add", url.Values{"csrf": {csrf}, "entry": {"192.0.2.1"}}, cookie)
+	if valid.Code != http.StatusSeeOther {
+		t.Fatalf("valid change status %d, body %s", valid.Code, valid.Body.String())
+	}
+}

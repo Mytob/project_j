@@ -85,7 +85,7 @@ function New-TestCredential {
     if ($LASTEXITCODE -ne 0) { throw "Test credential fixture permissions could not be set (exit $LASTEXITCODE)" }
 }
 
-function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar, [string]$CSRF = '', [string]$Password = '') {
+function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar, [string]$CSRF = '', [string]$Password = '', [string]$Entry = '') {
     $uri = "https://admin.domain.test:${HttpsPort}${Path}"
     $resolve = "admin.domain.test:${HttpsPort}:127.0.0.1"
     $headersPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.headers')
@@ -94,6 +94,7 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
     if ($Method -eq 'POST') {
         $curlArgs += @('--request', 'POST', '--data-urlencode', "csrf=$CSRF")
         if ($Path -eq '/login') { $curlArgs += @('--data-urlencode', "password=$Password") }
+        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/remove') { $curlArgs += @('--data-urlencode', "entry=$Entry") }
     }
     $curlArgs += @('--write-out', '%{http_code}', $uri)
     $status = & curl.exe @curlArgs
@@ -202,6 +203,7 @@ try {
     }
     $throttled = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $throttleJar -CSRF $throttleCsrf -Password 'integration-test-admin-password'
     Assert-Equal '429' ([string][int]$throttled.StatusCode) 'Repeated bad passwords did not trigger login throttling.'
+    Invoke-Compose restart admin
 
     $accessHttp = Get-LocalResponse -Scheme 'http' -Port $HttpPort -HostName 'access.domain.test'
     Assert-Equal '308' ([string][int]$accessHttp.StatusCode) 'Access hostname did not redirect HTTP to HTTPS.'
@@ -227,6 +229,52 @@ try {
     Assert-Equal '403' ([string][int]$hostClient.StatusCode) 'An unlisted host client reached Jellyfin.'
     Assert-Equal '1' (Get-MockRequestCount) 'A denied request was unexpectedly forwarded to mock Jellyfin.'
 
+    $freshLoginPage = Invoke-AdminRequest -Path '/' -Method 'GET' -CookieJar $adminJar
+    $freshCsrf = [regex]::Match($freshLoginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $freshLogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $freshCsrf -Password 'integration-test-admin-password'
+    Assert-Equal '303' ([string][int]$freshLogin.StatusCode) 'Admin could not sign in after service restart.'
+    $emptyDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$emptyDashboard.StatusCode) 'Whitelist dashboard was unavailable.'
+    if ($emptyDashboard.Body -notmatch 'No allowed addresses') { throw 'Persistent whitelist unexpectedly contained entries before management tests.' }
+    $managementCsrf = [regex]::Match($emptyDashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $invalidAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry 'bad.example'
+    Assert-Equal '400' ([string][int]$invalidAdd.StatusCode) 'Admin accepted an invalid whitelist entry.'
+    $addNetwork = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
+    Assert-Equal '303' ([string][int]$addNetwork.StatusCode) 'Admin could not add a valid IPv4 CIDR entry.'
+    $duplicateAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
+    Assert-Equal '409' ([string][int]$duplicateAdd.StatusCode) 'Admin did not reject a duplicate entry.'
+    $managedDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
+    if ($managedDashboard.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Added CIDR entry was not displayed canonically.' }
+    $managedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
+    Assert-Equal '200' ([string][int]$managedAllowed.StatusCode) 'Caddy did not activate the admin-added CIDR entry.'
+    Invoke-Compose restart admin
+    $afterRestart = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '303' ([string][int]$afterRestart.StatusCode) 'Admin session survived process restart.'
+    $reloginPage = Invoke-AdminRequest -Path '/' -Method 'GET' -CookieJar $adminJar
+    $reloginCsrf = [regex]::Match($reloginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $relogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $reloginCsrf -Password 'integration-test-admin-password'
+    Assert-Equal '303' ([string][int]$relogin.StatusCode) 'Admin could not sign in after persistence restart check.'
+    $persistedDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
+    if ($persistedDashboard.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Whitelist entry did not persist across admin restart.' }
+    $persistedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
+    Assert-Equal '200' ([string][int]$persistedAllowed.StatusCode) 'Caddy did not restore the persisted whitelist after admin restart.'
+    $removeCsrf = [regex]::Match($persistedDashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $removeNetwork = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry $allowedNetwork
+    Assert-Equal '303' ([string][int]$removeNetwork.StatusCode) 'Admin could not remove a whitelist entry.'
+    $removedDenied = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
+    Assert-Equal '403' ([string][int]$removedDenied.StatusCode) 'Removing the whitelist entry did not immediately deny access.'
+    $emptyDashboardAgain = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
+    if ($emptyDashboardAgain.Body -notmatch 'No allowed addresses') { throw 'Removed whitelist entry remains in the admin list.' }
+    Assert-Equal '3' (Get-MockRequestCount) 'Denied post-removal request was unexpectedly forwarded to mock Jellyfin.'
+
+    $addIPv6 = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry '2001:db8::/64'
+    Assert-Equal '303' ([string][int]$addIPv6.StatusCode) 'Admin could not add an IPv6 CIDR entry.'
+    $ipv6Dashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
+    if ($ipv6Dashboard.Body -notmatch '2001:db8::/64') { throw 'IPv6 entry was not displayed.' }
+    $removeIPv6Csrf = [regex]::Match($ipv6Dashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $removeIPv6 = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeIPv6Csrf -Entry '2001:db8::/64'
+    Assert-Equal '303' ([string][int]$removeIPv6.StatusCode) 'Admin could not remove the IPv6 CIDR entry.'
+
     $composeRows = Invoke-Compose ps --format json
     $mockRows = @($composeRows | ForEach-Object { $_ | ConvertFrom-Json })
     $mock = $mockRows | Where-Object { $_.Service -eq 'jellyfin-mock' } | Select-Object -First 1
@@ -237,8 +285,14 @@ try {
     if ($inspection.NetworkSettings.Ports.'8096/tcp') {
         throw 'Mock Jellyfin unexpectedly has a published host port.'
     }
+    $adminContainer = $mockRows | Where-Object { $_.Service -eq 'admin' } | Select-Object -First 1
+    $adminInspection = (& docker inspect $adminContainer.ID | ConvertFrom-Json)[0]
+    if ($adminInspection.NetworkSettings.Ports.'8080/tcp') { throw 'Admin unexpectedly has a published host port.' }
+    $caddyContainer = $mockRows | Where-Object { $_.Service -eq 'caddy' } | Select-Object -First 1
+    $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
+    if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
-    Write-Host 'M3 integration checks passed: M1 routing, M2 access control, admin authentication, secure sessions, CSRF, logout, throttling, and no mock exposure.'
+    Write-Host 'M4 integration checks passed: M1 routing, M2 access control, M3 authentication, live admin whitelist updates and persistence, Caddy Unix socket isolation, and rollback cases.'
 }
 finally {
     try {
