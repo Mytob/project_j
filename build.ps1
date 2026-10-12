@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('test', 'release')]
-    [string]$Target = 'test'
+    [ValidateSet('test', 'package', 'release')]
+    [string]$Target = 'test',
+    [string]$Version = '1.0.0-dev'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,12 @@ else {
 
 if ($Target -eq 'test') {
     Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'tests/integration/run.ps1'))
+    exit 0
+}
+
+if ($Target -eq 'package') {
+    Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'tests/integration/run.ps1'))
+    Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
     exit 0
 }
 
