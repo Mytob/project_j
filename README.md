@@ -5,7 +5,7 @@ on a Windows PC. The planned 1.0 deployment uses Caddy and WireGuard containers
 on an Ubuntu VPS, with a small Go application for administration and a native
 Linux `proxyctl` installer.
 
-The repository has completed Milestones 1–8. Its local test environment
+The repository has completed Milestones 1–9. Its local test environment
 routes a static site and simulated Jellyfin through Caddy, with an IPv4/IPv6/
 CIDR default-deny allowlist for the access hostname. The admin hostname now
 serves a password-protected Go sign-in and session dashboard with persistent
@@ -17,8 +17,10 @@ WireGuard config. A self-contained Linux/amd64 package bundles all deployment
 images. Native `proxyctl install` validates Ubuntu 26.04 x64, guides DNS,
 password and port setup, generates WireGuard configuration, deploys only
 verified bundled images, applies a namespace-scoped ingress firewall, and
-rolls back a failed initial deployment. Updater, password reset and full
-release automation remain in later milestones.
+rolls back a failed initial deployment. `proxyctl update` preserves deployment
+data, verifies readiness and rolls back failures; `proxyctl reset-password`
+rotates the admin password and invalidates sessions. Full release automation
+remains in a later milestone.
 
 ## Supported platforms
 
@@ -86,11 +88,12 @@ See [testing](docs/TESTING.md) for the test matrix and current limitations.
 
 ## Installation and updates
 
-Guided first installation is implemented for Ubuntu 26.04 x64. The installer
-uses `/opt/jellyfin-proxy`, refuses to overwrite an existing installation, and
-rolls back its own files and Compose resources if readiness fails. Updates and
-password reset are not implemented yet. Do not use the local M1 Compose file as
-a public deployment.
+Guided installation and updates are implemented for Ubuntu 26.04 x64. The
+installer uses `/opt/jellyfin-proxy`, refuses to overwrite an existing
+installation, and rolls back its own files and Compose resources if readiness
+fails. Updates retain the active and one previous release; password reset
+recreates only the admin service, invalidating existing sessions. Do not use
+the local M1 Compose file as a public deployment.
 
 See [deployment](docs/DEPLOYMENT.md) for installation, Windows setup and
 troubleshooting, and [releasing](docs/RELEASING.md) for release gates and

@@ -24,26 +24,17 @@ func main() {
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = fmt.Fprintln(stdout, "Usage: proxyctl install <release-package.tar.gz>")
+		_, _ = fmt.Fprintln(stdout, "Usage: proxyctl install <release-package.tar.gz> | update <release-package.tar.gz> | reset-password")
 		return nil
 	}
-	if args[0] != "install" {
+	if args[0] != "install" && args[0] != "update" && args[0] != "reset-password" {
 		return fmt.Errorf("unknown command %q; run proxyctl help", args[0])
 	}
-	if len(args) != 2 {
-		return errors.New("usage: proxyctl install <release-package.tar.gz>")
+	if (args[0] == "install" || args[0] == "update") && len(args) != 2 {
+		return fmt.Errorf("usage: proxyctl %s <release-package.tar.gz>", args[0])
 	}
-	packagePath, err := filepath.Abs(args[1])
-	if err != nil {
-		return fmt.Errorf("resolve package path: %w", err)
-	}
-	if info, err := os.Stat(packagePath); err != nil || !info.Mode().IsRegular() {
-		return errors.New("release package is not a readable regular file")
-	}
-	if _, err := os.Lstat(deployment.DefaultInstallRoot); err == nil {
-		return errors.New("/opt/jellyfin-proxy already exists; refusing to overwrite installation data")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect installation root: %w", err)
+	if args[0] == "reset-password" && len(args) != 1 {
+		return errors.New("usage: proxyctl reset-password")
 	}
 
 	runner := deployment.ExecRunner{}
@@ -57,6 +48,44 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	reader := bufio.NewReader(stdin)
 	if err := ensureDocker(ctx, runner, facts.Codename, reader, stdout); err != nil {
 		return err
+	}
+	if args[0] == "reset-password" {
+		password, err := promptSecret(reader, stdout, "New administrator password (12+ characters): ")
+		if err != nil {
+			return err
+		}
+		confirmation, err := promptSecret(reader, stdout, "Confirm new administrator password: ")
+		if err != nil {
+			return err
+		}
+		if password != confirmation {
+			return errors.New("passwords do not match")
+		}
+		if err := deployment.ResetPassword(ctx, deployment.DefaultInstallRoot, password, runner); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Administrator password reset. Existing admin sessions have been invalidated.")
+		return nil
+	}
+	packagePath, err := filepath.Abs(args[1])
+	if err != nil {
+		return fmt.Errorf("resolve package path: %w", err)
+	}
+	if info, err := os.Stat(packagePath); err != nil || !info.Mode().IsRegular() {
+		return errors.New("release package is not a readable regular file")
+	}
+	if args[0] == "update" {
+		manifest, err := deployment.Update(ctx, deployment.UpdateOptions{PackagePath: packagePath, InstallRoot: deployment.DefaultInstallRoot, Host: facts, Runner: runner})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Jellyfin Proxy updated to %s. The active and previous release are retained.\n", manifest.Version)
+		return nil
+	}
+	if _, err := os.Lstat(deployment.DefaultInstallRoot); err == nil {
+		return errors.New("/opt/jellyfin-proxy already exists; refusing to overwrite installation data")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect installation root: %w", err)
 	}
 
 	domainInput, err := promptLine(reader, stdout, "Base domain (for example example.com): ")

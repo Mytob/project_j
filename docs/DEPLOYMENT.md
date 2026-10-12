@@ -72,6 +72,37 @@ provider's supported procedure while preserving SSH access.
 The namespace rule is installed on each WireGuard container start. The Windows
 peer is assigned `10.66.66.2`; the VPS peer is `10.66.66.1`.
 
+## Update and password reset
+
+Copy the new self-contained package and `proxyctl-linux-amd64` to the VPS, then
+run:
+
+```sh
+sudo ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.0.1.tar.gz
+```
+
+The updater verifies the release manifest and bundled image digests, loads the
+images without registry pulls, and recreates only the `jellyfin-proxy`
+services. It preserves the administrator credential, whitelist, WireGuard
+keys, and all site files. After healthy services and public HTTPS are verified,
+it retains the new active release and the immediately previous release and
+removes only older versioned release directories. It does not prune Docker
+images. If updated readiness fails, the prior Compose files and version are
+restored and the previous services are recreated; inspect the reported rollback
+error and scoped service logs if recovery cannot become healthy.
+
+To set a new administrator password locally from an interactive root shell:
+
+```sh
+sudo ./proxyctl-linux-amd64 reset-password
+```
+
+The new password is entered twice with terminal echo disabled. The command
+replaces the hashed credential atomically, restores its restricted ownership
+and permissions, and recreates only the admin service. Admin sessions are
+in-memory, so this restart invalidates every existing session. If the new admin
+container does not become healthy, the previous credential is restored.
+
 ## First login and Windows WireGuard
 
 1. Open `https://admin.<domain>` and sign in with the initial password.

@@ -54,7 +54,8 @@ mandatory release check before M10 can pass.
 | Windows client config | Key/config validation, repeat authenticated downloads, restricted permissions, persistence | PASS 2026-10-12 |
 | Package | Extract/verify manifest and load images in an isolated Docker daemon without registry access | PASS 2026-10-12 |
 | Installer | Actual package install, IPv4/IPv6 namespace firewall, host INPUT preservation, forced startup rollback, unrelated container preservation | PASS 2026-10-13; Ubuntu host checks remain |
-| Updater/password reset | Preservation, rollback, retention, session invalidation | Not implemented; M9 |
+| Updater | Actual offline update, credentials/whitelist/WireGuard/site preservation, forced failure recovery, active+previous retention, no global prune | PASS 2026-10-13; Ubuntu host checks remain |
+| Password reset | Hashed credential replacement, admin-only recreation, existing sessions invalidated by process restart | PASS 2026-10-13; Ubuntu host checks remain |
 | Full release | All prior gates, package compatibility, restart and unrelated Docker resource checks | Not implemented; M10 |
 
 ## Host-specific limitations
@@ -198,3 +199,20 @@ these limits explicitly and use VPS preflight checks.
   the established M1–M6 suite, but that integration suite passed. This is not
   an Ubuntu VPS/provider-firewall, public ACME, public ingress, native Windows
   WireGuard import, or Windows Firewall test.
+
+### Verified M9 update and recovery package run — 2026-10-13
+
+- Command: `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Go tests ran in `golang:1.25.2-alpine3.22`.
+- Covered: all Go and M1–M8 gates; actual offline package update in the isolated
+  daemon; preservation of administrator credential, whitelist, server/client
+  WireGuard config, and site content; retention of active and previous release;
+  forced public HTTPS failure and successful restoration of the previous
+  release; successful retry and pruning only older version directories;
+  password reset with a healthy admin-only container recreation; and the
+  unrelated port-conflict container remaining running.
+- Limits: this is Docker-in-Docker on Docker Desktop, not an Ubuntu 26.04 VPS or
+  provider-firewall test. Public ACME and native Windows client/Firewall setup
+  remain host-specific.
