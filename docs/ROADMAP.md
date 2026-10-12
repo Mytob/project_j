@@ -1,0 +1,163 @@
+# Implementation roadmap
+
+Status is based on behaviour and recorded test evidence, not file presence.
+No milestone is marked complete until its mandatory tests pass.
+
+## Current status
+
+| Milestone | Status | Evidence / blocker |
+| --- | --- | --- |
+| M1 — Minimal working proxy | In Progress | Project documentation committed first; the M1 implementation and gate follow in the next increment. |
+| M2 — Default-deny IP whitelist | Not Started | Depends on M1. |
+| M3 — Administrator authentication | Not Started | Depends on M1. |
+| M4 — Admin whitelist management | Not Started | Depends on M2 and M3. |
+| M5 — WireGuard connectivity | Not Started | Depends on M1 and M4 configuration boundaries. |
+| M6 — Windows WireGuard configuration | Not Started | Depends on M5. |
+| M7 — Self-contained release packages | Not Started | Depends on application and deployment artifacts. |
+| M8 — Guided VPS installer | Not Started | Depends on M7. |
+| M9 — Updater, recovery, retention | Not Started | Depends on M8. |
+| M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
+| M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
+
+The repository bootstrap documentation is prepared. The linked GitHub
+repository is private and empty. Local GitHub CLI authentication is invalid,
+so no push or pull request has been made.
+
+## Milestone plan
+
+### M1 — Minimal working proxy
+
+- **Status:** In Progress
+- **Dependencies:** Empty repository bootstrap.
+- **Deliverables:** Go module, Caddy local TLS configuration, static site,
+  isolated mock Jellyfin service, Compose integration environment, and
+  repeatable PowerShell test/cleanup runner.
+- **Tests:** Verify the three local HTTP hostnames, local HTTPS routing, static
+  content, mock Jellyfin forwarding, and that the mock has no published host
+  port.
+- **Gate:** All foundation tests pass on Windows with Docker Desktop.
+- **Completion evidence:** Pending implementation and test gate.
+- **Open issues:** M1 integration test has not yet been run in the committed
+  implementation.
+
+### M2 — Default-deny IP whitelist
+
+- **Status:** Not Started
+- **Dependencies:** M1.
+- **Deliverables:** IPv4, IPv6, and CIDR parser; persisted whitelist; Caddy
+  enforcement; default deny for empty configuration.
+- **Tests:** Allow/deny cases, CIDR boundaries, invalid input, IPv4/IPv6,
+  spoofed forwarding headers, empty whitelist, and no unintended mock access.
+- **Gate:** All access-control tests pass.
+- **Completion evidence / open issues:** Pending.
+
+### M3 — Administrator authentication
+
+- **Status:** Not Started
+- **Dependencies:** M1.
+- **Deliverables:** Go admin server, password hashing, secure sessions,
+  login/logout, CSRF, login-attempt throttling, and persistent configuration.
+- **Tests:** Password verification, session expiry and logout, unauthorized
+  requests, CSRF, rate limiting, and persistence.
+- **Gate:** All authentication and session tests pass.
+- **Completion evidence / open issues:** Pending.
+
+### M4 — Admin whitelist management
+
+- **Status:** Not Started
+- **Dependencies:** M2 and M3.
+- **Deliverables:** Whitelist interface, private Caddy admin Unix socket,
+  transactional live updates, and persistent updates.
+- **Tests:** Live activation, invalid input, failed persistence/activation
+  recovery, concurrency, and restart persistence.
+- **Gate:** All whitelist administration tests pass.
+- **Completion evidence / open issues:** Pending.
+
+### M5 — WireGuard connectivity
+
+- **Status:** Not Started
+- **Dependencies:** M1; interfaces from M4.
+- **Deliverables:** WireGuard container, shared network namespace for Caddy,
+  mock home peer and Jellyfin endpoint, health checks, and required network
+  permissions.
+- **Tests:** Real local tunnel traffic, HTTP forwarding, outage, and recovery.
+- **Gate:** Mock Jellyfin is reached through the encrypted tunnel.
+- **Completion evidence / open issues:** Pending. Kernel support may require
+  WSL2 or a Linux host.
+
+### M6 — Windows WireGuard configuration
+
+- **Status:** Not Started
+- **Dependencies:** M5.
+- **Deliverables:** Key generation, securely retained Windows `.conf`,
+  split-tunnel routes, persistent keepalive, and authenticated download.
+- **Tests:** Key and peer syntax, permissions, repeat downloads, and
+  persistence.
+- **Gate:** Generated config is valid and repeatably downloadable.
+- **Completion evidence / open issues:** Pending.
+
+### M7 — Self-contained release packages
+
+- **Status:** Not Started
+- **Dependencies:** Application and deployment image definitions.
+- **Deliverables:** Go builds, pinned Docker image builds and exports,
+  versioned manifest, deployment templates, and validated release archive.
+- **Tests:** Load the packaged images in a clean Docker environment; validate
+  archive contents and package compatibility without registry pulls.
+- **Gate:** Package installs and runs without application image registry access.
+- **Completion evidence / open issues:** Pending.
+
+### M8 — Guided VPS installer
+
+- **Status:** Not Started
+- **Dependencies:** M7.
+- **Deliverables:** Native Linux `proxyctl install`, Ubuntu 26.04 x64
+  preflight, Docker/Compose detection, DNS guidance and resolution check,
+  initial credentials, WireGuard setup, scoped firewall rules, package load,
+  deployment, and readiness checks.
+- **Tests:** Fresh install and failure-path tests; preserve existing SSH and
+  unrelated firewall rules; ensure failed installs do not leave public access.
+- **Gate:** Automated fresh-install and failure-path tests pass.
+- **Completion evidence / open issues:** Pending. Host-specific tests need
+  Ubuntu 26.04.
+
+### M9 — Updater, recovery, and retention
+
+- **Status:** Not Started
+- **Dependencies:** M8.
+- **Deliverables:** `proxyctl update` and `proxyctl reset-password`, package
+  compatibility checks, health verification, rollback, and retention of the
+  active and one prior known-good release.
+- **Tests:** Update success/failure, rollback, data preservation, release
+  retention, restart behaviour, and no global Docker pruning.
+- **Gate:** Update and recovery tests pass.
+- **Completion evidence / open issues:** Pending.
+
+### M10 — Full automated release validation
+
+- **Status:** Not Started
+- **Dependencies:** M1–M9.
+- **Deliverables:** Complete `build.ps1 release` runner and implementation of
+  all mandatory gates, including explicit host preflight checks.
+- **Tests:** Full required suite from the specification; mandatory checks may
+  not be silently skipped.
+- **Gate:** All locally runnable checks pass; host-only limitations are
+  reported and preflighted.
+- **Completion evidence / open issues:** Pending.
+
+### M11 — Version 1.0.0 release
+
+- **Status:** Not Started
+- **Dependencies:** M10.
+- **Deliverables:** Validated promotion from `dev` to `main`, verified release
+  commit and tag, official artifacts where permissions allow, install/update
+  docs, and automated first-deployment checks.
+- **Tests:** All release gates and artifact verification.
+- **Gate:** No mandatory failures; no claim of VPS deployment without access.
+- **Completion evidence / open issues:** Pending.
+
+## Change and test log
+
+| Date (UTC) | Change | Commit / PR | Tests and result |
+| --- | --- | --- | --- |
+| 2026-10-12 | Initial repository inspection. | None | Docker Desktop 29.8.2 and Compose 5.6.0 present. WSL access denied; native Go absent. |
