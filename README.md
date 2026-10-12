@@ -19,8 +19,10 @@ password and port setup, generates WireGuard configuration, deploys only
 verified bundled images, applies a namespace-scoped ingress firewall, and
 rolls back a failed initial deployment. `proxyctl update` preserves deployment
 data, verifies readiness and rolls back failures; `proxyctl reset-password`
-rotates the admin password and invalidates sessions. Full release automation
-remains in a later milestone.
+rotates the admin password and invalidates sessions. The `build.ps1 release`
+runner executes locally available Go, integration, package, install, and update
+gates and writes a JSON validation report. Real VPS/provider-firewall and
+native Windows client checks remain required before 1.0.0 is release-ready.
 
 ## Supported platforms
 
@@ -78,11 +80,15 @@ The archive and standalone `proxyctl-linux-amd64` installer are written under
 The guided installer checks DNS, asks for the initial admin password, and
 deploys only the bundled images.
 
-The full release command will be enabled after its required gates exist:
+Run the complete locally available release gate:
 
 ```powershell
 ./build.ps1 release
 ```
+
+The report is written to `dist/release-validation-<Version>.json`. A passing
+local gate still reports release readiness as blocked until production-host
+checks are complete.
 
 See [testing](docs/TESTING.md) for the test matrix and current limitations.
 

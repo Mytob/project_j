@@ -1,7 +1,9 @@
 # Releasing
 
-The M7 package builder, M8 first-install flow, and M9 update/recovery commands
-are implemented. The complete M10 release gate is still roadmap work.
+The M7 package builder, M8 first-install flow, M9 update/recovery commands,
+and M10 local release gate are implemented. A passing local gate records
+production-host checks as blocked until they are run on the actual VPS and
+Windows client.
 
 ## Versioning and package
 
@@ -12,6 +14,12 @@ versioned manifest, deployment templates, and every required Docker image as
 an archive. A clean installation or update must not pull application images
 from a registry. Package compatibility and image identities must be validated
 before install/update.
+
+Run `./build.ps1 release -Version 1.0.0-dev` for the complete locally
+automated gate. The command writes a JSON report to
+`dist/release-validation-<Version>.json`, including individual gate statuses
+and any host-specific blockers. A passing local gate is not a publish-ready
+release while production-host checks remain blocked.
 
 ## Required release gates
 
@@ -38,10 +46,11 @@ at the VPS provider.
 ## Branch and publication process
 
 Use short-lived feature/fix PRs into `dev`. Run `build.ps1 release` before
-promotion, then merge tested `dev` into `main`, verify the release commit, and
-tag it. Do not create temporary release branches and do not add hosted CI or
-GitHub Actions. Publish artifacts only when repository permissions allow and
-only after every mandatory gate passes.
+promotion. Promote tested `dev` to `main`, verify the release commit, and tag
+it only after every mandatory gate passes, including the production-host checks
+recorded by the release report. Do not create temporary release branches and
+do not add hosted CI or GitHub Actions. Publish artifacts only when repository
+permissions allow and only after every mandatory gate passes.
 
 ## Rollback and retention
 

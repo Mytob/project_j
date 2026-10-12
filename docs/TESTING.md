@@ -39,8 +39,11 @@ rules unchanged, removes the fresh fixture, forces a host-port collision, and
 confirms failed-install cleanup leaves the unrelated conflict container
 running.
 
-The full command is `./build.ps1 release`; it must be expanded to cover each
-mandatory release check before M10 can pass.
+The full command is `./build.ps1 release`. It runs Go unit tests, the M1–M6
+integration suite, and the M7–M9 package/install/update gate in sequence. It
+writes `dist/release-validation-<Version>.json` with each local result and an
+explicit `blocked` status for checks requiring an actual production host. A
+successful local gate does not mean the release is ready to publish.
 
 ## Test coverage matrix
 
@@ -56,7 +59,7 @@ mandatory release check before M10 can pass.
 | Installer | Actual package install, IPv4/IPv6 namespace firewall, host INPUT preservation, forced startup rollback, unrelated container preservation | PASS 2026-10-13; Ubuntu host checks remain |
 | Updater | Actual offline update, credentials/whitelist/WireGuard/site preservation, forced failure recovery, active+previous retention, no global prune | PASS 2026-10-13; Ubuntu host checks remain |
 | Password reset | Hashed credential replacement, admin-only recreation, existing sessions invalidated by process restart | PASS 2026-10-13; Ubuntu host checks remain |
-| Full release | All prior gates, package compatibility, restart and unrelated Docker resource checks | Not implemented; M10 |
+| Full release | Go tests, M1–M6 integration, M7–M9 package/install/update; JSON report records host-only checks | PASS 2026-10-13; production host checks blocked |
 
 ## Host-specific limitations
 
@@ -216,3 +219,18 @@ these limits explicitly and use VPS preflight checks.
 - Limits: this is Docker-in-Docker on Docker Desktop, not an Ubuntu 26.04 VPS or
   provider-firewall test. Public ACME and native Windows client/Firewall setup
   remain host-specific.
+
+### Verified M10 full local release gate — 2026-10-13
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev`
+- Result: PASS (exit 0) for all locally runnable gates.
+- Covered: Go unit tests and compilation; the complete M1–M6 integration suite;
+  package build and offline image validation; actual M8 install and M9 update,
+  preservation, rollback, retention, and password-reset checks in isolated
+  Docker-in-Docker.
+- Report: `dist/release-validation-1.0.0-dev.json`; local gate is `passed` and
+  release readiness is `blocked_host_checks_pending`.
+- Host checks still blocked: Ubuntu 26.04 VPS/kernel and provider firewall,
+  public DNS and ACME issuance, and native Windows WireGuard client import and
+  Windows Firewall behaviour. Docker simulation is not evidence for those
+  checks.

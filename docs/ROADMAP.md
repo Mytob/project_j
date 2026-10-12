@@ -16,7 +16,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M7 — Self-contained release packages | Complete | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` passed on 2026-10-12; the archive manifest and all four images validated in an isolated daemon. |
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
-| M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
+| M10 — Full automated release validation | Complete | `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13; report explicitly blocks release readiness pending production-host checks. |
 | M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
@@ -229,15 +229,23 @@ merge commit `7470ef3`.
 
 ### M10 — Full automated release validation
 
-- **Status:** Not Started
+- **Status:** Complete (local release gate); release readiness remains blocked
 - **Dependencies:** M1–M9.
-- **Deliverables:** Complete `build.ps1 release` runner and implementation of
-  all mandatory gates, including explicit host preflight checks.
+- **Deliverables:** Complete `build.ps1 release` runner, sequential execution of
+  locally runnable gates, and a machine-readable report that explicitly lists
+  host-specific checks as blocked when no production host is available.
 - **Tests:** Full required suite from the specification; mandatory checks may
   not be silently skipped.
 - **Gate:** All locally runnable checks pass; host-only limitations are
-  reported and preflighted.
-- **Completion evidence / open issues:** Pending.
+  explicitly reported. PASS on 2026-10-13.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.0.0-dev` passed Go tests, all M1–M6 integration checks, and the
+  actual M7–M9 offline packaging/install/update suite in isolated Docker-in-
+  Docker. Report: `dist/release-validation-1.0.0-dev.json`.
+- **Open issues:** Release readiness remains blocked pending actual Ubuntu
+  26.04 VPS/kernel and provider-firewall checks, public DNS/ACME issuance, and
+  native Windows WireGuard client and Windows Firewall checks. These are not
+  asserted as complete by local simulation.
 
 ### M11 — Version 1.0.0 release
 
@@ -262,3 +270,4 @@ merge commit `7470ef3`.
 | 2026-10-12 | M5 WireGuard peer, shared network namespace, tunnel outage/recovery integration. | Commit `5e7fcb3`; [PR #5](https://github.com/Mytob/project_j/pull/5), merged as `19fa619` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M6 protected peer generation and authenticated Windows config download. | Commit `6451858`; [PR #6](https://github.com/Mytob/project_j/pull/6), merged as `f05fc7b` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M7 production container definitions and self-contained package builder. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` — PASS, exit 0; all four images loaded and verified offline in an isolated daemon. |
+| 2026-10-13 | M10 full local release validation runner and JSON blocker report. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev` — PASS, exit 0; local gates pass, production-host checks explicitly BLOCKED. |
