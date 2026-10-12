@@ -7,7 +7,7 @@ No milestone is marked complete until its mandatory tests pass.
 
 | Milestone | Status | Evidence / blocker |
 | --- | --- | --- |
-| M1 — Minimal working proxy | In Progress | Project documentation committed first; the M1 implementation and gate follow in the next increment. |
+| M1 — Minimal working proxy | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; see test log below. |
 | M2 — Default-deny IP whitelist | Not Started | Depends on M1. |
 | M3 — Administrator authentication | Not Started | Depends on M1. |
 | M4 — Admin whitelist management | Not Started | Depends on M2 and M3. |
@@ -19,7 +19,8 @@ No milestone is marked complete until its mandatory tests pass.
 | M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
 | M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
 
-The repository bootstrap documentation is prepared. The linked GitHub
+Documentation commit `c8aedb7` is on `main`; the local `dev` and
+`feature/m1-foundation` branches were created from it. The linked GitHub
 repository is private and empty. Local GitHub CLI authentication is invalid,
 so no push or pull request has been made.
 
@@ -27,7 +28,7 @@ so no push or pull request has been made.
 
 ### M1 — Minimal working proxy
 
-- **Status:** In Progress
+- **Status:** Complete
 - **Dependencies:** Empty repository bootstrap.
 - **Deliverables:** Go module, Caddy local TLS configuration, static site,
   isolated mock Jellyfin service, Compose integration environment, and
@@ -36,9 +37,15 @@ so no push or pull request has been made.
   content, mock Jellyfin forwarding, and that the mock has no published host
   port.
 - **Gate:** All foundation tests pass on Windows with Docker Desktop.
-- **Completion evidence:** Pending implementation and test gate.
-- **Open issues:** M1 integration test has not yet been run in the committed
-  implementation.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 test` passed on
+  Windows 11 x64 with Docker Desktop 29.8.2 and Compose 5.6.0. Go package
+  compilation ran in the pinned Go 1.25.2 container because native Go was
+  absent. The integration runner built the mock image, checked HTTP→HTTPS
+  redirects for all hostnames, checked HTTPS static/admin/access routes,
+  verified the mock Jellyfin response, asserted no published mock port, and
+  cleaned up its containers, network, volumes, and local image. Exit status: 0.
+- **Open issues:** WSL2 access was denied in this session. M1 does not require
+  WSL2; Linux-host-specific milestones still need a capable host.
 
 ### M2 — Default-deny IP whitelist
 
@@ -161,3 +168,4 @@ so no push or pull request has been made.
 | Date (UTC) | Change | Commit / PR | Tests and result |
 | --- | --- | --- | --- |
 | 2026-10-12 | Initial repository inspection. | None | Docker Desktop 29.8.2 and Compose 5.6.0 present. WSL access denied; native Go absent. |
+| 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `feat: add M1 local Caddy proxy foundation` on `feature/m1-foundation` (this commit) | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
