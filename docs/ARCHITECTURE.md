@@ -1,7 +1,7 @@
 # Architecture
 
 This document distinguishes the frozen 1.0 target from the currently
-implemented M1 local test environment.
+implemented M1–M3 local test environment.
 
 ## Target components and request path
 
@@ -23,19 +23,24 @@ admin container remains separate and can reach Caddy's admin API only over a
 private Unix socket with narrowly scoped filesystem permissions. It never
 receives Docker socket access. All services use `restart: unless-stopped`.
 
-## M1 local environment
+## M1–M3 local environment
 
 The local integration Compose project is under `tests/integration/`. Caddy
-serves `domain.test`, returns an explicit not-yet-implemented response for
-`admin.domain.test`, and enforces a generated allowlist policy before
+serves `domain.test`, proxies `admin.domain.test` to the Go admin service, and
+enforces a generated allowlist policy before
 reverse-proxying `access.domain.test` to a small Go mock of Jellyfin. An empty
 list generates only a 403 handler. Caddy uses its internal test CA. Only
 Caddy's HTTP and HTTPS ports are published, bound to loopback. The mock has no
 host port. The test uses two isolated source addresses to prove CIDR allow,
-default deny, and rejection of spoofed forwarding headers.
+default deny, and rejection of spoofed forwarding headers. The admin service
+loads a single file-based password credential, serves server-rendered sign-in
+and dashboard pages, rotates opaque in-memory sessions at login, expires them
+after 12 hours, protects state-changing forms with CSRF, and throttles repeated
+failed attempts. Its test-only credential fixture is disposable and its port
+is private to the Compose network.
 
 This is not a production deployment and does not establish public certificate,
-whitelist, admin, or WireGuard behaviour.
+production file ownership, public admin operation, or WireGuard behaviour.
 
 ## Trust and security boundaries
 

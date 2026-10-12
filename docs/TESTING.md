@@ -9,7 +9,7 @@ a blocker when unavailable and must not be represented as proven by simulation.
 
 ## Local environment
 
-M1 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
+M1–M3 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
 and Docker Compose v2. WSL2 is intended for Linux-specific packaging and
 network checks. Do not run the local M1 Compose project as a public service.
 
@@ -20,10 +20,11 @@ go test ./...
 ./build.ps1 test
 ```
 
-`build.ps1 test` runs Go unit tests and the M1 Compose integration runner. The
-runner builds a Go mock image, starts a uniquely named temporary Compose
-project, verifies routing, then removes only that project's containers and
-network. It publishes test Caddy ports on loopback only.
+`build.ps1 test` runs Go unit tests and the M1–M3 Compose integration runner.
+The runner builds the Go admin and mock Jellyfin images, starts a uniquely
+named temporary Compose project, verifies routing, authentication, and access
+control, then removes only that project's containers, network, volumes, and
+images. It publishes test Caddy ports on loopback only.
 
 The full command is `./build.ps1 release`; it must be expanded to cover each
 mandatory release check before M10 can pass.
@@ -34,7 +35,7 @@ mandatory release check before M10 can pass.
 | --- | --- | --- |
 | M1 Caddy HTTP/HTTPS, site, mock forwarding, unpublished mock port | Compose integration | PASS 2026-10-12 |
 | Whitelist parsing and enforcement | Unit + Caddy integration, empty default deny, spoofed headers | PASS 2026-10-12 |
-| Authentication and sessions | Unit + HTTP integration, expiry, logout, CSRF, attempts, persistence | Not implemented |
+| Authentication and sessions | Unit + HTTPS integration, expiry, logout, CSRF, attempts, persistence | PASS 2026-10-12 |
 | Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | Not implemented |
 | WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; recovery | Not implemented; Linux kernel capability required |
 | Windows client config | Key/config validation, repeat authenticated downloads, permissions | Not implemented |
@@ -84,3 +85,20 @@ these limits explicitly and use VPS preflight checks.
 - Limits: IPv6 parsing and boundary enforcement are unit tested; live Docker
   client traffic in this test environment is IPv4. The run does not prove
   public VPS firewall behaviour.
+
+### Verified M3 run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 test`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Go unit tests ran in the pinned Go 1.25.2 container.
+- Covered: salted PBKDF2 password hashes and verification; malformed hash
+  rejection; credential JSON persistence and 0600 writer permissions; session
+  expiry/revocation and constant-time CSRF validation; login throttling;
+  unauthenticated dashboard redirect; HTTPS sign-in; Secure, HttpOnly,
+  SameSite=Strict cookie flags; bad CSRF/password rejection; valid login;
+  logout and session invalidation; 429 after five failed attempts; prior M1/M2
+  routing, default-deny, spoofed-header, and mock isolation checks.
+- Limits: Integration uses local Caddy TLS and a disposable credential fixture.
+  It does not establish public certificate behaviour or production VPS file
+  ownership/permissions.

@@ -10,7 +10,7 @@ domain.test {
 
 admin.domain.test {
 	tls internal
-	respond "Admin application is not available in Milestone 1" 503
+	reverse_proxy admin:8080
 }
 
 access.domain.test {

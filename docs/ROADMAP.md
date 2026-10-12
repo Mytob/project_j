@@ -9,7 +9,7 @@ No milestone is marked complete until its mandatory tests pass.
 | --- | --- | --- |
 | M1 — Minimal working proxy | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; see test log below. |
 | M2 — Default-deny IP whitelist | Complete | Go unit tests and live Caddy/Docker enforcement passed on 2026-10-12. |
-| M3 — Administrator authentication | Not Started | Depends on M1. |
+| M3 — Administrator authentication | Complete | Go tests and M1–M3 Docker/Caddy integration passed 2026-10-12. |
 | M4 — Admin whitelist management | Not Started | Depends on M2 and M3. |
 | M5 — WireGuard connectivity | Not Started | Depends on M1 and M4 configuration boundaries. |
 | M6 — Windows WireGuard configuration | Not Started | Depends on M5. |
@@ -21,7 +21,8 @@ No milestone is marked complete until its mandatory tests pass.
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
-at merge commit `f042820`.
+at merge commit `f042820`. M2 commit `5f285cb` was merged through
+[PR #2](https://github.com/Mytob/project_j/pull/2) at merge commit `e81e422`.
 
 ## Milestone plan
 
@@ -67,14 +68,23 @@ at merge commit `f042820`.
 
 ### M3 — Administrator authentication
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** M1.
 - **Deliverables:** Go admin server, password hashing, secure sessions,
   login/logout, CSRF, login-attempt throttling, and persistent configuration.
 - **Tests:** Password verification, session expiry and logout, unauthorized
   requests, CSRF, rate limiting, and persistence.
 - **Gate:** All authentication and session tests pass.
-- **Completion evidence / open issues:** Pending.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 test` passed on
+  2026-10-12 after M3 integration was added. Unit tests cover password hash
+  format/verification, credential persistence, session expiry/revocation,
+  CSRF comparison, and rate limiting. Docker/Caddy integration covers the
+  server-rendered admin over local HTTPS, anonymous redirect, secure cookie
+  attributes, bad password and CSRF rejection, login/session rotation, logout
+  invalidation, and 429 throttling after repeated failures. Earlier M1/M2
+  routing and default-deny checks pass in the same run.
+- **Open issues:** Production credential ownership must be established by the
+  deployment milestone. Public TLS and VPS behaviour are not covered locally.
 
 ### M4 — Admin whitelist management
 
@@ -176,4 +186,5 @@ at merge commit `f042820`.
 | --- | --- | --- | --- |
 | 2026-10-12 | Initial repository inspection. | None | Docker Desktop 29.8.2 and Compose 5.6.0 present. WSL access denied; native Go absent. |
 | 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `613ff18` (M1); [PR #1](https://github.com/Mytob/project_j/pull/1), merged as `f042820` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
-| 2026-10-12 | M2 whitelist parser, persistence, Caddy policy, and access tests. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M2 whitelist parser, persistence, Caddy policy, and access tests. | Commit `5f285cb`; [PR #2](https://github.com/Mytob/project_j/pull/2), merged as `e81e422` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M3 password auth, file credentials, sessions, CSRF, throttling, and admin HTTPS integration. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
