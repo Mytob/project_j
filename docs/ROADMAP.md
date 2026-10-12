@@ -11,7 +11,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M2 — Default-deny IP whitelist | Complete | Go unit tests and live Caddy/Docker enforcement passed on 2026-10-12. |
 | M3 — Administrator authentication | Complete | PR #3 merged as `0b1b11f`; Go tests and M1–M3 integration passed. |
 | M4 — Admin whitelist management | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12. |
-| M5 — WireGuard connectivity | Not Started | Depends on M1 and M4 configuration boundaries. |
+| M5 — WireGuard connectivity | Complete | Real encrypted tunnel, outage, recovery, and prior integration checks passed on 2026-10-12. |
 | M6 — Windows WireGuard configuration | Not Started | Depends on M5. |
 | M7 — Self-contained release packages | Not Started | Depends on application and deployment artifacts. |
 | M8 — Guided VPS installer | Not Started | Depends on M7. |
@@ -25,6 +25,8 @@ at merge commit `f042820`. M2 commit `5f285cb` was merged through
 [PR #2](https://github.com/Mytob/project_j/pull/2) at merge commit `e81e422`.
 M3 commit `18c6a96` was merged through
 [PR #3](https://github.com/Mytob/project_j/pull/3) at merge commit `0b1b11f`.
+M4 commit `7954bfb` was merged through
+[PR #4](https://github.com/Mytob/project_j/pull/4) at merge commit `024b7f2`.
 
 ## Milestone plan
 
@@ -109,15 +111,22 @@ M3 commit `18c6a96` was merged through
 
 ### M5 — WireGuard connectivity
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** M1; interfaces from M4.
 - **Deliverables:** WireGuard container, shared network namespace for Caddy,
   mock home peer and Jellyfin endpoint, health checks, and required network
   permissions.
 - **Tests:** Real local tunnel traffic, HTTP forwarding, outage, and recovery.
 - **Gate:** Mock Jellyfin is reached through the encrypted tunnel.
-- **Completion evidence / open issues:** Pending. Kernel support may require
-  WSL2 or a Linux host.
+- **Completion evidence:** `pwsh -NoProfile -File .\tests\integration\run.ps1`
+  passed on 2026-10-12 using Docker Desktop's WSL2 Linux kernel. The test
+  generated disposable peer keys, brought up a real WireGuard interface,
+  reached mock Jellyfin at its tunnel address, verified reachability failed
+  with the server tunnel down, then verified recovery after the home peer
+  initiated a fresh handshake. Prior M1–M4 checks passed in the same runner.
+- **Open issues:** This proves the local Docker Desktop kernel and integration
+  topology, not Ubuntu VPS firewall rules, public UDP ingress, or Windows
+  client configuration.
 
 ### M6 — Windows WireGuard configuration
 
@@ -198,4 +207,5 @@ M3 commit `18c6a96` was merged through
 | 2026-10-12 | M1 local proxy foundation and verified project tests. | `c8aedb7` (docs); `613ff18` (M1); [PR #1](https://github.com/Mytob/project_j/pull/1), merged as `f042820` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M2 whitelist parser, persistence, Caddy policy, and access tests. | Commit `5f285cb`; [PR #2](https://github.com/Mytob/project_j/pull/2), merged as `e81e422` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M3 password auth, file credentials, sessions, CSRF, throttling, and admin HTTPS integration. | Commit `18c6a96`; [PR #3](https://github.com/Mytob/project_j/pull/3), merged as `0b1b11f` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
-| 2026-10-12 | M4 admin whitelist management, private Caddy Unix API, transaction handling, and persistence. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M4 admin whitelist management, private Caddy Unix API, transaction handling, and persistence. | Commit `7954bfb`; [PR #4](https://github.com/Mytob/project_j/pull/4), merged as `024b7f2` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M5 WireGuard peer, shared network namespace, tunnel outage/recovery integration. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |

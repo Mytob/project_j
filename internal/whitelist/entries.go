@@ -98,7 +98,7 @@ func RenderCaddyPolicy(entries []netip.Prefix) string {
 		values = append(values, entry.String())
 	}
 	return "@whitelisted remote_ip " + strings.Join(values, " ") + "\n" +
-		"handle @whitelisted {\n\treverse_proxy jellyfin-mock:8096\n}\n" +
+		"handle @whitelisted {\n\treverse_proxy 10.66.66.2:8096\n}\n" +
 		"handle {\n\trespond \"Forbidden\" 403\n}\n"
 }
 
