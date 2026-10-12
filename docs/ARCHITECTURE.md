@@ -1,7 +1,7 @@
 # Architecture
 
-This document distinguishes the frozen 1.0 target from the currently
-implemented M1–M6 local test environment.
+This document distinguishes the frozen 1.0 target, the M1–M6 local test
+environment, and the M8 Ubuntu installer implementation.
 
 ## Target components and request path
 
@@ -22,6 +22,15 @@ namespace. The WireGuard container owns published web and tunnel ports. The
 admin container remains separate and can reach Caddy's admin API only over a
 private Unix socket with narrowly scoped filesystem permissions. It never
 receives Docker socket access. All services use `restart: unless-stopped`.
+
+The installer publishes TCP 80/443 and the selected host UDP port from the
+WireGuard namespace. Since Docker DNAT may bypass the host INPUT firewall, the
+WireGuard entrypoint owns dedicated IPv4 and IPv6 namespace INPUT chains:
+established traffic and loopback are accepted, as are the expected IPv4 Windows
+peer and the three application service ports; all other ingress is dropped.
+This leaves host SSH and unrelated host firewall rules alone. It does not
+configure a provider firewall/security group; those ports must be allowed there
+by the operator.
 
 ## M1–M6 local environment
 
@@ -56,9 +65,10 @@ group for authenticated downloads. The peer file uses persistent `/32` routes
 and a 25-second keepalive; the real Windows config and server config are
 retained together by the WireGuard package and are not regenerated on restart.
 
-This is not a production deployment and does not establish public certificate,
-production file ownership, public admin operation, public UDP ingress, or
-Ubuntu VPS WireGuard behaviour.
+The M1–M6 test environment is not a production deployment. M8's actual package
+is installed in an isolated Docker-in-Docker daemon and its namespace firewall
+is inspected there; this does not establish public certificate issuance,
+provider firewall settings, public ingress, or Ubuntu VPS WireGuard behaviour.
 
 ## Trust and security boundaries
 

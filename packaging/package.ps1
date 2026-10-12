@@ -52,7 +52,10 @@ try {
     $repoMount = $repoRoot.Replace('\', '/')
     $binDirectory = Join-Path $packageDirectory 'bin'
     $binMount = $binDirectory.Replace('\', '/')
+    $workMount = $workDirectory.Replace('\', '/')
     Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/admin-linux-amd64', './cmd/admin')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/proxyctl-linux-amd64', './cmd/proxyctl')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${workMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/installcheck-linux-amd64', './tests/deployment/installcheck')
 
     $adminImage = $imageReferences[0]
     $wireguardImage = $imageReferences[1]
@@ -86,7 +89,7 @@ try {
             [ordered]@{ reference = $reference; image_id = "sha256:$configID" }
         }
     )
-    $relativeFiles = @('images.tar', 'bin/admin-linux-amd64', 'compose.yaml', '.env.example', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html', 'DEPLOYMENT.md')
+    $relativeFiles = @('images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'compose.yaml', '.env.example', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html', 'DEPLOYMENT.md')
     $fileManifest = @(
         foreach ($relative in $relativeFiles) {
             $path = Join-Path $packageDirectory $relative
@@ -110,7 +113,8 @@ try {
     $dindImage = 'docker:27.5-dind'
     Invoke-Checked 'docker' @('pull', $dindImage)
     $imagesMount = (Join-Path $packageDirectory 'images.tar').Replace('\', '/')
-    Invoke-Checked 'docker' @('run', '--privileged', '--detach', '--name', $daemonName, '--network', 'none', '--env', 'DOCKER_TLS_CERTDIR=', '-v', "${imagesMount}:/package/images.tar:ro", $dindImage)
+    $distMount = $outputRoot.Replace('\', '/')
+    Invoke-Checked 'docker' @('run', '--privileged', '--detach', '--name', $daemonName, '--network', 'none', '--env', 'DOCKER_TLS_CERTDIR=', '-v', "${imagesMount}:/package/images.tar:ro", '-v', "${distMount}:/package/dist:ro", $dindImage)
 
     $daemonReady = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
@@ -133,7 +137,7 @@ try {
     $archiveList = @(& $tar @('-tzf', $archivePath))
     if ($LASTEXITCODE -ne 0) { throw 'Could not list the built release archive.' }
     $normalizedEntries = @($archiveList | ForEach-Object { ([string]$_).Replace('./', '').TrimEnd('/') })
-    foreach ($relative in @('manifest.json', 'images.tar', 'bin/admin-linux-amd64', 'compose.yaml', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html')) {
+    foreach ($relative in @('manifest.json', 'images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'compose.yaml', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html')) {
         if ($normalizedEntries -notcontains $relative) { throw "Release archive is missing $relative" }
     }
     foreach ($secretName in @('server.conf', 'windows.conf', 'admin.json')) {
@@ -162,6 +166,10 @@ try {
             throw "Image identity in the clean daemon does not match manifest for $($image.reference)"
         }
     }
+
+    Invoke-Checked 'docker' @('exec', $daemonName, "/package/dist/.package-$PID/installcheck-linux-amd64", "/package/dist/jellyfin-proxy-$Version-linux-amd64.tar.gz")
+
+    Copy-Item -LiteralPath (Join-Path $packageDirectory 'bin/proxyctl-linux-amd64') -Destination (Join-Path $outputRoot 'proxyctl-linux-amd64') -Force
 
     Write-Host "Package validation passed: $archivePath (version $Version, $($imageReferences.Count) images loaded into an isolated daemon without registry access)."
 }

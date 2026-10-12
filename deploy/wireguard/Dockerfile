@@ -1,5 +1,5 @@
 FROM alpine:3.22
-RUN apk add --no-cache bash iproute2 wireguard-tools
+RUN apk add --no-cache bash iproute2 iptables wireguard-tools
 COPY deploy/wireguard/entrypoint.sh /usr/local/bin/wireguard-entrypoint
 RUN sed -i 's/\r$//' /usr/local/bin/wireguard-entrypoint && chmod 0755 /usr/local/bin/wireguard-entrypoint
 EXPOSE 51820/udp

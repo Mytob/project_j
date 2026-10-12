@@ -115,6 +115,13 @@ func TestAuthenticationSessionCSRFAndLogout(t *testing.T) {
 	}
 }
 
+func TestHealthEndpoint(t *testing.T) {
+	response := request(newTestServer(t), http.MethodGet, "/healthz", nil, nil)
+	if response.Code != http.StatusOK || response.Body.String() != "ok\n" {
+		t.Fatalf("health endpoint: status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
 func TestWrongPasswordAndLogoutCSRF(t *testing.T) {
 	handler := newTestServer(t)
 	page := request(handler, "GET", "/", nil, nil)

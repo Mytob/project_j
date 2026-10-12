@@ -181,7 +181,14 @@ try {
         if ($probe.Healthy) { $wireguardReady = $true; break }
         Start-Sleep -Milliseconds 300
     }
-    if (-not $wireguardReady) { throw "Home mock Jellyfin was not reachable through WireGuard: $($probe.Output)" }
+    if (-not $wireguardReady) {
+        $serverState = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard wg show 2>&1
+        $serverRoutes = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard ip route 2>&1
+        $serverFirewall = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard iptables -nvL JELLYFIN_PROXY_INPUT 2>&1
+        $peerState = & docker compose --project-name $projectName --file $composeFile exec --no-TTY home-peer wg show 2>&1
+        $peerRoutes = & docker compose --project-name $projectName --file $composeFile exec --no-TTY home-peer ip route 2>&1
+        throw "Home mock Jellyfin was not reachable through WireGuard: $($probe.Output)`nServer peer:`n$($serverState -join "`n")`nServer routes:`n$($serverRoutes -join "`n")`nServer ingress rules:`n$($serverFirewall -join "`n")`nClient peer:`n$($peerState -join "`n")`nClient routes:`n$($peerRoutes -join "`n")"
+    }
     Invoke-Compose exec --no-TTY wireguard wg-quick down /etc/wireguard/wg0.conf
     $outage = Get-WireGuardHealth -TimeoutSeconds 2
     if ($outage.Healthy) { throw 'WireGuard outage check still reached home Jellyfin.' }
@@ -365,6 +372,13 @@ try {
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
     Write-Host 'M6 integration checks passed: retained WireGuard config generation, authenticated repeat download, encrypted tunnel reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M5 gates, and isolated test resources.'
+}
+catch {
+    $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1
+    if ($LASTEXITCODE -eq 0 -and $failureLogs) {
+        Write-Host "Integration service logs before cleanup:`n$($failureLogs -join "`n")"
+    }
+    throw
 }
 finally {
     try {

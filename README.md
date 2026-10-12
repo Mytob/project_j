@@ -5,7 +5,7 @@ on a Windows PC. The planned 1.0 deployment uses Caddy and WireGuard containers
 on an Ubuntu VPS, with a small Go application for administration and a native
 Linux `proxyctl` installer.
 
-The repository has completed Milestones 1–7. Its local test environment
+The repository has completed Milestones 1–8. Its local test environment
 routes a static site and simulated Jellyfin through Caddy, with an IPv4/IPv6/
 CIDR default-deny allowlist for the access hostname. The admin hostname now
 serves a password-protected Go sign-in and session dashboard with persistent
@@ -13,9 +13,12 @@ whitelist management and live Caddy updates through a private Unix socket.
 The integration environment also verifies real WireGuard traffic between a
 server peer and a mock home Jellyfin endpoint, including outage and recovery.
 The admin dashboard provides an authenticated download of the retained Windows
-WireGuard config. A self-contained Linux/amd64 development package now bundles
-all deployment images and validates offline loading. Production installation
-and release automation remain in the roadmap milestones.
+WireGuard config. A self-contained Linux/amd64 package bundles all deployment
+images. Native `proxyctl install` validates Ubuntu 26.04 x64, guides DNS,
+password and port setup, generates WireGuard configuration, deploys only
+verified bundled images, applies a namespace-scoped ingress firewall, and
+rolls back a failed initial deployment. Updater, password reset and full
+release automation remain in later milestones.
 
 ## Supported platforms
 
@@ -67,8 +70,11 @@ Build and validate a self-contained Linux/amd64 development package:
 ./build.ps1 package -Version 1.0.0-dev
 ```
 
-The archive is written under `dist/`. The native Linux `proxyctl` installer
-and the complete release gate are still being implemented.
+The archive and standalone `proxyctl-linux-amd64` installer are written under
+`dist/`. On a supported Ubuntu 26.04 x64 VPS, copy both files and run
+`sudo ./proxyctl-linux-amd64 install ./jellyfin-proxy-1.0.0-dev-linux-amd64.tar.gz`.
+The guided installer checks DNS, asks for the initial admin password, and
+deploys only the bundled images.
 
 The full release command will be enabled after its required gates exist:
 
@@ -80,10 +86,12 @@ See [testing](docs/TESTING.md) for the test matrix and current limitations.
 
 ## Installation and updates
 
-Production installation is not implemented yet. Once complete, `proxyctl`
-will provide guided installation, updates, password reset, and rollback. Do not
-use the local M1 Compose file as a public deployment.
+Guided first installation is implemented for Ubuntu 26.04 x64. The installer
+uses `/opt/jellyfin-proxy`, refuses to overwrite an existing installation, and
+rolls back its own files and Compose resources if readiness fails. Updates and
+password reset are not implemented yet. Do not use the local M1 Compose file as
+a public deployment.
 
-See [deployment](docs/DEPLOYMENT.md) for the planned operator workflow and
-current deployment blockers, and [releasing](docs/RELEASING.md) for release
-gates and package rules.
+See [deployment](docs/DEPLOYMENT.md) for installation, Windows setup and
+troubleshooting, and [releasing](docs/RELEASING.md) for release gates and
+package rules.
