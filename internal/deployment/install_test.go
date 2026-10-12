@@ -48,15 +48,15 @@ func (r *fakeRunner) Run(_ context.Context, executable string, args ...string) (
 			"{\"Service\":\"admin\",\"State\":\"running\",\"Health\":\"healthy\"}\n", nil
 	}
 	if strings.Contains(command, " image inspect ") {
-		for reference, digest := range map[string]string{
-			"jellyfin-proxy/admin:1.0.0-dev":     "sha256:" + strings.Repeat("a", 64),
-			"jellyfin-proxy/wireguard:1.0.0-dev": "sha256:" + strings.Repeat("b", 64),
-			"caddy:2.10.2-alpine":                "sha256:" + strings.Repeat("c", 64),
-			"alpine:3.22":                        "sha256:" + strings.Repeat("d", 64),
-		} {
-			if strings.HasSuffix(command, reference) {
-				return digest, nil
-			}
+		switch {
+		case strings.Contains(command, "jellyfin-proxy/admin:"):
+			return "sha256:" + strings.Repeat("a", 64), nil
+		case strings.Contains(command, "jellyfin-proxy/wireguard:"):
+			return "sha256:" + strings.Repeat("b", 64), nil
+		case strings.Contains(command, "caddy:2.10.2-alpine"):
+			return "sha256:" + strings.Repeat("c", 64), nil
+		case strings.Contains(command, "alpine:3.22"):
+			return "sha256:" + strings.Repeat("d", 64), nil
 		}
 		return "", fmt.Errorf("unexpected image inspection")
 	}
@@ -231,11 +231,156 @@ func TestDockerSourcesFileUsesOfficialRepositoryAndValidatedCodename(t *testing.
 	}
 }
 
+func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("installer filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{}
+	installFixture(t, root, runner)
+	preserved := map[string][]byte{}
+	for _, relative := range []string{
+		"config/admin.json", "config/wireguard/server.conf", "config/wireguard/windows.conf",
+		"data/whitelist.json", "site/index.html",
+	} {
+		path := filepath.Join(root, relative)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if relative == "data/whitelist.json" && os.IsNotExist(err) {
+				data = []byte(`{"version":1,"entries":["203.0.113.10/32"]}`)
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				t.Fatal(err)
+			}
+		}
+		preserved[relative] = data
+	}
+	if err := os.WriteFile(filepath.Join(root, "site", "operator-page.txt"), []byte("keep site content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
+	manifest, err := Update(context.Background(), UpdateOptions{
+		PackagePath: packagePath, InstallRoot: root, Host: validHost(), Runner: runner,
+		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "1.0.1-dev" {
+		t.Fatalf("updated version = %s", manifest.Version)
+	}
+	for relative, expected := range preserved {
+		actual, err := os.ReadFile(filepath.Join(root, relative))
+		if err != nil || string(actual) != string(expected) {
+			t.Errorf("update changed persistent %s: got %q, err=%v", relative, actual, err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "site", "operator-page.txt")); err != nil || string(data) != "keep site content" {
+		t.Errorf("update changed operator site file: %q, %v", data, err)
+	}
+	environment, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil || !strings.Contains(string(environment), "RELEASE_VERSION=1.0.1-dev\n") {
+		t.Fatalf("active environment not updated: %q, %v", environment, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "releases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := []string{}
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			versions = append(versions, entry.Name())
+		}
+	}
+	if strings.Join(versions, ",") != "1.0.0-dev,1.0.1-dev" {
+		t.Fatalf("active and previous releases = %v", versions)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	if strings.Contains(commands, "docker pull ") || strings.Contains(commands, " compose pull ") || !strings.Contains(commands, "--force-recreate --pull never") {
+		t.Fatalf("update pulled images or did not force an offline controlled recreate: %s", commands)
+	}
+}
+
+func TestUpdateHTTPSFailureRestoresPreviousRelease(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("installer filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{}
+	installFixture(t, root, runner)
+	oldEnvironment, _ := os.ReadFile(filepath.Join(root, ".env"))
+	oldCompose, _ := os.ReadFile(filepath.Join(root, "compose.yaml"))
+	oldCaddyfile, _ := os.ReadFile(filepath.Join(root, "config", "Caddyfile"))
+	_, err := Update(context.Background(), UpdateOptions{
+		PackagePath: makeInstallPackageVersion(t, "1.0.1-dev"), InstallRoot: root, Host: validHost(), Runner: runner,
+		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return fmt.Errorf("simulated public TLS failure") },
+	})
+	if err == nil || !strings.Contains(err.Error(), "previous release was restored") {
+		t.Fatalf("update failure error = %v", err)
+	}
+	for relative, expected := range map[string][]byte{".env": oldEnvironment, "compose.yaml": oldCompose, filepath.Join("config", "Caddyfile"): oldCaddyfile} {
+		actual, readErr := os.ReadFile(filepath.Join(root, relative))
+		if readErr != nil || string(actual) != string(expected) {
+			t.Errorf("rollback did not restore %s: got %q err=%v", relative, actual, readErr)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, "releases", "1.0.1-dev")); !os.IsNotExist(err) {
+		t.Errorf("failed release was retained after complete rollback: %v", err)
+	}
+	if !strings.Contains(strings.Join(runner.commands, "\n"), "up --detach --force-recreate --pull never") {
+		t.Fatal("rollback did not recreate the previous deployment")
+	}
+}
+
+func TestResetPasswordRecreatesOnlyAdminAndChangesCredential(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("installer filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{}
+	installFixture(t, root, runner)
+	path := filepath.Join(root, "config", "admin.json")
+	if err := ResetPassword(context.Background(), root, "a different secure administrator password", runner); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(path)
+	if err != nil || !credential.Verify("a different secure administrator password") || credential.Verify("correct horse battery staple") {
+		t.Fatalf("reset administrator credential: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("reset credential permissions = %v, %v", info, err)
+	}
+	commands := strings.Join(runner.commands, "\n")
+	if !strings.Contains(commands, "--no-deps --force-recreate --pull never admin") {
+		t.Fatal("password reset did not recreate only the admin service")
+	}
+}
+
+func installFixture(t *testing.T, root string, runner CommandRunner) {
+	t.Helper()
+	_, err := Install(context.Background(), InstallOptions{
+		PackagePath: makeInstallPackage(t), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
+		WireGuardPort: 51820, Host: validHost(), Runner: runner, WaitInterval: time.Millisecond, WaitAttempts: 1,
+		DNSLookup:  func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
+		HTTPSCheck: func(context.Context, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func validHost() HostFacts {
 	return HostFacts{OSID: "ubuntu", VersionID: "26.04", Codename: "resolute", Arch: "x86_64", EffectiveUID: 0}
 }
 
 func makeInstallPackage(t *testing.T) string {
+	return makeInstallPackageVersion(t, "1.0.0-dev")
+}
+
+func makeInstallPackageVersion(t *testing.T, version string) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
@@ -249,9 +394,9 @@ func makeInstallPackage(t *testing.T) string {
 		"site/index.html":          "Jellyfin Proxy",
 		"DEPLOYMENT.md":            "deployment notes",
 	}
-	manifest := release.Manifest{SchemaVersion: 1, Version: "1.0.0-dev", Platform: "linux/amd64", Images: []release.Image{
-		{Reference: "jellyfin-proxy/admin:1.0.0-dev", ImageID: "sha256:" + strings.Repeat("a", 64)},
-		{Reference: "jellyfin-proxy/wireguard:1.0.0-dev", ImageID: "sha256:" + strings.Repeat("b", 64)},
+	manifest := release.Manifest{SchemaVersion: 1, Version: version, Platform: "linux/amd64", Images: []release.Image{
+		{Reference: "jellyfin-proxy/admin:" + version, ImageID: "sha256:" + strings.Repeat("a", 64)},
+		{Reference: "jellyfin-proxy/wireguard:" + version, ImageID: "sha256:" + strings.Repeat("b", 64)},
 		{Reference: "caddy:2.10.2-alpine", ImageID: "sha256:" + strings.Repeat("c", 64)},
 		{Reference: "alpine:3.22", ImageID: "sha256:" + strings.Repeat("d", 64)},
 	}}

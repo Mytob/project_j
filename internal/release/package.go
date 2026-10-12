@@ -21,6 +21,10 @@ const maxPackageBytes int64 = 2 << 30
 
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 
+// ValidVersion reports whether a value matches the release package version
+// format accepted by this installer.
+func ValidVersion(value string) bool { return versionPattern.MatchString(value) }
+
 type Manifest struct {
 	SchemaVersion int            `json:"schema_version"`
 	Version       string         `json:"version"`

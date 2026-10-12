@@ -15,7 +15,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M6 — Windows WireGuard configuration | Complete | PR #6 merged as `f05fc7b`; authenticated repeat downloads, restart persistence, split routes, keepalive, and restricted permissions verified. |
 | M7 — Self-contained release packages | Complete | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` passed on 2026-10-12; the archive manifest and all four images validated in an isolated daemon. |
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
-| M9 — Updater, recovery, retention | Not Started | Depends on M8. |
+| M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
 | M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
 
@@ -33,6 +33,8 @@ M6 commit `6451858` was merged through
 [PR #6](https://github.com/Mytob/project_j/pull/6) at merge commit `f05fc7b`.
 M7 was merged through [PR #7](https://github.com/Mytob/project_j/pull/7) at
 merge commit `ae72a39`.
+M8 was merged through [PR #8](https://github.com/Mytob/project_j/pull/8) at
+merge commit `7470ef3`.
 
 ## Milestone plan
 
@@ -205,7 +207,7 @@ merge commit `ae72a39`.
 
 ### M9 — Updater, recovery, and retention
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** M8.
 - **Deliverables:** `proxyctl update` and `proxyctl reset-password`, package
   compatibility checks, health verification, rollback, and retention of the
@@ -213,7 +215,17 @@ merge commit `ae72a39`.
 - **Tests:** Update success/failure, rollback, data preservation, release
   retention, restart behaviour, and no global Docker pruning.
 - **Gate:** Update and recovery tests pass.
-- **Completion evidence / open issues:** Pending.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 package
+  -Version 1.0.0-dev` passed on 2026-10-13. In addition to Go tests and M1–M8
+  gates, the actual package was installed in isolated Docker-in-Docker, updated
+  offline twice, and checked for preservation of the credential, whitelist,
+  WireGuard keys, and site files. A forced HTTPS readiness failure restored the
+  previous Compose release; successful retry retained only active and previous
+  version directories. Password reset changed the credential and recreated
+  only the admin container. The unrelated port-conflict container remained
+  running.
+- **Limits:** No Ubuntu 26.04 host was available. These checks do not establish
+  provider firewall, public ACME, or native Windows setup behavior.
 
 ### M10 — Full automated release validation
 

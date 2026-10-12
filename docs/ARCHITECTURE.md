@@ -89,10 +89,13 @@ provider firewall settings, public ingress, or Ubuntu VPS WireGuard behaviour.
 
 The planned install root is `/opt/jellyfin-proxy/` with `config/`, `data/`,
 `site/`, `releases/`, and `compose.yaml`. Deployment config is validated and
-written atomically. The updater may replace active release files and compose
-templates, but not user data, credentials, whitelist state, WireGuard keys, or
-website content. The current M1 test files live in the repository and create
-no deployment data.
+written atomically. The updater stages and verifies each release before
+replacing active environment, Compose, and Caddy template files. It preserves
+credentials, whitelist state, WireGuard keys, and site content, then verifies
+service and HTTPS readiness. On failure it restores the previous files and
+recreates the previous services. It retains the active and previous version
+directories, deleting only older versioned directories after success. The
+current M1 test files live in the repository and create no deployment data.
 
 ## Module boundaries
 
