@@ -1,9 +1,53 @@
 services:
-  caddy:
-    image: caddy:2.10.2-alpine
+  wireguard:
+    build:
+      context: ../..
+      dockerfile: deploy/wireguard/Dockerfile
+    cap_add:
+      - NET_ADMIN
     ports:
       - "127.0.0.1:${HTTP_PORT:-18080}:80"
       - "127.0.0.1:${HTTPS_PORT:-18443}:443"
+    volumes:
+      - ./wireguard-server.generated.conf:/etc/wireguard/wg0.conf:ro
+    restart: unless-stopped
+
+  home-peer:
+    build:
+      context: ../..
+      dockerfile: deploy/wireguard/Dockerfile
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./wireguard-peer.generated.conf:/etc/wireguard/wg0.conf:ro
+    depends_on:
+      wireguard:
+        condition: service_healthy
+    restart: unless-stopped
+
+  home-jellyfin:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.mock-jellyfin
+    network_mode: service:home-peer
+    depends_on:
+      home-peer:
+        condition: service_healthy
+
+  wireguard-check:
+    image: curlimages/curl:8.12.1
+    network_mode: service:wireguard
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep 600"]
+    depends_on:
+      wireguard:
+        condition: service_healthy
+      home-jellyfin:
+        condition: service_started
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    network_mode: service:wireguard
     volumes:
       - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
       - ./whitelist.caddy.generated:/etc/caddy/whitelist.caddy:ro
@@ -12,6 +56,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
+      wireguard:
+        condition: service_healthy
       caddy-socket-init:
         condition: service_completed_successfully
 
@@ -48,12 +94,6 @@ services:
     volumes:
       - admin_data:/data
     command: ["sh", "-c", "chown 65532:65532 /data && chmod 700 /data"]
-  jellyfin-mock:
-    build:
-      context: ../..
-      dockerfile: tests/integration/Dockerfile.mock-jellyfin
-    expose:
-      - "8096"
 
   trusted-client:
     image: curlimages/curl:8.12.1

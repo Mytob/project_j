@@ -5,10 +5,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$projectName = "jellyfin-proxy-m3-$PID"
+$projectName = "jellyfin-proxy-m5-$PID"
 $composeFile = Join-Path $PSScriptRoot 'compose.yaml'
 $policyFile = Join-Path $PSScriptRoot 'whitelist.caddy.generated'
 $credentialFile = Join-Path $PSScriptRoot 'admin-credential.generated.json'
+$wireguardServerFile = Join-Path $PSScriptRoot 'wireguard-server.generated.conf'
+$wireguardPeerFile = Join-Path $PSScriptRoot 'wireguard-peer.generated.conf'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $subnetOctet = 1 + ($PID % 250)
 $subnetPrefix = "172.29.$subnetOctet"
@@ -106,7 +108,7 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
 
 function Get-ClientResponse([string]$Service, [string]$Path, [string]$ForwardedFor = '') {
     $uri = "https://access.domain.test$Path"
-    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-to', 'access.domain.test:443:caddy:443')
+    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-to', 'access.domain.test:443:wireguard:443')
     if ($ForwardedFor) {
         $curlArgs += @('--header', "X-Forwarded-For: $ForwardedFor")
     }
@@ -119,11 +121,27 @@ function Get-ClientResponse([string]$Service, [string]$Path, [string]$ForwardedF
 }
 
 function Get-MockRequestCount {
-    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY trusted-client curl --noproxy '*' --silent --show-error http://jellyfin-mock:8096/__requests
+    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard-check curl --noproxy '*' --silent --show-error --connect-timeout 3 http://10.66.66.2:8096/__requests
     if ($LASTEXITCODE -ne 0) {
         throw "Could not read mock request count (exit $LASTEXITCODE)."
     }
     [string]$output | ForEach-Object { $_.Trim() }
+}
+
+function New-WireGuardTestConfigs {
+    if (Get-Command go -ErrorAction SilentlyContinue) {
+        & go run ./tests/integration/wireguardgen --server $wireguardServerFile --peer $wireguardPeerFile --endpoint 'wireguard:51820'
+    }
+    else {
+        $repoPath = $repoRoot.Replace('\', '/')
+        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.25.2-alpine3.22 go run ./tests/integration/wireguardgen --server ./tests/integration/wireguard-server.generated.conf --peer ./tests/integration/wireguard-peer.generated.conf --endpoint 'wireguard:51820'
+    }
+    if ($LASTEXITCODE -ne 0) { throw "WireGuard test config generation failed with exit code $LASTEXITCODE" }
+}
+
+function Get-WireGuardHealth([int]$TimeoutSeconds = 2) {
+    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard-check curl --noproxy '*' --fail --silent --show-error --connect-timeout $TimeoutSeconds http://10.66.66.2:8096/health
+    [pscustomobject]@{ Healthy = ($LASTEXITCODE -eq 0 -and ([string]$output).Trim() -eq 'ok'); Output = [string]$output }
 }
 
 Push-Location $repoRoot
@@ -137,6 +155,7 @@ try {
     $script:adminTempDir = Join-Path $env:TEMP "jellyfin-proxy-admin-test-$PID"
     New-Item -ItemType Directory -Path $adminTempDir -Force | Out-Null
     New-TestCredential
+    New-WireGuardTestConfigs
 
     Invoke-Compose up --build --detach
 
@@ -154,6 +173,35 @@ try {
     }
     if (-not $httpReady) {
         throw 'Caddy did not become ready within 60 seconds.'
+    }
+
+    $wireguardDeadline = (Get-Date).AddSeconds(30)
+    $wireguardReady = $false
+    while ((Get-Date) -lt $wireguardDeadline) {
+        $probe = Get-WireGuardHealth -TimeoutSeconds 2
+        if ($probe.Healthy) { $wireguardReady = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $wireguardReady) { throw "Home mock Jellyfin was not reachable through WireGuard: $($probe.Output)" }
+    Invoke-Compose exec --no-TTY wireguard wg-quick down /etc/wireguard/wg0.conf
+    $outage = Get-WireGuardHealth -TimeoutSeconds 2
+    if ($outage.Healthy) { throw 'WireGuard outage check still reached home Jellyfin.' }
+    Invoke-Compose exec --no-TTY wireguard wg-quick up /etc/wireguard/wg0.conf
+    # The server interface lost its peer endpoint when it went down; send one
+    # packet from the initiating home peer to trigger a fresh handshake.
+    & docker compose --project-name $projectName --file $composeFile exec --no-TTY home-peer ping -c 1 -W 2 10.66.66.1 2>&1 | Out-Null
+    $recoveryDeadline = (Get-Date).AddSeconds(15)
+    $wireguardRecovered = $false
+    while ((Get-Date) -lt $recoveryDeadline) {
+        $probe = Get-WireGuardHealth -TimeoutSeconds 2
+        if ($probe.Healthy) { $wireguardRecovered = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $wireguardRecovered) {
+        $serverState = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard wg show
+        $peerState = & docker compose --project-name $projectName --file $composeFile exec --no-TTY home-peer wg show
+        $serverRoutes = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard ip route
+        throw "WireGuard did not recover. Server state:`n$($serverState -join "`n")`nPeer state:`n$($peerState -join "`n")`nRoutes:`n$($serverRoutes -join "`n")"
     }
 
     Assert-Equal '308' ([string][int]$httpCheck.StatusCode) 'Base hostname did not redirect HTTP to HTTPS.'
@@ -277,14 +325,17 @@ try {
 
     $composeRows = Invoke-Compose ps --format json
     $mockRows = @($composeRows | ForEach-Object { $_ | ConvertFrom-Json })
-    $mock = $mockRows | Where-Object { $_.Service -eq 'jellyfin-mock' } | Select-Object -First 1
+    $mock = $mockRows | Where-Object { $_.Service -eq 'home-jellyfin' } | Select-Object -First 1
     if (-not $mock) {
-        throw 'Compose did not report the mock Jellyfin service.'
+        throw 'Compose did not report the home mock Jellyfin service.'
     }
     $inspection = (& docker inspect $mock.ID | ConvertFrom-Json)[0]
     if ($inspection.NetworkSettings.Ports.'8096/tcp') {
         throw 'Mock Jellyfin unexpectedly has a published host port.'
     }
+    $wireguardContainer = $mockRows | Where-Object { $_.Service -eq 'wireguard' } | Select-Object -First 1
+    $wireguardInspection = (& docker inspect $wireguardContainer.ID | ConvertFrom-Json)[0]
+    if ($wireguardInspection.NetworkSettings.Ports.'51820/udp') { throw 'Test WireGuard UDP port unexpectedly has a host binding.' }
     $adminContainer = $mockRows | Where-Object { $_.Service -eq 'admin' } | Select-Object -First 1
     $adminInspection = (& docker inspect $adminContainer.ID | ConvertFrom-Json)[0]
     if ($adminInspection.NetworkSettings.Ports.'8080/tcp') { throw 'Admin unexpectedly has a published host port.' }
@@ -292,7 +343,7 @@ try {
     $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
-    Write-Host 'M4 integration checks passed: M1 routing, M2 access control, M3 authentication, live admin whitelist updates and persistence, Caddy Unix socket isolation, and rollback cases.'
+    Write-Host 'M5 integration checks passed: encrypted WireGuard reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M4 gates, and isolated test resources.'
 }
 finally {
     try {
@@ -301,6 +352,8 @@ finally {
     finally {
         Remove-Item $policyFile -ErrorAction SilentlyContinue
         Remove-Item $credentialFile -ErrorAction SilentlyContinue
+        Remove-Item $wireguardServerFile -ErrorAction SilentlyContinue
+        Remove-Item $wireguardPeerFile -ErrorAction SilentlyContinue
         if ($adminTempDir) { Remove-Item $adminTempDir -Recurse -Force -ErrorAction SilentlyContinue }
         Remove-Item Env:HTTP_PORT -ErrorAction SilentlyContinue
         Remove-Item Env:HTTPS_PORT -ErrorAction SilentlyContinue

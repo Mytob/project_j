@@ -112,7 +112,7 @@ func TestRenderCaddyPolicyDefaultsToDeny(t *testing.T) {
 	if !strings.Contains(policy, "@whitelisted remote_ip 192.0.2.0/24 2001:db8::/64") {
 		t.Fatalf("policy has unexpected matcher: %q", policy)
 	}
-	if !strings.Contains(policy, "reverse_proxy jellyfin-mock:8096") || !strings.Contains(policy, `respond "Forbidden" 403`) {
+	if !strings.Contains(policy, "reverse_proxy 10.66.66.2:8096") || !strings.Contains(policy, `respond "Forbidden" 403`) {
 		t.Fatalf("policy is missing proxy or deny handler: %q", policy)
 	}
 	invalid := RenderCaddyPolicy([]netip.Prefix{{}})

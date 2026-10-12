@@ -9,7 +9,7 @@ a blocker when unavailable and must not be represented as proven by simulation.
 
 ## Local environment
 
-M1–M4 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
+M1–M5 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
 and Docker Compose v2. WSL2 is intended for Linux-specific packaging and
 network checks. Do not run the local M1 Compose project as a public service.
 
@@ -20,11 +20,12 @@ go test ./...
 ./build.ps1 test
 ```
 
-`build.ps1 test` runs Go unit tests and the M1–M4 Compose integration runner.
+`build.ps1 test` runs Go unit tests and the M1–M5 Compose integration runner.
 The runner builds the Go admin and mock Jellyfin images, starts a uniquely
 named temporary Compose project, verifies routing, authentication, and access
-control, then removes only that project's containers, network, volumes, and
-images. It publishes test Caddy ports on loopback only.
+control, exercises the encrypted WireGuard tunnel including outage and
+recovery, then removes only that project's containers, network, volumes, and
+images. It publishes test web ports on loopback only.
 
 The full command is `./build.ps1 release`; it must be expanded to cover each
 mandatory release check before M10 can pass.
@@ -37,7 +38,7 @@ mandatory release check before M10 can pass.
 | Whitelist parsing and enforcement | Unit + Caddy integration, empty default deny, spoofed headers | PASS 2026-10-12 |
 | Authentication and sessions | Unit + HTTPS integration, expiry, logout, CSRF, attempts, persistence | PASS 2026-10-12 |
 | Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | PASS 2026-10-12 |
-| WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; recovery | Not implemented; Linux kernel capability required |
+| WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; outage and recovery | PASS 2026-10-12 |
 | Windows client config | Key/config validation, repeat authenticated downloads, permissions | Not implemented |
 | Package | Extract/load images in clean Docker daemon without registry pulls | Not implemented |
 | Installer/updater | Fresh install, preservation, failure rollback, SSH/firewall preservation, scoped cleanup | Not implemented; Ubuntu host checks required |
@@ -47,8 +48,9 @@ mandatory release check before M10 can pass.
 
 Local Caddy TLS verifies hostname routing but does not prove public ACME
 certificate issuance. Docker simulation does not prove Ubuntu host firewall,
-public ingress, or VPS routing. WireGuard requires tunnel tests on a host with
-the required kernel support. Windows Firewall rules and actual Windows
+public ingress, or VPS routing. The Docker Desktop Linux engine used here
+supports a real WireGuard tunnel; this does not validate every target VPS
+kernel. Windows Firewall rules and actual Windows
 WireGuard client import need host verification. Release readiness must report
 these limits explicitly and use VPS preflight checks.
 
@@ -118,3 +120,18 @@ these limits explicitly and use VPS preflight checks.
 - Limits: IPv6 is parsed, managed, persisted, and rendered into Caddy config,
   but live client traffic in this Docker test network is IPv4. Production VPS
   socket ownership and WireGuard routing require later deployment gates.
+
+### Verified M5 run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 test`.
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop Linux engine on
+  WSL2 kernel `6.18.33.2-microsoft-standard-WSL2`; Docker Compose 5.6.0.
+- Covered: ephemeral WireGuard key generation; kernel WireGuard interface
+  creation; encrypted peer handshake and access to mock Jellyfin over the
+  tunnel; loss of Jellyfin reachability when the server tunnel is taken down;
+  recovery after the home peer initiates a new handshake; Jellyfin has no
+  published port; admin and Caddy API remain private; prior M1–M4 checks.
+- Limits: This validates the Docker Desktop Linux kernel and test topology.
+  It does not establish Ubuntu VPS firewall rules, public UDP ingress, Windows
+  WireGuard client configuration, or production deployment.
