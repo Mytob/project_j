@@ -9,7 +9,7 @@ a blocker when unavailable and must not be represented as proven by simulation.
 
 ## Local environment
 
-M1–M3 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
+M1–M4 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
 and Docker Compose v2. WSL2 is intended for Linux-specific packaging and
 network checks. Do not run the local M1 Compose project as a public service.
 
@@ -20,7 +20,7 @@ go test ./...
 ./build.ps1 test
 ```
 
-`build.ps1 test` runs Go unit tests and the M1–M3 Compose integration runner.
+`build.ps1 test` runs Go unit tests and the M1–M4 Compose integration runner.
 The runner builds the Go admin and mock Jellyfin images, starts a uniquely
 named temporary Compose project, verifies routing, authentication, and access
 control, then removes only that project's containers, network, volumes, and
@@ -36,7 +36,7 @@ mandatory release check before M10 can pass.
 | M1 Caddy HTTP/HTTPS, site, mock forwarding, unpublished mock port | Compose integration | PASS 2026-10-12 |
 | Whitelist parsing and enforcement | Unit + Caddy integration, empty default deny, spoofed headers | PASS 2026-10-12 |
 | Authentication and sessions | Unit + HTTPS integration, expiry, logout, CSRF, attempts, persistence | PASS 2026-10-12 |
-| Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | Not implemented |
+| Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | PASS 2026-10-12 |
 | WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; recovery | Not implemented; Linux kernel capability required |
 | Windows client config | Key/config validation, repeat authenticated downloads, permissions | Not implemented |
 | Package | Extract/load images in clean Docker daemon without registry pulls | Not implemented |
@@ -102,3 +102,19 @@ these limits explicitly and use VPS preflight checks.
 - Limits: Integration uses local Caddy TLS and a disposable credential fixture.
   It does not establish public certificate behaviour or production VPS file
   ownership/permissions.
+
+### Verified M4 run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 test`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Go unit tests ran in the pinned Go 1.25.2 container.
+- Covered: authorized whitelist view/add/remove; invalid and duplicate entry
+  rejection; canonical IPv4 CIDR and IPv6 entries; live Caddy configuration
+  updates over a permissioned Unix socket; immediate allow/deny effect;
+  persistence and Caddy policy restoration after admin restart; admin and
+  Caddy API have no published host ports; transaction unit tests for activation
+  failure, persistence failure, and concurrent modifications.
+- Limits: IPv6 is parsed, managed, persisted, and rendered into Caddy config,
+  but live client traffic in this Docker test network is IPv4. Production VPS
+  socket ownership and WireGuard routing require later deployment gates.

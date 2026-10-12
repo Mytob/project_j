@@ -2,6 +2,7 @@ package admin
 
 import (
 	"embed"
+	"errors"
 	"html/template"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/whitelist"
 )
 
 //go:embed templates/*.html
@@ -18,15 +20,20 @@ type Server struct {
 	credential *auth.Credential
 	sessions   *auth.Sessions
 	limiter    *auth.LoginLimiter
+	whitelist  *WhitelistManager
 	templates  *template.Template
 	logger     *slog.Logger
 }
 
-func New(credential *auth.Credential, logger *slog.Logger) *Server {
+func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*WhitelistManager) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger}
+	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger}
+	if len(whitelistManager) > 0 {
+		server.whitelist = whitelistManager[0]
+	}
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -35,6 +42,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
+	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
+	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
 	return s.securityHeaders(mux)
 }
 
@@ -121,7 +130,62 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	csrf, _, _ := s.sessions.State(id)
-	s.render(w, "dashboard.html", map[string]any{"CSRF": csrf})
+	entries := []string{}
+	if s.whitelist != nil {
+		var err error
+		entries, err = s.whitelist.List()
+		if err != nil {
+			http.Error(w, "Whitelist is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	s.render(w, "dashboard.html", map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil})
+}
+
+func (s *Server) addWhitelistEntry(w http.ResponseWriter, r *http.Request) {
+	s.changeWhitelist(w, r, true)
+}
+func (s *Server) removeWhitelistEntry(w http.ResponseWriter, r *http.Request) {
+	s.changeWhitelist(w, r, false)
+}
+
+func (s *Server) changeWhitelist(w http.ResponseWriter, r *http.Request, add bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.whitelist == nil {
+		http.Error(w, "Whitelist management is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var err error
+	if add {
+		err = s.whitelist.Add(r.FormValue("entry"))
+	} else {
+		err = s.whitelist.Remove(r.FormValue("entry"))
+	}
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, whitelist.ErrInvalidEntry):
+			status = http.StatusBadRequest
+		case errors.Is(err, ErrDuplicateWhitelistEntry), errors.Is(err, ErrWhitelistEntryNotFound):
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
 func (s *Server) session(r *http.Request) (string, bool) {
