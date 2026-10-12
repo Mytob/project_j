@@ -14,7 +14,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M5 — WireGuard connectivity | Complete | PR #5 merged as `19fa619`; real encrypted tunnel, outage, recovery, and prior integration checks passed on 2026-10-12. |
 | M6 — Windows WireGuard configuration | Complete | PR #6 merged as `f05fc7b`; authenticated repeat downloads, restart persistence, split routes, keepalive, and restricted permissions verified. |
 | M7 — Self-contained release packages | Complete | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` passed on 2026-10-12; the archive manifest and all four images validated in an isolated daemon. |
-| M8 — Guided VPS installer | Not Started | Depends on M7. |
+| M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Not Started | Depends on M8. |
 | M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
 | M11 — Version 1.0.0 release | Not Started | Depends on M10 and actual release permissions. |
@@ -31,6 +31,8 @@ M5 commit `5e7fcb3` was merged through
 [PR #5](https://github.com/Mytob/project_j/pull/5) at merge commit `19fa619`.
 M6 commit `6451858` was merged through
 [PR #6](https://github.com/Mytob/project_j/pull/6) at merge commit `f05fc7b`.
+M7 was merged through [PR #7](https://github.com/Mytob/project_j/pull/7) at
+merge commit `ae72a39`.
 
 ## Milestone plan
 
@@ -177,7 +179,7 @@ M6 commit `6451858` was merged through
 
 ### M8 — Guided VPS installer
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** M7.
 - **Deliverables:** Native Linux `proxyctl install`, Ubuntu 26.04 x64
   preflight, Docker/Compose detection, DNS guidance and resolution check,
@@ -186,8 +188,20 @@ M6 commit `6451858` was merged through
 - **Tests:** Fresh install and failure-path tests; preserve existing SSH and
   unrelated firewall rules; ensure failed installs do not leave public access.
 - **Gate:** Automated fresh-install and failure-path tests pass.
-- **Completion evidence / open issues:** Pending. Host-specific tests need
-  Ubuntu 26.04.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 package
+  -Version 1.0.0-dev` passed on 2026-10-13. The gate ran Go tests and M1–M6
+  integrations; built the installer and release images; loaded the archive into
+  an isolated daemon without network access; installed the actual package in a
+  fresh isolated deployment; checked IPv4 and IPv6 namespace ingress
+  allow/drop rules and unchanged host INPUT rules; and forced a public-port
+  collision to verify files rolled back while the unrelated conflict container
+  remained running.
+- **Limits:** No Ubuntu 26.04 VPS or provider firewall was available. Public
+  ACME, provider ingress, host/kernel behavior, and the Windows WireGuard and
+  Firewall setup require actual host verification. The installer does not
+  change host UFW/nftables/iptables; it filters the Docker-published service
+  namespace so Docker DNAT cannot expose other ports, and leaves SSH and
+  unrelated host policy untouched.
 
 ### M9 — Updater, recovery, and retention
 

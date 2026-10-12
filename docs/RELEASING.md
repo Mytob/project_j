@@ -1,13 +1,13 @@
 # Releasing
 
-The M7 package builder is implemented. The production installer, updater, and
-complete M10 release gate are still roadmap work.
+The M7 package builder and M8 first-install flow are implemented. Updating,
+password reset, and the complete M10 release gate are still roadmap work.
 
 ## Versioning and package
 
 Use semantic versions; the first release is `1.0.0`. Build a package with
 `./build.ps1 package -Version 1.0.0-dev` during development. The target release bundle
-contains a standalone Linux x64 `proxyctl`, versioned manifest, deployment
+contains standalone Linux x64 `proxyctl` and admin executables, a versioned manifest, deployment
 templates, and every required Docker image as an archive. A clean installation
 must not pull application images from a registry. Package compatibility and
 image identities must be validated before install/update.
@@ -24,6 +24,13 @@ image identities must be validated before install/update.
 - No unrelated Docker resources are removed or changed.
 - Host-specific preflight checks exist; local simulation is not represented as
   proof of public TLS or VPS firewall behaviour.
+
+The M8 package gate runs the actual installer against an isolated Docker-in-
+Docker daemon with image-registry access disabled. It verifies fresh install,
+the app namespace ingress filter, and failure cleanup while an unrelated
+container remains running. This is not an Ubuntu VPS, public TLS, or provider
+firewall test; the operator must allow TCP 80/443 and the configured UDP port
+at the VPS provider.
 
 ## Branch and publication process
 

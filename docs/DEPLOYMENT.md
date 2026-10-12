@@ -1,49 +1,144 @@
 # Deployment
 
-Production installation is not yet implemented. The instructions below define
-the intended 1.0 operator path and must be converted into executable guidance
-and `proxyctl` checks before release.
+## Supported target
 
-## Target prerequisites
+- Ubuntu 26.04 LTS, x86_64, with root access through `sudo`.
+- A VPS with a public IPv4 and/or IPv6 address and inbound TCP 80/443 plus a
+  chosen UDP WireGuard port allowed by its provider firewall/security group.
+- Three DNS names pointing to the VPS: the base domain, `admin.<domain>`, and
+  `access.<domain>`.
+- A Windows 11 Jellyfin host with the official WireGuard client.
+- Docker Engine and Compose v2. If Docker is absent, `proxyctl` can install it
+  from Docker's official Ubuntu APT repository after operator confirmation.
 
-- Ubuntu 26.04 LTS x64 VPS with public IPv4 and/or IPv6.
-- Docker Engine and Docker Compose plugin.
-- Domain DNS control and three hostnames pointing to the VPS.
-- Windows 11 Jellyfin host with the official WireGuard client.
-- An SSH account with sudo access; the installer must preserve its SSH port.
+The installer reports the addresses returned by DNS and asks the operator to
+confirm them. It cannot infer a VPS's public/NAT address. It refuses unsupported
+OS versions/architectures, non-root execution, an existing `/opt/jellyfin-proxy`
+directory, or existing Docker resources for the `jellyfin-proxy` Compose
+project. It does not overwrite an earlier installation.
 
-## Intended installation
+## Install
 
-1. Verify host release, architecture, privileges, Docker, Compose, and DNS.
-2. If Docker is absent, offer installation through Docker's official APT
-   repository.
-3. Run the versioned native `proxyctl` package installer.
-4. Set the base domain and initial administrator password using hidden input.
-5. Generate WireGuard server/client config and deploy bundled images.
-6. Leave the Jellyfin whitelist empty (default deny).
-7. Verify service health and readiness before reporting success.
+Build or obtain the matching Linux/amd64 package and standalone installer. Copy
+both to the VPS, then run from an interactive terminal:
 
-Install files are planned under `/opt/jellyfin-proxy/`; config, data, site,
-releases, and Compose state are separate. Do not publish the local M1 test
-Compose project to the Internet.
+```sh
+sudo ./proxyctl-linux-amd64 install ./jellyfin-proxy-1.0.0.tar.gz
+```
 
-## Windows WireGuard and firewall
+The guided prompts collect the base domain, confirmation of the displayed DNS
+records, a password (hidden input, 12 or more characters), and the public UDP
+port (default 51820). The installer then validates the package, lays out
+`/opt/jellyfin-proxy/`, generates retained WireGuard peer configurations,
+loads only the package's verified images, starts the fixed Compose project and
+waits for healthy services and public HTTPS on the base domain. An empty
+whitelist is installed, so the Jellyfin access hostname denies all clients
+until an administrator adds allowlist entries.
 
-The admin service provides an authenticated, non-cacheable downloadable `.conf`
-for the official Windows client when the retained WireGuard pair is provisioned.
-The generated file uses split tunnelling and persistent keepalive. The M8
-installer will provision the files and set the narrow file ownership needed by
-the admin service.
-The Windows firewall instructions will permit Jellyfin TCP traffic only from
-the VPS WireGuard address. They will not add router forwarding or home LAN
-routes.
+The install is deliberately non-destructive: it refuses to reuse an existing
+install or project. If startup or readiness fails, it stops only the new
+`jellyfin-proxy` Compose project, removes its generated volumes and files, and
+reports the failing stage. It does not globally prune images or alter other
+Compose projects. Docker Engine/Compose installation, if selected, is a
+separate system package operation and is not rolled back.
 
-## Verification and troubleshooting
+The installed directories are:
 
-Release deployment guidance must include DNS resolution, Caddy HTTPS
-readiness, WireGuard peer health, access whitelist behaviour, Windows firewall
-checks, and Jellyfin connectivity. It must distinguish VPS preflight from
-local simulation. Concrete commands and recovery steps will be added when the
-installer is implemented and tested.
+```text
+/opt/jellyfin-proxy/
+├── config/       # admin credentials, Caddy config, retained WireGuard peers
+├── data/         # persistent admin-managed whitelist
+├── site/         # persistent base-domain website
+├── releases/     # verified package archive contents by version
+├── compose.yaml
+└── .env
+```
 
-Current blocker: no production deployment or host preflight code exists yet.
+## VPS firewall and ports
+
+Docker publishes TCP 80/443 and the selected host UDP port from the WireGuard
+container's network namespace. Docker DNAT can bypass the host's normal INPUT
+firewall chain, so the WireGuard container installs IPv4 and IPv6 ingress
+filters in that namespace. They permit established traffic, loopback, TCP
+80/443, and UDP 51820 inside the container, then drop other ingress; the IPv4
+filter also permits the expected Windows peer. The published host UDP port maps
+to container UDP 51820. This does not edit UFW,
+nftables, host iptables, the SSH port, or unrelated Docker resources; it also
+does not disable an existing host/provider firewall. Ensure the provider
+firewall/security group permits the three published services. If a host-level
+policy already blocks Docker forwarding, configure that policy using your VPS
+provider's supported procedure while preserving SSH access.
+
+The namespace rule is installed on each WireGuard container start. The Windows
+peer is assigned `10.66.66.2`; the VPS peer is `10.66.66.1`.
+
+## First login and Windows WireGuard
+
+1. Open `https://admin.<domain>` and sign in with the initial password.
+2. Download the Windows WireGuard configuration from the authenticated admin
+   dashboard. The same retained configuration can be downloaded again; it uses
+   split-tunnel `/32` routes and a 25-second persistent keepalive.
+3. Import it into the official WireGuard client on the Windows Jellyfin PC and
+   activate the tunnel.
+4. Add only the desired public client IP addresses/CIDRs to the access
+   whitelist. An empty list is default deny.
+5. Restrict the Windows Jellyfin inbound firewall rule to TCP port 8096 from
+   the VPS WireGuard address `10.66.66.1`. In an elevated PowerShell window on
+   Windows, a narrow example rule is:
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Jellyfin from VPS WireGuard" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8096 -RemoteAddress 10.66.66.1 -Profile Any
+   ```
+
+   Review existing broad Jellyfin allow rules and disable those that would
+   allow other remote sources. Do not configure home-router port forwarding or
+   LAN routes for this deployment.
+
+## Verification
+
+- Confirm all three names resolve to this VPS before installation.
+- Confirm `https://<domain>/` shows the static site and has a publicly trusted
+  certificate.
+- Sign in at `https://admin.<domain>` and download the Windows config twice;
+  the files should be identical.
+- With the Windows peer active, confirm its handshake is recent and add a
+  temporary allowed client to verify Jellyfin access through
+  `https://access.<domain>`.
+- Remove the temporary entry and confirm access returns to HTTP 403.
+- Confirm Jellyfin is not published directly on a VPS port and its Windows
+  firewall rule accepts only the VPS tunnel address.
+
+Useful status/log commands:
+
+```sh
+cd /opt/jellyfin-proxy
+sudo docker compose --project-name jellyfin-proxy --file compose.yaml --env-file .env ps
+sudo docker compose --project-name jellyfin-proxy --file compose.yaml --env-file .env logs --tail=100
+sudo docker compose --project-name jellyfin-proxy --file compose.yaml --env-file .env exec wireguard wg show
+```
+
+## Troubleshooting and limits
+
+- **DNS check fails:** create/repair the base, `admin`, and `access` records;
+  check both A and AAAA records point to this VPS.
+- **Compose cannot bind a port:** stop or reconfigure the service already using
+  TCP 80/443 or the selected UDP port, then retry. The installer cleans up its
+  partial deployment and will not stop that other service.
+- **Services never become healthy:** inspect the scoped Compose logs and verify
+  the VPS kernel supports WireGuard and Docker permits `NET_ADMIN`.
+- **Public HTTPS check fails:** verify provider firewall rules, DNS, inbound
+  TCP 80/443, and that the base domain is reachable from the VPS itself. The
+  installer rolls back its application files and Compose resources on failure.
+- **No WireGuard handshake:** verify UDP ingress at the provider and host,
+  endpoint/port in the downloaded Windows config, and Windows outbound policy.
+- **Tunnel works but Jellyfin does not:** verify the Windows peer is active,
+  Jellyfin listens on the tunnel address/port, and its inbound firewall permits
+  TCP 8096 from `10.66.66.1`.
+- **Access stays denied:** add the client's actual public address/CIDR; the
+  service does not trust forwarded client-IP headers or CDN proxy addresses.
+
+The automated installer gate runs the actual release package in an isolated
+Docker-in-Docker daemon, validates namespace firewall rules, and exercises a
+fresh install plus failure rollback. It does not prove public ACME issuance,
+VPS-provider firewall behavior, or the Ubuntu 26.04 host/kernel path. Validate
+those on the actual VPS before treating a deployment as production verified.

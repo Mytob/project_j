@@ -30,10 +30,14 @@ only that project's containers, network, volumes, and
 images. It publishes test web ports on loopback only.
 
 `build.ps1 package -Version 1.0.0-dev` also runs those gates, builds the
-Linux/amd64 admin binary and deployment images, creates a versioned archive
-with its manifest and templates, then validates image identities by loading
-the archive into a temporary isolated Docker-in-Docker daemon with networking
-disabled.
+Linux/amd64 `admin` and `proxyctl` binaries and deployment images, creates a
+versioned archive with its manifest and templates, validates image identities
+by loading the archive into an isolated Docker-in-Docker daemon with networking
+disabled, then installs the actual archive in that daemon. It verifies the
+IPv4/IPv6 namespace ingress filters and that installation leaves the host INPUT
+rules unchanged, removes the fresh fixture, forces a host-port collision, and
+confirms failed-install cleanup leaves the unrelated conflict container
+running.
 
 The full command is `./build.ps1 release`; it must be expanded to cover each
 mandatory release check before M10 can pass.
@@ -49,13 +53,15 @@ mandatory release check before M10 can pass.
 | WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; outage and recovery | PASS 2026-10-12 |
 | Windows client config | Key/config validation, repeat authenticated downloads, restricted permissions, persistence | PASS 2026-10-12 |
 | Package | Extract/verify manifest and load images in an isolated Docker daemon without registry access | PASS 2026-10-12 |
-| Installer/updater | Fresh install, preservation, failure rollback, SSH/firewall preservation, scoped cleanup | Not implemented; Ubuntu host checks required |
+| Installer | Actual package install, IPv4/IPv6 namespace firewall, host INPUT preservation, forced startup rollback, unrelated container preservation | PASS 2026-10-13; Ubuntu host checks remain |
+| Updater/password reset | Preservation, rollback, retention, session invalidation | Not implemented; M9 |
 | Full release | All prior gates, package compatibility, restart and unrelated Docker resource checks | Not implemented; M10 |
 
 ## Host-specific limitations
 
 Local Caddy TLS verifies hostname routing but does not prove public ACME
-certificate issuance. Docker simulation does not prove Ubuntu host firewall,
+certificate issuance. Docker simulation verifies the deployment's private
+IPv4/IPv6 network-namespace filters, but does not prove Ubuntu host/provider firewall,
 public ingress, or VPS routing. The Docker Desktop Linux engine used here
 supports a real WireGuard tunnel; this does not validate every target VPS
 kernel. Windows Firewall rules and actual Windows
@@ -172,5 +178,23 @@ these limits explicitly and use VPS preflight checks.
   platform-specific config digest verification in a temporary Docker-in-Docker
   daemon with networking disabled.
 - Artifact: `dist/jellyfin-proxy-1.0.0-dev-linux-amd64.tar.gz`.
-- Limits: This validates package construction and offline image loading. It
-  does not install or run the package on an Ubuntu VPS; that is M8's gate.
+- Limits: This validates package construction and offline image loading; M8
+  separately exercises actual package installation in an isolated daemon.
+
+### Verified M8 installer package run — 2026-10-13
+
+- Command: `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Go tests ran in `golang:1.25.2-alpine3.22`.
+- Covered: all Go tests and M1–M6 integration gates; Linux/amd64 `proxyctl` and
+  app images; package hash/manifest checks; offline image loading; actual
+  installer execution in isolated Docker-in-Docker; install directory and
+  health checks; installed IPv4/IPv6 WireGuard-namespace HTTP/HTTPS/UDP allow
+  rules and catch-all drops; unchanged host INPUT firewall; port-collision
+  startup failure; removal of partial app files; and continued operation of the
+  unrelated port-conflict container.
+- Limits: the host reported transient WireGuard peer connection retries during
+  the established M1–M6 suite, but that integration suite passed. This is not
+  an Ubuntu VPS/provider-firewall, public ACME, public ingress, native Windows
+  WireGuard import, or Windows Firewall test.

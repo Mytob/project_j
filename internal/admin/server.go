@@ -40,6 +40,7 @@ func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
@@ -48,6 +49,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
 	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
 	return s.securityHeaders(mux)
+}
+
+func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "ok\n")
 }
 
 // ConfigureWireGuardConfig verifies the protected retained Windows peer file
