@@ -17,6 +17,18 @@ services:
         condition: service_started
       untrusted-client:
         condition: service_started
+      admin:
+        condition: service_started
+
+  admin:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.admin
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json"]
+    volumes:
+      - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
+    expose:
+      - "8080"
 
   jellyfin-mock:
     build:

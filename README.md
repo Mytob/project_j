@@ -5,9 +5,10 @@ on a Windows PC. The planned 1.0 deployment uses Caddy and WireGuard containers
 on an Ubuntu VPS, with a small Go application for administration and a native
 Linux `proxyctl` installer.
 
-The repository has completed Milestones 1 and 2. Its local test environment
+The repository has completed Milestones 1–3. Its local test environment
 routes a static site and simulated Jellyfin through Caddy, with an IPv4/IPv6/
-CIDR default-deny allowlist for the access hostname. Authentication, admin
+CIDR default-deny allowlist for the access hostname. The admin hostname now
+serves a password-protected Go sign-in and session dashboard. Whitelist
 management, WireGuard deployment, installation, and release packaging remain
 roadmap work.
 
@@ -47,9 +48,9 @@ Run Go unit tests:
 go test ./...
 ```
 
-Run the M1 Caddy routing integration test (builds a local mock image, starts a
-temporary Compose project, checks HTTP and local HTTPS, then removes that
-project):
+Run Go unit tests and the M1–M3 Caddy/authentication integration checks
+(builds local test images, starts a temporary Compose project, then removes
+that project):
 
 ```powershell
 ./build.ps1 test
