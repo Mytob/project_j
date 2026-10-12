@@ -1,0 +1,3 @@
+handle {
+	respond "Forbidden" 403
+}

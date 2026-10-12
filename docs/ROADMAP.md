@@ -12,8 +12,8 @@ No milestone is marked complete until its mandatory tests pass.
 | M3 — Administrator authentication | Complete | PR #3 merged as `0b1b11f`; Go tests and M1–M3 integration passed. |
 | M4 — Admin whitelist management | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12. |
 | M5 — WireGuard connectivity | Complete | PR #5 merged as `19fa619`; real encrypted tunnel, outage, recovery, and prior integration checks passed on 2026-10-12. |
-| M6 — Windows WireGuard configuration | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; authenticated repeat downloads, restart persistence, split routes, keepalive, and restricted permissions verified. |
-| M7 — Self-contained release packages | Not Started | Depends on application and deployment artifacts. |
+| M6 — Windows WireGuard configuration | Complete | PR #6 merged as `f05fc7b`; authenticated repeat downloads, restart persistence, split routes, keepalive, and restricted permissions verified. |
+| M7 — Self-contained release packages | Complete | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` passed on 2026-10-12; the archive manifest and all four images validated in an isolated daemon. |
 | M8 — Guided VPS installer | Not Started | Depends on M7. |
 | M9 — Updater, recovery, retention | Not Started | Depends on M8. |
 | M10 — Full automated release validation | Not Started | Depends on all preceding implementation gates. |
@@ -29,6 +29,8 @@ M4 commit `7954bfb` was merged through
 [PR #4](https://github.com/Mytob/project_j/pull/4) at merge commit `024b7f2`.
 M5 commit `5e7fcb3` was merged through
 [PR #5](https://github.com/Mytob/project_j/pull/5) at merge commit `19fa619`.
+M6 commit `6451858` was merged through
+[PR #6](https://github.com/Mytob/project_j/pull/6) at merge commit `f05fc7b`.
 
 ## Milestone plan
 
@@ -154,14 +156,24 @@ M5 commit `5e7fcb3` was merged through
 
 ### M7 — Self-contained release packages
 
-- **Status:** Not Started
+- **Status:** Complete
 - **Dependencies:** Application and deployment image definitions.
-- **Deliverables:** Go builds, pinned Docker image builds and exports,
-  versioned manifest, deployment templates, and validated release archive.
+- **Deliverables:** Linux/amd64 admin build, versioned admin/WireGuard images,
+  Caddy and Alpine deployment images, Compose/Caddy/site templates, SHA-256
+  manifest, and self-contained `.tar.gz` release archive.
 - **Tests:** Load the packaged images in a clean Docker environment; validate
   archive contents and package compatibility without registry pulls.
 - **Gate:** Package installs and runs without application image registry access.
-- **Completion evidence / open issues:** Pending.
+- **Completion evidence:** `pwsh -NoProfile -File .\build.ps1 package
+  -Version 1.0.0-dev` passed on 2026-10-12. It ran Go tests and all M1–M6
+  integration checks, built the Linux/amd64 admin binary and production images,
+  verified the versioned archive's file hashes, manifest, required files, and
+  absence of runtime secrets, then loaded all four images into an isolated
+  Docker-in-Docker daemon with networking disabled and confirmed their
+  platform-specific config digests. Archive:
+  `dist/jellyfin-proxy-1.0.0-dev-linux-amd64.tar.gz`.
+- **Open issues:** `proxyctl` is delivered with M8's installer. The archive
+  targets Linux/amd64; no ARM64 package is produced.
 
 ### M8 — Guided VPS installer
 
@@ -222,4 +234,5 @@ M5 commit `5e7fcb3` was merged through
 | 2026-10-12 | M3 password auth, file credentials, sessions, CSRF, throttling, and admin HTTPS integration. | Commit `18c6a96`; [PR #3](https://github.com/Mytob/project_j/pull/3), merged as `0b1b11f` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M4 admin whitelist management, private Caddy Unix API, transaction handling, and persistence. | Commit `7954bfb`; [PR #4](https://github.com/Mytob/project_j/pull/4), merged as `024b7f2` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M5 WireGuard peer, shared network namespace, tunnel outage/recovery integration. | Commit `5e7fcb3`; [PR #5](https://github.com/Mytob/project_j/pull/5), merged as `19fa619` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
-| 2026-10-12 | M6 protected peer generation and authenticated Windows config download. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M6 protected peer generation and authenticated Windows config download. | Commit `6451858`; [PR #6](https://github.com/Mytob/project_j/pull/6), merged as `f05fc7b` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
+| 2026-10-12 | M7 production container definitions and self-contained package builder. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` — PASS, exit 0; all four images loaded and verified offline in an isolated daemon. |

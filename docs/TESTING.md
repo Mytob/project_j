@@ -18,6 +18,7 @@ network checks. Do not run the local M1 Compose project as a public service.
 ```powershell
 go test ./...
 ./build.ps1 test
+./build.ps1 package -Version 1.0.0-dev
 ```
 
 `build.ps1 test` runs Go unit tests and the M1–M6 Compose integration runner.
@@ -27,6 +28,12 @@ control, exercises protected WireGuard config generation and authenticated
 repeat downloads plus the encrypted tunnel outage and recovery, then removes
 only that project's containers, network, volumes, and
 images. It publishes test web ports on loopback only.
+
+`build.ps1 package -Version 1.0.0-dev` also runs those gates, builds the
+Linux/amd64 admin binary and deployment images, creates a versioned archive
+with its manifest and templates, then validates image identities by loading
+the archive into a temporary isolated Docker-in-Docker daemon with networking
+disabled.
 
 The full command is `./build.ps1 release`; it must be expanded to cover each
 mandatory release check before M10 can pass.
@@ -41,9 +48,9 @@ mandatory release check before M10 can pass.
 | Live Caddy updates | Unix socket integration, invalid update and rollback, concurrency, restart persistence | PASS 2026-10-12 |
 | WireGuard | Encrypted tunnel from mock peer to mock Jellyfin; outage and recovery | PASS 2026-10-12 |
 | Windows client config | Key/config validation, repeat authenticated downloads, restricted permissions, persistence | PASS 2026-10-12 |
-| Package | Extract/load images in clean Docker daemon without registry pulls | Not implemented |
+| Package | Extract/verify manifest and load images in an isolated Docker daemon without registry access | PASS 2026-10-12 |
 | Installer/updater | Fresh install, preservation, failure rollback, SSH/firewall preservation, scoped cleanup | Not implemented; Ubuntu host checks required |
-| Full release | All prior gates, package compatibility, restart and unrelated Docker resource checks | Not implemented |
+| Full release | All prior gates, package compatibility, restart and unrelated Docker resource checks | Not implemented; M10 |
 
 ## Host-specific limitations
 
@@ -151,3 +158,19 @@ these limits explicitly and use VPS preflight checks.
   from admin mounts; all M1–M5 gates including real tunnel outage/recovery.
 - Limits: The test uses Linux container permission checks. Native Windows
   import and Windows Firewall behaviour still need host verification.
+
+### Verified M7 package run — 2026-10-12
+
+- Command: `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev`
+- Result: PASS (exit 0).
+- Host: Windows 11 x64; PowerShell 7.6.5; Docker Desktop 29.8.2; Compose
+  5.6.0. Go tests ran in the pinned Go 1.25.2 container.
+- Covered: all Go and M1–M6 integration gates; standalone Linux/amd64 admin
+  binary; production admin and WireGuard images; bundled Caddy and Alpine
+  images; archive contents and SHA-256 file manifest; required runtime
+  templates; exclusion of runtime secrets; and image loading plus
+  platform-specific config digest verification in a temporary Docker-in-Docker
+  daemon with networking disabled.
+- Artifact: `dist/jellyfin-proxy-1.0.0-dev-linux-amd64.tar.gz`.
+- Limits: This validates package construction and offline image loading. It
+  does not install or run the package on an Ubuntu VPS; that is M8's gate.

@@ -1,0 +1,16 @@
+{
+	admin unix//run/caddy-admin/admin.sock|0220
+}
+
+{$BASE_DOMAIN} {
+	root * /srv/site
+	file_server
+}
+
+admin.{$BASE_DOMAIN} {
+	reverse_proxy admin:8080
+}
+
+access.{$BASE_DOMAIN} {
+	import /etc/caddy/whitelist.caddy
+}

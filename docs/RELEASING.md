@@ -1,12 +1,12 @@
 # Releasing
 
-No production release can be built until the M7–M10 package and test gates are
-implemented. This document records the frozen release process and artifact
-requirements without claiming those tools exist today.
+The M7 package builder is implemented. The production installer, updater, and
+complete M10 release gate are still roadmap work.
 
 ## Versioning and package
 
-Use semantic versions; the first release is `1.0.0`. The target release bundle
+Use semantic versions; the first release is `1.0.0`. Build a package with
+`./build.ps1 package -Version 1.0.0-dev` during development. The target release bundle
 contains a standalone Linux x64 `proxyctl`, versioned manifest, deployment
 templates, and every required Docker image as an archive. A clean installation
 must not pull application images from a registry. Package compatibility and

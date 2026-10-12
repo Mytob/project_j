@@ -5,7 +5,7 @@ on a Windows PC. The planned 1.0 deployment uses Caddy and WireGuard containers
 on an Ubuntu VPS, with a small Go application for administration and a native
 Linux `proxyctl` installer.
 
-The repository has completed Milestones 1–6. Its local test environment
+The repository has completed Milestones 1–7. Its local test environment
 routes a static site and simulated Jellyfin through Caddy, with an IPv4/IPv6/
 CIDR default-deny allowlist for the access hostname. The admin hostname now
 serves a password-protected Go sign-in and session dashboard with persistent
@@ -13,8 +13,9 @@ whitelist management and live Caddy updates through a private Unix socket.
 The integration environment also verifies real WireGuard traffic between a
 server peer and a mock home Jellyfin endpoint, including outage and recovery.
 The admin dashboard provides an authenticated download of the retained Windows
-WireGuard config. Production provisioning, installation, and release packaging
-remain roadmap work.
+WireGuard config. A self-contained Linux/amd64 development package now bundles
+all deployment images and validates offline loading. Production installation
+and release automation remain in the roadmap milestones.
 
 ## Supported platforms
 
@@ -59,6 +60,15 @@ that project):
 ```powershell
 ./build.ps1 test
 ```
+
+Build and validate a self-contained Linux/amd64 development package:
+
+```powershell
+./build.ps1 package -Version 1.0.0-dev
+```
+
+The archive is written under `dist/`. The native Linux `proxyctl` installer
+and the complete release gate are still being implemented.
 
 The full release command will be enabled after its required gates exist:
 
