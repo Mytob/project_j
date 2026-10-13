@@ -306,8 +306,8 @@ these limits explicitly and use VPS preflight checks.
   stable-version package/install/update/rollback gate passed. The report at
   `dist/release-validation-1.0.0.json` records `local_gate: passed` and
   `release_readiness: ready`, including the three actual-host checks.
-- **Download bundle:** `dist/jellyfin-proxy-1.0.0-linux-amd64.tar.gz`; SHA-256
-  `3669b625b98fdfabc0cdc9a23b94e36505228548b87ed10529e726697ed7e8c2`.
+- **Download bundle:** `dist/jellyfin-proxy-1.0.0-linux-amd64.tar.gz`. The
+  published release will include a matching SHA-256 file beside the archive.
 - **First stable-version run:** `./build.ps1 release -Version 1.0.0` failed
   in the offline installer/update gate because retention assertions expected
   the hard-coded starting release `1.0.0-dev`. The harness now derives test
