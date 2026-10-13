@@ -17,7 +17,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | Release gate passed; publication pending | The full `1.0.0` release command passed local and evidence-backed host checks. Remaining deliverables are promotion from `dev` to `main`, the `v1.0.0` tag, and official downloadable artifacts. |
+| M11 — Version 1.0.0 release | Complete | PR #20 promoted the validated tree to `main` at `350a69f`; tag `v1.0.0` and the GitHub release are published with the self-contained package, SHA-256 checksum, and ready validation report. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -242,14 +242,13 @@ merge commit `7470ef3`.
   -Version 1.0.0-dev` passed Go tests, all M1–M6 integration checks, and the
   actual M7–M9 offline packaging/install/update suite in isolated Docker-in-
   Docker. Report: `dist/release-validation-1.0.0-dev.json`.
-- **Open issues:** Release readiness remains blocked pending actual Ubuntu
-  26.04 VPS/kernel and provider-firewall checks, public DNS/ACME issuance, and
-  native Windows WireGuard client and Windows Firewall checks. These are not
-  asserted as complete by local simulation.
+- **Original report:** The 1.0.0-dev run correctly marked host checks blocked
+  because no actual-host evidence was supplied. M11 later collected that
+  evidence and the stable 1.0.0 report records all host checks as passed.
 
 ### M11 — Version 1.0.0 release
 
-- **Status:** Release gate passed; main promotion, tag, and publication pending
+- **Status:** Complete
 - **Dependencies:** M10.
 - **Deliverables:** Validated promotion from `dev` to `main`, verified release
   commit and tag, official artifacts where permissions allow, install/update
@@ -280,17 +279,20 @@ merge commit `7470ef3`.
   whitelist removal returns 403, installed the documented Windows inbound
   TCP 8096 rule limited to `10.66.66.1`, reports there are no other rules on
   the machine, and confirmed streaming still works. Host validation is
-  complete based on the operator's report. Release preparation remains: the
-  development package is not a 1.0.0 release; no `v1.0.0` tag, `main`
-  promotion, or public artifact has been created.
+  complete based on the operator's report.
 - **Release gate (2026-10-13):** `./build.ps1 release -Version 1.0.0
   -HostCheckEvidence docs/release-host-checks-v1.0.0.json` passed Go tests,
   M1–M6 integration, stable-version M7–M9 package/install/update/rollback
   validation, and all three version-matched actual-host checks. The report says
-  `release_readiness: ready`. The first stable-version run exposed hard-coded
-  prerelease expectations in the install-check harness; these were fixed
-  before the passing run. Promotion, tag creation, and artifact publication
-  are still pending.
+  `release_readiness: ready`. A post-merge integration attempt hit one
+  transient curl connection reset; the subsequent full run passed. The first
+  stable-version run exposed hard-coded prerelease expectations in the
+  install-check harness; these were fixed before the passing run.
+- **Published release (2026-10-13):** PR #20 merged the validated `dev` tree
+  into `main` at `350a69f`; the `v1.0.0` tag points at that promoted commit.
+  [GitHub Release v1.0.0](https://github.com/Mytob/project_j/releases/tag/v1.0.0)
+  includes the Linux amd64 deployment package, its SHA-256 checksum, and the
+  release validation report.
 
 ## Change and test log
 
@@ -306,7 +308,8 @@ merge commit `7470ef3`.
 | 2026-10-12 | M7 production container definitions and self-contained package builder. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` — PASS, exit 0; all four images loaded and verified offline in an isolated daemon. |
 | 2026-10-13 | M10 full local release validation runner and JSON blocker report. | [PR #10](https://github.com/Mytob/project_j/pull/10), merged as `da9d281` | `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev` — PASS, exit 0; local gates pass, production-host checks explicitly BLOCKED. |
 | 2026-10-13 | Docker 29 image config digest compatibility fix. | [PR #12](https://github.com/Mytob/project_j/pull/12), merged as `a3239e9` | `./build.ps1 release -Version 1.0.0-dev` — PASS after a first run reproduced the Docker 29 inspect-ID and archive-ordering failures; complete local Go, M1–M6, and M7–M9 gates passed. |
-| 2026-10-13 | M11 real VPS install and public routing validation. | Docs evidence pending | Guided install on Ubuntu 26.04 — PASS; all services healthy, public ACME certificates valid for all hostnames, HTTPS/HTTP redirect/access default-deny and repeat authenticated config download checks PASS. Native Windows client and firewall gate pending operator verification. |
-| 2026-10-13 | M11 Windows WireGuard tunnel and streaming follow-up. | Docs evidence pending | VPS `wg show` — PASS, handshake 1m15s before 19:49:40 UTC and active peer traffic; operator reports streaming in the app. Whitelist-removal 403 and Windows Firewall scope remain to verify. |
-| 2026-10-13 | M11 final host validation. | Documentation follow-up pending | Operator-confirmed whitelist removal returns 403; documented TCP 8096 rule is limited to `10.66.66.1`, no other machine rules are reported, and app streaming continues — PASS. |
+| 2026-10-13 | M11 real VPS install and public routing validation. | [PR #13](https://github.com/Mytob/project_j/pull/13), merged as `04e3a69` | Guided install on Ubuntu 26.04 — PASS; all services healthy, public ACME certificates valid for all hostnames, HTTPS/HTTP redirect/access default-deny and repeat authenticated config download checks PASS. |
+| 2026-10-13 | M11 Windows WireGuard tunnel and streaming follow-up. | [PR #14](https://github.com/Mytob/project_j/pull/14), merged as `a72a14b` | VPS `wg show` — PASS, handshake 1m15s before 19:49:40 UTC and active peer traffic; operator reports streaming in the app. |
+| 2026-10-13 | M11 final host validation. | [PR #17](https://github.com/Mytob/project_j/pull/17), merged as `a3e0387` | Operator-confirmed whitelist removal returns 403; documented TCP 8096 rule is limited to `10.66.66.1`, no other machine rules are reported, and app streaming continues — PASS. |
 | 2026-10-13 | Stable 1.0.0 release gate and deployment bundle. | [PR #18](https://github.com/Mytob/project_j/pull/18), merged as `fd92909` | First `./build.ps1 release -Version 1.0.0` failed because package retention assertions hard-coded `-dev`; final `./build.ps1 release -Version 1.0.0 -HostCheckEvidence docs/release-host-checks-v1.0.0.json` — PASS, `release_readiness: ready`; standalone package installed and updated offline in the isolated Docker daemon. |
+| 2026-10-13 | M11 stable release promotion and publication. | [PR #20](https://github.com/Mytob/project_j/pull/20), merged as `350a69f`; tag `v1.0.0`; [GitHub Release](https://github.com/Mytob/project_j/releases/tag/v1.0.0) | Full release gate passed; the self-contained Linux amd64 package, SHA-256 checksum, and `release_readiness: ready` report were uploaded and verified on GitHub. |
