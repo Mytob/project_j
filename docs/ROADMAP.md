@@ -17,7 +17,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | Blocked | Actual Ubuntu VPS/provider firewall, public DNS/ACME, and native Windows client checks cannot be run in this environment. No stable release tag or publication has been made. |
+| M11 — Version 1.0.0 release | In progress | Actual Ubuntu VPS install, public TCP 80/443, DNS/ACME, HTTPS routes, admin login, and repeat profile downloads passed on 2026-10-13. WireGuard UDP handshake, native Windows import, Jellyfin access, and Windows Firewall verification remain with the operator. No stable release tag or publication has been made. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -249,22 +249,37 @@ merge commit `7470ef3`.
 
 ### M11 — Version 1.0.0 release
 
-- **Status:** Blocked pending production-host access
+- **Status:** In progress; Windows client gate pending
 - **Dependencies:** M10.
 - **Deliverables:** Validated promotion from `dev` to `main`, verified release
   commit and tag, official artifacts where permissions allow, install/update
   docs, and automated first-deployment checks.
 - **Tests:** All release gates and artifact verification.
-- **Gate:** No mandatory failures; no claim of VPS deployment without access.
+- **Gate:** No mandatory failures; confirm the actual VPS install and public
+  routes, then verify the native Windows WireGuard client, recent handshake,
+  Jellyfin access through the access hostname, and Windows Firewall scope.
 - **Completed preparation:** M10 local release validation passes. The installer
   automatically waits for healthy WireGuard/Caddy/admin services and public
   HTTPS; the isolated package gate exercises installation and rollback. The
   first-deployment procedure is documented in `docs/DEPLOYMENT.md`.
-- **Blocker:** No operator-controlled Ubuntu 26.04 VPS/provider firewall,
-  public DNS/ACME environment, or native Windows WireGuard client is available
-  here. These required checks cannot be replaced with Docker simulation. The
-  development package is not a 1.0.0 release; no `v1.0.0` tag, `main`
-  promotion, or public artifact has been created.
+- **VPS evidence (2026-10-13):** The disposable Ubuntu 26.04 x86_64 VPS passed
+  guided installation using package `1.0.0-dev`; all services became healthy.
+  Let’s Encrypt certificates were obtained for all three hostnames. External
+  checks confirmed HTTPS verification succeeds, HTTP redirects to HTTPS, the
+  base and admin hostnames return 200, and the access hostname returns 403 with
+  the empty whitelist. The authenticated admin dashboard loaded and two
+  WireGuard profile downloads matched byte-for-byte. IPv4 and IPv6 namespace
+  filters allow only the documented service ports and drop remaining ingress;
+  host UFW remained inactive and host INPUT policy remained ACCEPT. The
+  provider rule screenshot includes UDP 51820, but end-to-end UDP reachability
+  is not yet proven because the VPS reports no peer handshake.
+- **Remaining gate:** Native Windows WireGuard import/activation, a recent
+  server handshake, successful Jellyfin access through the access hostname,
+  denied access after removing a temporary whitelist entry, and Windows
+  Firewall restriction to `10.66.66.1` have not been observed. The operator
+  will run those Windows-host steps and report the results. The development
+  package is not a 1.0.0 release; no `v1.0.0` tag, `main` promotion, or public
+  artifact has been created.
 
 ## Change and test log
 
@@ -279,4 +294,5 @@ merge commit `7470ef3`.
 | 2026-10-12 | M6 protected peer generation and authenticated Windows config download. | Commit `6451858`; [PR #6](https://github.com/Mytob/project_j/pull/6), merged as `f05fc7b` | `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. |
 | 2026-10-12 | M7 production container definitions and self-contained package builder. | Feature branch / PR pending | `pwsh -NoProfile -File .\build.ps1 package -Version 1.0.0-dev` — PASS, exit 0; all four images loaded and verified offline in an isolated daemon. |
 | 2026-10-13 | M10 full local release validation runner and JSON blocker report. | [PR #10](https://github.com/Mytob/project_j/pull/10), merged as `da9d281` | `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev` — PASS, exit 0; local gates pass, production-host checks explicitly BLOCKED. |
-| 2026-10-13 | M11 release-readiness audit. | Feature branch / PR pending | M10 local gates PASS; production VPS, public network, and native Windows release checks unavailable. No tag or release artifact published. |
+| 2026-10-13 | Docker 29 image config digest compatibility fix. | [PR #12](https://github.com/Mytob/project_j/pull/12), merged as `a3239e9` | `./build.ps1 release -Version 1.0.0-dev` — PASS after a first run reproduced the Docker 29 inspect-ID and archive-ordering failures; complete local Go, M1–M6, and M7–M9 gates passed. |
+| 2026-10-13 | M11 real VPS install and public routing validation. | Docs evidence pending | Guided install on Ubuntu 26.04 — PASS; all services healthy, public ACME certificates valid for all hostnames, HTTPS/HTTP redirect/access default-deny and repeat authenticated config download checks PASS. Native Windows client and firewall gate pending operator verification. |
