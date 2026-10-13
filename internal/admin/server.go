@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
@@ -32,6 +33,8 @@ type Server struct {
 	wireguardClientConfig string
 	templates             *template.Template
 	logger                *slog.Logger
+	now                   func() time.Time
+	authTransitionMu      sync.Mutex
 }
 
 const totpReauthenticationLifetime = 5 * time.Minute
@@ -40,7 +43,7 @@ func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger}
+	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger, now: time.Now}
 	if len(whitelistManager) > 0 {
 		server.whitelist = whitelistManager[0]
 	}
@@ -97,6 +100,8 @@ func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
 	if s.totpStore == nil {
 		return errors.New("TOTP state store is unavailable")
 	}
+	s.authTransitionMu.Lock()
+	defer s.authTransitionMu.Unlock()
 	if err := s.totpStore.ConfirmEnrollment(code, at); err != nil {
 		return err
 	}
@@ -130,7 +135,11 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setCookie(w, id, int(auth.DefaultSessionLifetime.Seconds()))
-	s.render(w, "login.html", map[string]any{"CSRF": csrf})
+	data := map[string]any{"CSRF": csrf}
+	if s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled {
+		data["TOTPRequired"] = true
+	}
+	s.render(w, "login.html", data)
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -149,11 +158,30 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Too many login attempts. Try again shortly.", http.StatusTooManyRequests)
 		return
 	}
+	s.authTransitionMu.Lock()
+	defer s.authTransitionMu.Unlock()
+	requireTOTP := s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled
 	if !s.credential.Verify(r.FormValue("password")) {
 		s.limiter.Failed()
 		csrf, _, _ := s.sessions.State(oldID)
-		s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": "The password was not accepted."})
+		message := "The password was not accepted."
+		if requireTOTP {
+			message = "The password or authenticator code was not accepted."
+		}
+		s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": message, "TOTPRequired": requireTOTP})
 		return
+	}
+	if requireTOTP {
+		accepted, err := s.totpStore.Verify(r.FormValue("code"), s.now())
+		if err != nil {
+			s.logger.Error("verify administrator TOTP code", "error", err)
+		}
+		if err != nil || !accepted {
+			s.limiter.Failed()
+			csrf, _, _ := s.sessions.State(oldID)
+			s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": "The password or authenticator code was not accepted.", "TOTPRequired": true})
+			return
+		}
 	}
 	s.limiter.Succeeded()
 	if oldID != "" {
@@ -298,7 +326,7 @@ func (s *Server) confirmTOTPEnrollmentHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.limiter.Failed()
-	if err := s.confirmTOTPEnrollment(r.FormValue("code"), time.Now()); err != nil {
+	if err := s.confirmTOTPEnrollment(r.FormValue("code"), s.now()); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, auth.ErrInvalidTOTPCode) {
 			http.Error(w, "The authenticator code was not accepted.", status)

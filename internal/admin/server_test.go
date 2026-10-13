@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/base32"
 	"encoding/base64"
+	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,7 +25,7 @@ import (
 var csrfPattern = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 var totpSecretPattern = regexp.MustCompile(`Manual setup secret: <code>([A-Z2-7]+)</code>`)
 
-func newTOTPTestServer(t *testing.T) (*Server, http.Handler, *auth.TOTPStore) {
+func newTOTPTestServer(t *testing.T) (*Server, http.Handler, *auth.TOTPStore, string) {
 	t.Helper()
 	root := t.TempDir()
 	credentialPath := filepath.Join(root, "admin.json")
@@ -46,7 +48,75 @@ func newTOTPTestServer(t *testing.T) (*Server, http.Handler, *auth.TOTPStore) {
 	if err := server.ConfigureTOTPStore(store); err != nil {
 		t.Fatal(err)
 	}
-	return server, server.Handler(), store
+	return server, server.Handler(), store, filepath.Join(root, "totp-state.json")
+}
+
+func activateTestTOTP(t *testing.T, store *auth.TOTPStore, at time.Time) []byte {
+	t.Helper()
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := totp.Code(secret, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmEnrollment(code, at); err != nil {
+		t.Fatal(err)
+	}
+	return secret
+}
+
+func newAnonymousLogin(t *testing.T, handler http.Handler) (*http.Cookie, string) {
+	t.Helper()
+	page := request(handler, http.MethodGet, "/", nil, nil)
+	csrf := csrfPattern.FindStringSubmatch(page.Body.String())
+	if page.Code != http.StatusOK || len(csrf) != 2 {
+		t.Fatalf("login page status/CSRF: %d %s", page.Code, page.Body.String())
+	}
+	for _, cookie := range page.Result().Cookies() {
+		if cookie.Name == "admin_session" {
+			return cookie, csrf[1]
+		}
+	}
+	t.Fatal("login page did not set a session")
+	return nil, ""
+}
+
+func codeOutsideWindow(secret []byte, at time.Time) string {
+	current := at.Unix() / int64(totp.Period/time.Second)
+	accepted := map[string]bool{}
+	for step := current - 1; step <= current+1; step++ {
+		if step >= 0 {
+			value, _ := totp.Code(secret, time.Unix(step*int64(totp.Period/time.Second), 0))
+			accepted[value] = true
+		}
+	}
+	for candidate := 0; candidate < 1_000_000; candidate++ {
+		value := fmt.Sprintf("%06d", candidate)
+		if !accepted[value] {
+			return value
+		}
+	}
+	panic("no invalid TOTP code available")
+}
+
+func expiredCodeOutsideWindow(secret []byte, at time.Time) string {
+	current := at.Unix() / int64(totp.Period/time.Second)
+	accepted := map[string]bool{}
+	for step := current - 1; step <= current+1; step++ {
+		if step >= 0 {
+			value, _ := totp.Code(secret, time.Unix(step*int64(totp.Period/time.Second), 0))
+			accepted[value] = true
+		}
+	}
+	for step := current - 2; step >= 0; step-- {
+		candidate, _ := totp.Code(secret, time.Unix(step*int64(totp.Period/time.Second), 0))
+		if !accepted[candidate] {
+			return candidate
+		}
+	}
+	panic("no expired TOTP code available")
 }
 
 func loginTestAdmin(t *testing.T, server *Server) *http.Cookie {
@@ -255,7 +325,7 @@ func TestConfirmTOTPEnrollmentRevokesAllSessionsAfterPersistence(t *testing.T) {
 }
 
 func TestTOTPEnrollmentRenderedControlsRequireFreshPasswordAndVerifyCode(t *testing.T) {
-	server, handler, store := newTOTPTestServer(t)
+	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
 	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
 	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), `action="/totp/enroll/start"`) {
@@ -311,7 +381,7 @@ func TestTOTPEnrollmentRenderedControlsRequireFreshPasswordAndVerifyCode(t *test
 }
 
 func TestTOTPEnrollmentRequiresCSRFAndCancellationIsPersistent(t *testing.T) {
-	server, handler, store := newTOTPTestServer(t)
+	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
 	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
 	csrf := csrfPattern.FindStringSubmatch(dashboard.Body.String())[1]
@@ -349,8 +419,213 @@ func TestTOTPProvisioningURIHasExpectedAuthenticatorParameters(t *testing.T) {
 	}
 }
 
+func TestTOTPLoginRequiresPasswordAndFreshUnusedCode(t *testing.T) {
+	server, handler, store, _ := newTOTPTestServer(t)
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	secret := activateTestTOTP(t, store, enrolledAt)
+	defer clear(secret)
+	loginAt := enrolledAt.Add(totp.Period)
+	server.now = func() time.Time { return loginAt }
+	loginForm := request(handler, http.MethodGet, "/", nil, nil)
+	csrfMatch := csrfPattern.FindStringSubmatch(loginForm.Body.String())
+	if len(csrfMatch) != 2 || !strings.Contains(loginForm.Body.String(), `id="code" name="code"`) {
+		t.Fatal("enabled TOTP did not render the required code control")
+	}
+	var browserSession *http.Cookie
+	for _, cookie := range loginForm.Result().Cookies() {
+		if cookie.Name == "admin_session" {
+			browserSession = cookie
+		}
+	}
+	if browserSession == nil {
+		t.Fatal("TOTP login page did not set a session")
+	}
+	csrf := csrfMatch[1]
+	post := func(code string) *httptest.ResponseRecorder {
+		values := url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}}
+		if code != "" {
+			values.Set("code", code)
+		}
+		return request(handler, http.MethodPost, "/login", values, browserSession)
+	}
+	for name, code := range map[string]string{
+		"missing":   "",
+		"incorrect": codeOutsideWindow(secret, loginAt),
+		"expired":   expiredCodeOutsideWindow(secret, loginAt),
+	} {
+		response := post(code)
+		if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "password or authenticator code was not accepted") {
+			t.Errorf("%s TOTP login status/body = %d %s", name, response.Code, response.Body.String())
+		}
+		if _, authenticated, ok := server.sessions.State(browserSession.Value); ok && authenticated {
+			t.Errorf("%s TOTP attempt created an authenticated session", name)
+		}
+	}
+	validCode, err := totp.Code(secret, loginAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := post(validCode)
+	if valid.Code != http.StatusSeeOther || valid.Header().Get("Location") != "/dashboard" {
+		t.Fatalf("password-plus-TOTP login status/redirect: %d %q body=%s", valid.Code, valid.Header().Get("Location"), valid.Body.String())
+	}
+	var authenticated *http.Cookie
+	for _, cookie := range valid.Result().Cookies() {
+		if cookie.Name == "admin_session" {
+			authenticated = cookie
+		}
+	}
+	if authenticated == nil || authenticated.Value == browserSession.Value {
+		t.Fatal("successful TOTP login did not rotate the session")
+	}
+	if response := request(handler, http.MethodGet, "/dashboard", nil, authenticated); response.Code != http.StatusOK {
+		t.Errorf("fully authenticated session cannot access dashboard: %d", response.Code)
+	}
+	if response := request(handler, http.MethodGet, "/wireguard/config", nil, authenticated); response.Code != http.StatusServiceUnavailable {
+		t.Errorf("authenticated session did not pass auth boundary for unconfigured WireGuard fixture: %d", response.Code)
+	}
+	replayCookie, replayCSRF := newAnonymousLogin(t, handler)
+	replay := request(handler, http.MethodPost, "/login", url.Values{"csrf": {replayCSRF}, "password": {"correct test administrator password"}, "code": {validCode}}, replayCookie)
+	if replay.Code != http.StatusUnauthorized {
+		t.Fatalf("reused login code returned %d", replay.Code)
+	}
+}
+
+func TestConcurrentTOTPLoginsConsumeCodeOnce(t *testing.T) {
+	server, handler, store, _ := newTOTPTestServer(t)
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	secret := activateTestTOTP(t, store, enrolledAt)
+	defer clear(secret)
+	loginAt := enrolledAt.Add(totp.Period)
+	server.now = func() time.Time { return loginAt }
+	code, err := totp.Code(secret, loginAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := make([]*http.Cookie, 2)
+	csrf := make([]string, 2)
+	for i := range cookies {
+		cookies[i], csrf[i] = newAnonymousLogin(t, handler)
+	}
+	start := make(chan struct{})
+	responses := make([]*httptest.ResponseRecorder, 2)
+	var wait sync.WaitGroup
+	for i := range responses {
+		wait.Add(1)
+		go func(i int) {
+			defer wait.Done()
+			<-start
+			responses[i] = request(handler, http.MethodPost, "/login", url.Values{"csrf": {csrf[i]}, "password": {"correct test administrator password"}, "code": {code}}, cookies[i])
+		}(i)
+	}
+	close(start)
+	wait.Wait()
+	successes := 0
+	for _, response := range responses {
+		if response.Code == http.StatusSeeOther {
+			successes++
+		} else if response.Code != http.StatusUnauthorized {
+			t.Errorf("unexpected concurrent login status: %d %s", response.Code, response.Body.String())
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful concurrent logins = %d, want exactly one", successes)
+	}
+}
+
+func TestConcurrentActivationCannotLeavePasswordOnlySession(t *testing.T) {
+	server, handler, store, _ := newTOTPTestServer(t)
+	at := time.Unix(1_700_000_010, 0)
+	server.now = func() time.Time { return at }
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(secret)
+	activationCode, err := totp.Code(secret, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationID, activationCSRF, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !server.sessions.GrantRecentPasswordVerification(activationID, time.Minute) {
+		t.Fatal("could not grant test enrollment authorization")
+	}
+	loginCookie, loginCSRF := newAnonymousLogin(t, handler)
+	start := make(chan struct{})
+	var loginResponse, activationResponse *httptest.ResponseRecorder
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		<-start
+		loginResponse = request(handler, http.MethodPost, "/login", url.Values{"csrf": {loginCSRF}, "password": {"correct test administrator password"}}, loginCookie)
+	}()
+	go func() {
+		defer wait.Done()
+		<-start
+		activationResponse = request(handler, http.MethodPost, "/totp/enroll/confirm", url.Values{"csrf": {activationCSRF}, "code": {activationCode}}, &http.Cookie{Name: "admin_session", Value: activationID})
+	}()
+	close(start)
+	wait.Wait()
+	if activationResponse.Code != http.StatusSeeOther || store.Status() != auth.TOTPEnabled {
+		t.Fatalf("activation did not complete: status=%d TOTP=%s body=%s", activationResponse.Code, store.Status(), activationResponse.Body.String())
+	}
+	if loginResponse.Code != http.StatusUnauthorized && loginResponse.Code != http.StatusSeeOther {
+		t.Fatalf("concurrent password-only login status=%d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	if _, _, ok := server.sessions.State(activationID); ok {
+		t.Fatal("activation session survived activation")
+	}
+	for _, cookie := range loginResponse.Result().Cookies() {
+		if cookie.Name == "admin_session" && cookie.MaxAge >= 0 {
+			if _, authenticated, ok := server.sessions.State(cookie.Value); ok && authenticated {
+				t.Fatal("password-only login completed across activation and survived session revocation")
+			}
+		}
+	}
+}
+
+func TestTOTPLoginFailsClosedWhenReplayStateCannotBePersisted(t *testing.T) {
+	server, handler, store, statePath := newTOTPTestServer(t)
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	secret := activateTestTOTP(t, store, enrolledAt)
+	defer clear(secret)
+	loginAt := enrolledAt.Add(totp.Period)
+	server.now = func() time.Time { return loginAt }
+	if err := os.Remove(statePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cookie, csrf := newAnonymousLogin(t, handler)
+	code, err := totp.Code(secret, loginAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := request(handler, http.MethodPost, "/login", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}, "code": {code}}, cookie)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("login succeeded when replay state could not be persisted: %d", response.Code)
+	}
+	if _, authenticated, ok := server.sessions.State(cookie.Value); ok && authenticated {
+		t.Fatal("storage failure created an authenticated session")
+	}
+}
+
+func mustCode(t *testing.T, secret []byte, at time.Time) string {
+	t.Helper()
+	code, err := totp.Code(secret, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
+}
+
 func TestTOTPEnrollmentSecretAndConfirmationRequirePasswordReauthentication(t *testing.T) {
-	server, handler, store := newTOTPTestServer(t)
+	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
 	if _, err := store.BeginEnrollment(); err != nil {
 		t.Fatal(err)

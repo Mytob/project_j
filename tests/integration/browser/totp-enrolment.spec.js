@@ -85,4 +85,29 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByRole('button', { name: 'Verify and enable' }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByLabel('Password')).toBeVisible();
+  await expect(page.getByLabel('Authenticator code')).toBeVisible();
+
+  const loginStep = Math.floor(Date.now() / 1000 / 30);
+  const acceptedLoginCodes = acceptedCodes(finalSecret, loginStep);
+  let wrongLoginCode = '000000';
+  while (acceptedLoginCodes.has(wrongLoginCode)) wrongLoginCode = String((Number(wrongLoginCode) + 1) % 1_000_000).padStart(6, '0');
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  await page.getByLabel('Authenticator code').fill(wrongLoginCode);
+  const rejectedLogin = page.waitForResponse((response) => response.url().endsWith('/login') && response.status() === 401);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await rejectedLogin;
+  await expect(page.getByRole('alert')).toContainText('password or authenticator code was not accepted');
+
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  await page.getByLabel('Authenticator code').fill(codeAt(finalSecret, loginStep + 1));
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByLabel('Authenticator code')).toBeVisible();
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  await page.getByLabel('Authenticator code').fill(codeAt(finalSecret, loginStep + 1));
+  const rejectedReplay = page.waitForResponse((response) => response.url().endsWith('/login') && response.status() === 401);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await rejectedReplay;
+  await expect(page.getByRole('alert')).toContainText('password or authenticator code was not accepted');
 });
