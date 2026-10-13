@@ -1,0 +1,85 @@
+services:
+  wireguard:
+    image: "jellyfin-proxy/wireguard:${RELEASE_VERSION:-1.0.0-dev}"
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "${WIREGUARD_PORT:-51820}:51820/udp"
+    volumes:
+      - ./config/wireguard/server.conf:/etc/wireguard/wg0.conf:ro
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    network_mode: service:wireguard
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:-example.invalid}
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./config/whitelist.caddy:/etc/caddy/whitelist.caddy:ro
+      - ./site:/srv/site:ro
+      - caddy_admin_socket:/run/caddy-admin
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      wireguard:
+        condition: service_healthy
+      caddy-socket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "caddy validate --config /etc/caddy/Caddyfile && test -S /run/caddy-admin/admin.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  caddy-socket-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - caddy_admin_socket:/run/caddy-admin
+    command: ["sh", "-c", "chown 0:65532 /run/caddy-admin && chmod 2750 /run/caddy-admin"]
+
+  admin:
+    image: "jellyfin-proxy/admin:${RELEASE_VERSION:-1.0.0-dev}"
+    command:
+      - --listen
+      - :8080
+      - --config
+      - /opt/jellyfin-proxy/config/admin.json
+      - --whitelist
+      - /opt/jellyfin-proxy/data/whitelist.json
+      - --caddy-socket
+      - /run/caddy-admin/admin.sock
+      - --caddyfile
+      - /etc/caddy/Caddyfile
+      - --wireguard-client-config
+      - /opt/jellyfin-proxy/config/wireguard/windows.conf
+    volumes:
+      - ./config/admin.json:/opt/jellyfin-proxy/config/admin.json:ro
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./config/wireguard:/opt/jellyfin-proxy/config/wireguard:ro
+      - ./data:/opt/jellyfin-proxy/data
+      - caddy_admin_socket:/run/caddy-admin
+    group_add:
+      - "65532"
+    expose:
+      - "8080"
+    depends_on:
+      caddy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  caddy_admin_socket:
+  caddy_data:
+  caddy_config:

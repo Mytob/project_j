@@ -1,7 +1,7 @@
 # Architecture
 
-This document distinguishes the frozen 1.0 target from the currently
-implemented M1 local test environment.
+This document distinguishes the frozen 1.0 target, the M1–M6 local test
+environment, and the M8 Ubuntu installer implementation.
 
 ## Target components and request path
 
@@ -23,16 +23,52 @@ admin container remains separate and can reach Caddy's admin API only over a
 private Unix socket with narrowly scoped filesystem permissions. It never
 receives Docker socket access. All services use `restart: unless-stopped`.
 
-## M1 local environment
+The installer publishes TCP 80/443 and the selected host UDP port from the
+WireGuard namespace. Since Docker DNAT may bypass the host INPUT firewall, the
+WireGuard entrypoint owns dedicated IPv4 and IPv6 namespace INPUT chains:
+established traffic and loopback are accepted, as are the expected IPv4 Windows
+peer and the three application service ports; all other ingress is dropped.
+This leaves host SSH and unrelated host firewall rules alone. It does not
+configure a provider firewall/security group; those ports must be allowed there
+by the operator.
+
+## M1–M6 local environment
 
 The local integration Compose project is under `tests/integration/`. Caddy
-serves `domain.test`, returns an explicit not-yet-implemented response for
-`admin.domain.test`, and reverse proxies `access.domain.test` to a small Go
-mock of Jellyfin. Caddy uses its internal test CA. Only Caddy's HTTP and HTTPS
-ports are published, bound to loopback. The mock has no host port.
+serves `domain.test`, proxies `admin.domain.test` to the Go admin service, and
+enforces a generated allowlist policy before
+reverse-proxying `access.domain.test` to a small Go mock of Jellyfin. An empty
+list generates only a 403 handler. The admin service owns a versioned JSON
+allowlist and submits a complete Caddyfile through a permissioned Unix socket;
+failed activation restores the prior persisted list, and failed persistence
+does not activate the candidate policy. Caddy has no public admin TCP listener.
+Caddy uses its internal test CA. Only
+Caddy's HTTP and HTTPS ports are published, bound to loopback. The mock has no
+host port. The test uses two isolated source addresses to prove CIDR allow,
+default deny, and rejection of spoofed forwarding headers. The admin service
+loads a single file-based password credential, serves server-rendered sign-in
+and dashboard pages, rotates opaque in-memory sessions at login, expires them
+after 12 hours, protects state-changing forms with CSRF, and throttles repeated
+failed attempts. The admin application runs as a non-root user, its test-only
+credential fixture is disposable, and its service port is private to the
+Compose network.
 
-This is not a production deployment and does not establish public certificate,
-whitelist, admin, or WireGuard behaviour.
+For M5, the WireGuard server container owns the test HTTP/HTTPS host bindings
+and shares its network namespace with Caddy. A separate home-peer container
+initiates the WireGuard tunnel. The mock Jellyfin service shares the home
+peer's namespace and listens only on the peer's tunnel address; the integration
+runner verifies the encrypted path, loss of reachability on tunnel shutdown,
+and recovery after a fresh peer handshake. The test config-init service copies
+the generated pair into isolated named volumes: the server private key remains
+root-only and only the Windows peer config is readable by the non-root admin
+group for authenticated downloads. The peer file uses persistent `/32` routes
+and a 25-second keepalive; the real Windows config and server config are
+retained together by the WireGuard package and are not regenerated on restart.
+
+The M1–M6 test environment is not a production deployment. M8's actual package
+is installed in an isolated Docker-in-Docker daemon and its namespace firewall
+is inspected there; this does not establish public certificate issuance,
+provider firewall settings, public ingress, or Ubuntu VPS WireGuard behaviour.
 
 ## Trust and security boundaries
 
@@ -40,7 +76,8 @@ whitelist, admin, or WireGuard behaviour.
 - Client identity is the socket peer address; forwarding headers are not
   trusted for access decisions.
 - The whitelist is default deny, including when empty or invalid.
-- Caddy's administration API is private and unavailable on public interfaces.
+- Caddy's administration API is a permissioned Unix socket mounted only into
+  Caddy and the admin container; no public TCP listener is configured.
 - WireGuard private keys and generated client config are sensitive persistent
   data with restricted permissions.
 - Admin sessions, CSRF protection, password hashing, and non-cacheable config
@@ -52,10 +89,13 @@ whitelist, admin, or WireGuard behaviour.
 
 The planned install root is `/opt/jellyfin-proxy/` with `config/`, `data/`,
 `site/`, `releases/`, and `compose.yaml`. Deployment config is validated and
-written atomically. The updater may replace active release files and compose
-templates, but not user data, credentials, whitelist state, WireGuard keys, or
-website content. The current M1 test files live in the repository and create
-no deployment data.
+written atomically. The updater stages and verifies each release before
+replacing active environment, Compose, and Caddy template files. It preserves
+credentials, whitelist state, WireGuard keys, and site content, then verifies
+service and HTTPS readiness. On failure it restores the previous files and
+recreates the previous services. It retains the active and previous version
+directories, deleting only older versioned directories after success. The
+current M1 test files live in the repository and create no deployment data.
 
 ## Module boundaries
 
@@ -75,7 +115,15 @@ Jellyfin port 8096 by default.
 
 ## Caddy and admin communication
 
-The admin application will update validated Caddy configuration through its
-private Unix admin socket. A whitelist change is persisted and activated as a
-transaction: failures preserve the last valid active configuration and are
-reported as failures. No public admin API or Docker socket is used.
+The admin application updates validated Caddy configuration through its
+private Unix admin socket. It persists a candidate allowlist first, then
+activates it through Caddy's transactional `/load` endpoint; if activation
+fails it restores the previous persisted list. A persistence failure leaves
+the active Caddy policy untouched. No public admin API or Docker socket is
+used.
+
+The socket address and permission syntax follow Caddy's
+[admin endpoint configuration](https://caddyserver.com/docs/caddyfile/options).
+The admin service submits adapted configuration to the documented
+[`POST /load` endpoint](https://caddyserver.com/docs/api), which keeps the
+previous active configuration if the new config cannot be loaded.

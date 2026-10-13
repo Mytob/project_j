@@ -1,0 +1,144 @@
+services:
+  wireguard-config-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - ./wireguard.generated:/source:ro
+      - wireguard_server:/server
+      - wireguard_client:/client
+    command: ["sh", "-c", "cp /source/server.conf /server/wg0.conf && chown 0:0 /server/wg0.conf && chmod 600 /server/wg0.conf && chmod 700 /server && cp /source/windows.conf /client/windows.conf && chown 0:65532 /client/windows.conf && chmod 640 /client/windows.conf && chown 0:65532 /client && chmod 750 /client"]
+
+  wireguard:
+    build:
+      context: ../..
+      dockerfile: deploy/wireguard/Dockerfile
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-18080}:80"
+      - "127.0.0.1:${HTTPS_PORT:-18443}:443"
+    volumes:
+      - wireguard_server:/etc/wireguard:ro
+    depends_on:
+      wireguard-config-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  home-peer:
+    build:
+      context: ../..
+      dockerfile: deploy/wireguard/Dockerfile
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - wireguard_client:/etc/wireguard:ro
+    environment:
+      WIREGUARD_CONFIG: /etc/wireguard/windows.conf
+      WIREGUARD_INTERFACE: windows
+    depends_on:
+      wireguard:
+        condition: service_healthy
+    restart: unless-stopped
+
+  home-jellyfin:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.mock-jellyfin
+    network_mode: service:home-peer
+    depends_on:
+      home-peer:
+        condition: service_healthy
+
+  wireguard-check:
+    image: curlimages/curl:8.12.1
+    network_mode: service:wireguard
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep 600"]
+    depends_on:
+      wireguard:
+        condition: service_healthy
+      home-jellyfin:
+        condition: service_started
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    network_mode: service:wireguard
+    volumes:
+      - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
+      - ./whitelist.caddy.generated:/etc/caddy/whitelist.caddy:ro
+      - caddy_admin_socket:/run/caddy-admin
+      - ../../deploy/site:/srv/site:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      wireguard:
+        condition: service_healthy
+      caddy-socket-init:
+        condition: service_completed_successfully
+
+  caddy-socket-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - caddy_admin_socket:/run/caddy-admin
+    command: ["sh", "-c", "chown 0:65532 /run/caddy-admin && chmod 2750 /run/caddy-admin"]
+
+  admin:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.admin
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf"]
+    volumes:
+      - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
+      - wireguard_client:/opt/jellyfin-proxy/config/wireguard:ro
+      - caddy_admin_socket:/run/caddy-admin
+      - admin_data:/opt/jellyfin-proxy/data
+      - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
+    group_add:
+      - "65532"
+    expose:
+      - "8080"
+    depends_on:
+      caddy:
+        condition: service_started
+      admin-data-init:
+        condition: service_completed_successfully
+      wireguard-config-init:
+        condition: service_completed_successfully
+
+  admin-data-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - admin_data:/data
+    command: ["sh", "-c", "chown 65532:65532 /data && chmod 700 /data"]
+
+  trusted-client:
+    image: curlimages/curl:8.12.1
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep 600"]
+    networks:
+      default:
+        ipv4_address: ${TRUSTED_CLIENT_IP:-172.29.254.10}
+
+  untrusted-client:
+    image: curlimages/curl:8.12.1
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep 600"]
+    networks:
+      default:
+        ipv4_address: ${UNTRUSTED_CLIENT_IP:-172.29.254.20}
+
+volumes:
+  wireguard_server:
+  wireguard_client:
+  caddy_data:
+  caddy_config:
+  caddy_admin_socket:
+  admin_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${TEST_SUBNET:-172.29.254.0/24}

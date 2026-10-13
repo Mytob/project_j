@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "version": "1.0.0",
+  "verified_on": "2026-10-13",
+  "checks": [
+    {
+      "id": "ubuntu-vps-kernel-wireguard",
+      "status": "passed",
+      "evidence": "Installed package 1.0.0-dev on Ubuntu 26.04.1 LTS x86_64; admin, Caddy, and WireGuard became healthy. The WireGuard peer completed a recent handshake with active traffic, and the namespace ingress filters were inspected."
+    },
+    {
+      "id": "public-acme-provider-firewall",
+      "status": "passed",
+      "evidence": "All three configured hostnames resolved to the VPS. Let’s Encrypt certificates validated for darkcry.com, admin.darkcry.com, and access.darkcry.com; HTTPS returned 200/200/403 as expected, HTTP redirected with 308, and provider ingress allowed TCP 80/443 and UDP 51820."
+    },
+    {
+      "id": "native-windows-client-firewall",
+      "status": "passed",
+      "evidence": "The operator imported the Windows WireGuard profile, confirmed a recent tunnel handshake and Jellyfin app streaming, installed the TCP 8096 inbound allow rule scoped to remote 10.66.66.1, and reports there are no other firewall rules on the machine."
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+	admin unix//run/caddy-admin/admin.sock|0220
+}
+
+domain.test {
+	tls internal
+	root * /srv/site
+	file_server
+}
+
+admin.domain.test {
+	tls internal
+	reverse_proxy admin:8080
+}
+
+access.domain.test {
+	tls internal
+	import /etc/caddy/whitelist.caddy
+}

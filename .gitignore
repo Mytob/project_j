@@ -1,0 +1,21 @@
+# Go build output
+/bin/
+/dist/
+*.out
+
+# Local runtime and generated test data
+.env
+.env.*
+!.env.example
+*.log
+/data/
+/releases/
+/tests/integration/whitelist.caddy.generated
+/tests/integration/admin-credential.generated.json
+/tests/integration/wireguard.generated/
+
+# Editor and OS files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
