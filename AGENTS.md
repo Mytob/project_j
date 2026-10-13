@@ -1,12 +1,14 @@
 # Project instructions
 
-## Frozen 1.0 scope
+## Product scope
 
-Implement only the Jellyfin Proxy 1.0 requirements in `docs/DECISIONS.md` and
-`docs/ROADMAP.md`. Do not add other media services, users, registration,
-external proxy/CDN support, LAN routing, full-tunnel VPN, databases,
-microservices, Kubernetes, hosted CI, release signing, encrypted backups,
-or unrelated operations features.
+Preserve the Jellyfin Proxy 1.0 requirements in `docs/DECISIONS.md` and
+`docs/ROADMAP.md`, and implement the specifically authorized Jellyfin Proxy
+v1.1 TOTP administrator-authentication requirements supplied by the user.
+Keep the v1.1 scope frozen to those TOTP requirements. Do not add other media
+services, users, registration, external proxy/CDN support, LAN routing,
+full-tunnel VPN, databases, microservices, Kubernetes, hosted CI, release
+signing, encrypted backups, or unrelated operations features.
 
 ## Architecture rules
 
