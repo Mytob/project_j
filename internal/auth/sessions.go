@@ -11,9 +11,10 @@ import (
 const DefaultSessionLifetime = 12 * time.Hour
 
 type session struct {
-	csrf          string
-	expires       time.Time
-	authenticated bool
+	csrf                string
+	expires             time.Time
+	authenticated       bool
+	reauthenticationEnd time.Time
 }
 
 // Sessions keeps opaque session IDs and CSRF secrets in process memory. A
@@ -86,6 +87,41 @@ func (s *Sessions) RevokeAll() {
 	s.mu.Lock()
 	clear(s.items)
 	s.mu.Unlock()
+}
+
+// GrantRecentPasswordVerification allows a session to reveal a pending TOTP
+// setup secret for a short time after the password has been checked.
+func (s *Sessions) GrantRecentPasswordVerification(id string, lifetime time.Duration) bool {
+	if id == "" || lifetime <= 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[id]
+	now := s.now()
+	if !ok || !item.authenticated || !now.Before(item.expires) {
+		delete(s.items, id)
+		return false
+	}
+	item.reauthenticationEnd = now.Add(lifetime)
+	s.items[id] = item
+	return true
+}
+
+// HasRecentPasswordVerification checks the short-lived TOTP setup grant.
+func (s *Sessions) HasRecentPasswordVerification(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[id]
+	now := s.now()
+	if !ok || !item.authenticated || !now.Before(item.expires) {
+		delete(s.items, id)
+		return false
+	}
+	return now.Before(item.reauthenticationEnd)
 }
 
 func randomToken() (string, error) {

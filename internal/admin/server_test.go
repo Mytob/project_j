@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"encoding/base32"
+	"encoding/base64"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -18,6 +21,63 @@ import (
 )
 
 var csrfPattern = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+var totpSecretPattern = regexp.MustCompile(`Manual setup secret: <code>([A-Z2-7]+)</code>`)
+
+func newTOTPTestServer(t *testing.T) (*Server, http.Handler, *auth.TOTPStore) {
+	t.Helper()
+	root := t.TempDir()
+	credentialPath := filepath.Join(root, "admin.json")
+	if err := auth.SaveCredential(credentialPath, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(credentialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	store, err := auth.InitializeTOTPStore(filepath.Join(root, "totp-state.json"), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(credential, nil)
+	if err := server.ConfigureTOTPStore(store); err != nil {
+		t.Fatal(err)
+	}
+	return server, server.Handler(), store
+}
+
+func loginTestAdmin(t *testing.T, server *Server) *http.Cookie {
+	t.Helper()
+	handler := server.Handler()
+	page := request(handler, http.MethodGet, "/", nil, nil)
+	csrf := csrfPattern.FindStringSubmatch(page.Body.String())
+	if len(csrf) != 2 {
+		t.Fatal("login form is missing CSRF")
+	}
+	var anonymous *http.Cookie
+	for _, cookie := range page.Result().Cookies() {
+		if cookie.Name == "admin_session" {
+			anonymous = cookie
+		}
+	}
+	if anonymous == nil {
+		t.Fatal("login page did not set a session")
+	}
+	login := request(handler, http.MethodPost, "/login", url.Values{"csrf": {csrf[1]}, "password": {"correct test administrator password"}}, anonymous)
+	if login.Code != http.StatusSeeOther {
+		t.Fatalf("valid password login status = %d", login.Code)
+	}
+	for _, cookie := range login.Result().Cookies() {
+		if cookie.Name == "admin_session" {
+			return cookie
+		}
+	}
+	t.Fatal("login did not set authenticated session")
+	return nil
+}
 
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
@@ -191,6 +251,118 @@ func TestConfirmTOTPEnrollmentRevokesAllSessionsAfterPersistence(t *testing.T) {
 		if _, _, ok := server.sessions.State(id); ok {
 			t.Fatal("successful activation did not revoke every existing session")
 		}
+	}
+}
+
+func TestTOTPEnrollmentRenderedControlsRequireFreshPasswordAndVerifyCode(t *testing.T) {
+	server, handler, store := newTOTPTestServer(t)
+	cookie := loginTestAdmin(t, server)
+	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), `action="/totp/enroll/start"`) {
+		t.Fatalf("unconfigured dashboard did not render enrollment controls: %d %s", dashboard.Code, dashboard.Body.String())
+	}
+	csrf := csrfPattern.FindStringSubmatch(dashboard.Body.String())[1]
+	wrongPassword := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrf}, "password": {"wrong password"}}, cookie)
+	if wrongPassword.Code != http.StatusUnauthorized || strings.Contains(wrongPassword.Body.String(), "data:image/png") {
+		t.Fatalf("wrong reauthentication response: %d %s", wrongPassword.Code, wrongPassword.Body.String())
+	}
+	start := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}}, cookie)
+	if start.Code != http.StatusSeeOther || start.Header().Get("Location") != "/dashboard" {
+		t.Fatalf("valid reauthentication did not return to dashboard: %d %q", start.Code, start.Header().Get("Location"))
+	}
+	dashboard = request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	body := dashboard.Body.String()
+	secretMatch := totpSecretPattern.FindStringSubmatch(body)
+	if dashboard.Code != http.StatusOK || len(secretMatch) != 2 || !strings.Contains(body, `alt="Authenticator setup QR code"`) || !strings.Contains(body, `action="/totp/enroll/confirm"`) {
+		t.Fatalf("reauthenticated dashboard did not render setup QR and confirmation form: %d %s", dashboard.Code, body)
+	}
+	qr := regexp.MustCompile(`src="(data:image/png;base64,[A-Za-z0-9+/=]+)"`).FindStringSubmatch(html.UnescapeString(body))
+	if len(qr) != 2 {
+		t.Fatalf("QR code was not embedded as a locally generated image: %s", body)
+	}
+	png, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(qr[1], "data:image/png;base64,"))
+	if err != nil || len(png) < 8 || string(png[:8]) != "\x89PNG\r\n\x1a\n" {
+		t.Fatal("setup QR image is not a valid local PNG")
+	}
+	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secretMatch[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(secret)
+	if !strings.Contains(totpProvisioningURI(secret), "issuer=Jellyfin+Proxy") {
+		t.Fatal("provisioning URI has incorrect issuer metadata")
+	}
+	csrf = csrfPattern.FindStringSubmatch(body)[1]
+	badCode := request(handler, http.MethodPost, "/totp/enroll/confirm", url.Values{"csrf": {csrf}, "code": {"invalid"}}, cookie)
+	if badCode.Code != http.StatusBadRequest || store.Status() != auth.TOTPPending {
+		t.Fatalf("incorrect initial code changed enrollment: status=%d state=%s", badCode.Code, store.Status())
+	}
+	validCode, err := totp.Code(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed := request(handler, http.MethodPost, "/totp/enroll/confirm", url.Values{"csrf": {csrf}, "code": {validCode}}, cookie)
+	if confirmed.Code != http.StatusSeeOther || store.Status() != auth.TOTPEnabled {
+		t.Fatalf("valid confirmation did not activate TOTP: status=%d state=%s body=%s", confirmed.Code, store.Status(), confirmed.Body.String())
+	}
+	if _, _, ok := server.sessions.State(cookie.Value); ok {
+		t.Fatal("activation did not revoke the enrolling session")
+	}
+}
+
+func TestTOTPEnrollmentRequiresCSRFAndCancellationIsPersistent(t *testing.T) {
+	server, handler, store := newTOTPTestServer(t)
+	cookie := loginTestAdmin(t, server)
+	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	csrf := csrfPattern.FindStringSubmatch(dashboard.Body.String())[1]
+	if response := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"password": {"correct test administrator password"}}, cookie); response.Code != http.StatusForbidden {
+		t.Fatalf("enrollment accepted missing CSRF: %d", response.Code)
+	}
+	if response := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}}, cookie); response.Code != http.StatusSeeOther {
+		t.Fatalf("enrollment start status = %d", response.Code)
+	}
+	view := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	secret := totpSecretPattern.FindStringSubmatch(view.Body.String())
+	if len(secret) != 2 {
+		t.Fatal("pending setup secret was not visible after fresh password verification")
+	}
+	csrf = csrfPattern.FindStringSubmatch(view.Body.String())[1]
+	cancel := request(handler, http.MethodPost, "/totp/enroll/cancel", url.Values{"csrf": {csrf}}, cookie)
+	if cancel.Code != http.StatusSeeOther || store.Status() != auth.TOTPUnconfigured {
+		t.Fatalf("cancel did not clear pending setup: status=%d state=%s", cancel.Code, store.Status())
+	}
+	if _, _, ok := server.sessions.State(cookie.Value); ok {
+		t.Fatal("cancellation did not revoke the session that viewed the pending secret")
+	}
+}
+
+func TestTOTPProvisioningURIHasExpectedAuthenticatorParameters(t *testing.T) {
+	secret := []byte("01234567890123456789")
+	uri := totpProvisioningURI(secret)
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme != "otpauth" || parsed.Host != "totp" {
+		t.Fatalf("invalid provisioning URI: %q err=%v", uri, err)
+	}
+	query := parsed.Query()
+	if query.Get("secret") != base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret) || query.Get("issuer") != "Jellyfin Proxy" || query.Get("algorithm") != "SHA1" || query.Get("digits") != "6" || query.Get("period") != "30" {
+		t.Fatalf("unexpected provisioning parameters: %v", query)
+	}
+}
+
+func TestTOTPEnrollmentSecretAndConfirmationRequirePasswordReauthentication(t *testing.T) {
+	server, handler, store := newTOTPTestServer(t)
+	cookie := loginTestAdmin(t, server)
+	if _, err := store.BeginEnrollment(); err != nil {
+		t.Fatal(err)
+	}
+	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	if strings.Contains(dashboard.Body.String(), "Manual setup secret") {
+		t.Fatal("pending setup secret was visible without password reauthentication")
+	}
+	csrf := csrfPattern.FindStringSubmatch(dashboard.Body.String())[1]
+	response := request(handler, http.MethodPost, "/totp/enroll/confirm", url.Values{"csrf": {csrf}, "code": {"123456"}}, cookie)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("confirmation without recent password verification returned %d", response.Code)
 	}
 }
 

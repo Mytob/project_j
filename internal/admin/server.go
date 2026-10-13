@@ -2,17 +2,22 @@ package admin
 
 import (
 	"embed"
+	"encoding/base32"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/whitelist"
 	"github.com/Mytob/project_j/internal/wireguard"
+	"github.com/skip2/go-qrcode"
 )
 
 //go:embed templates/*.html
@@ -28,6 +33,8 @@ type Server struct {
 	templates             *template.Template
 	logger                *slog.Logger
 }
+
+const totpReauthenticationLifetime = 5 * time.Minute
 
 func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*WhitelistManager) *Server {
 	if logger == nil {
@@ -46,6 +53,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
+	mux.HandleFunc("POST /totp/enroll/start", s.startTOTPEnrollment)
+	mux.HandleFunc("POST /totp/enroll/confirm", s.confirmTOTPEnrollmentHandler)
+	mux.HandleFunc("POST /totp/enroll/cancel", s.cancelTOTPEnrollment)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
@@ -186,7 +196,164 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.render(w, "dashboard.html", map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil, "WireGuardEnabled": s.wireguardClientConfig != ""})
+	data := map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil, "WireGuardEnabled": s.wireguardClientConfig != ""}
+	if s.totpStore != nil {
+		status := s.totpStore.Status()
+		data["TOTPStatus"] = status
+		data["TOTPConfigured"] = true
+		if status == auth.TOTPPending && s.sessions.HasRecentPasswordVerification(id) {
+			secret, err := s.totpStore.PendingSecret()
+			if err != nil {
+				s.logger.Error("read pending administrator TOTP setup", "error", err)
+				http.Error(w, "Authenticator setup is unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			defer clear(secret)
+			uri := totpProvisioningURI(secret)
+			encodedQR, err := qrcode.Encode(uri, qrcode.Medium, 256)
+			if err != nil {
+				s.logger.Error("generate administrator TOTP QR code")
+				http.Error(w, "Authenticator setup is unavailable", http.StatusInternalServerError)
+				return
+			}
+			data["TOTPSecret"] = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+			data["TOTPQRCode"] = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(encodedQR))
+			data["TOTPSetupVisible"] = true
+		}
+	}
+	s.render(w, "dashboard.html", data)
+}
+
+func (s *Server) startTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if allowed, wait := s.limiter.Allow(); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds()+0.999)))
+		http.Error(w, "Too many verification attempts. Try again shortly.", http.StatusTooManyRequests)
+		return
+	}
+	if !s.credential.Verify(r.FormValue("password")) {
+		s.limiter.Failed()
+		http.Error(w, "The password was not accepted.", http.StatusUnauthorized)
+		return
+	}
+	s.limiter.Succeeded()
+	if s.totpStore == nil {
+		http.Error(w, "Authenticator setup is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.totpStore.Status() == auth.TOTPUnconfigured {
+		secret, err := s.totpStore.BeginEnrollment()
+		if err != nil {
+			http.Error(w, "Authenticator setup could not be started", http.StatusConflict)
+			return
+		}
+		clear(secret)
+	}
+	if s.totpStore.Status() != auth.TOTPPending {
+		http.Error(w, "Authenticator setup is not available", http.StatusConflict)
+		return
+	}
+	if !s.sessions.GrantRecentPasswordVerification(id, totpReauthenticationLifetime) {
+		http.Error(w, "Session expired; sign in again", http.StatusUnauthorized)
+		return
+	}
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+func (s *Server) confirmTOTPEnrollmentHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if !s.sessions.HasRecentPasswordVerification(id) {
+		http.Error(w, "Verify your administrator password before completing setup", http.StatusForbidden)
+		return
+	}
+	if allowed, wait := s.limiter.Allow(); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds()+0.999)))
+		http.Error(w, "Too many verification attempts. Try again shortly.", http.StatusTooManyRequests)
+		return
+	}
+	s.limiter.Failed()
+	if err := s.confirmTOTPEnrollment(r.FormValue("code"), time.Now()); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, auth.ErrInvalidTOTPCode) {
+			http.Error(w, "The authenticator code was not accepted.", status)
+			return
+		}
+		if errors.Is(err, auth.ErrNoTOTPEnrollment) {
+			status = http.StatusConflict
+		}
+		s.logger.Error("confirm administrator TOTP enrollment", "error", err)
+		http.Error(w, "Authenticator setup could not be completed", status)
+		return
+	}
+	s.limiter.Succeeded()
+	s.setCookie(w, "", -1)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) cancelTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.totpStore == nil {
+		http.Error(w, "Authenticator setup is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.totpStore.CancelEnrollment(); err != nil {
+		http.Error(w, "No incomplete authenticator setup is available", http.StatusConflict)
+		return
+	}
+	s.sessions.Revoke(id)
+	s.setCookie(w, "", -1)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func totpProvisioningURI(secret []byte) string {
+	encodedSecret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+	label := "Jellyfin Proxy:Administrator"
+	query := url.Values{}
+	query.Set("secret", encodedSecret)
+	query.Set("issuer", "Jellyfin Proxy")
+	query.Set("algorithm", "SHA1")
+	query.Set("digits", "6")
+	query.Set("period", "30")
+	return fmt.Sprintf("otpauth://totp/%s?%s", url.PathEscape(label), query.Encode())
 }
 
 func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request) {
