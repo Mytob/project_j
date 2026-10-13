@@ -17,7 +17,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | Release preparation pending | All local and actual-host validation gates have passed, including operator-confirmed Windows Firewall scope and successful streaming. Remaining deliverables are promotion from `dev` to `main`, the `v1.0.0` tag, and official artifacts where permissions allow. |
+| M11 — Version 1.0.0 release | Release gate passed; publication pending | The full `1.0.0` release command passed local and evidence-backed host checks. Remaining deliverables are promotion from `dev` to `main`, the `v1.0.0` tag, and official downloadable artifacts. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -249,7 +249,7 @@ merge commit `7470ef3`.
 
 ### M11 — Version 1.0.0 release
 
-- **Status:** Host validation complete; release preparation pending
+- **Status:** Release gate passed; main promotion, tag, and publication pending
 - **Dependencies:** M10.
 - **Deliverables:** Validated promotion from `dev` to `main`, verified release
   commit and tag, official artifacts where permissions allow, install/update
@@ -283,6 +283,14 @@ merge commit `7470ef3`.
   complete based on the operator's report. Release preparation remains: the
   development package is not a 1.0.0 release; no `v1.0.0` tag, `main`
   promotion, or public artifact has been created.
+- **Release gate (2026-10-13):** `./build.ps1 release -Version 1.0.0
+  -HostCheckEvidence docs/release-host-checks-v1.0.0.json` passed Go tests,
+  M1–M6 integration, stable-version M7–M9 package/install/update/rollback
+  validation, and all three version-matched actual-host checks. The report says
+  `release_readiness: ready`. The first stable-version run exposed hard-coded
+  prerelease expectations in the install-check harness; these were fixed
+  before the passing run. Promotion, tag creation, and artifact publication
+  are still pending.
 
 ## Change and test log
 
@@ -301,3 +309,4 @@ merge commit `7470ef3`.
 | 2026-10-13 | M11 real VPS install and public routing validation. | Docs evidence pending | Guided install on Ubuntu 26.04 — PASS; all services healthy, public ACME certificates valid for all hostnames, HTTPS/HTTP redirect/access default-deny and repeat authenticated config download checks PASS. Native Windows client and firewall gate pending operator verification. |
 | 2026-10-13 | M11 Windows WireGuard tunnel and streaming follow-up. | Docs evidence pending | VPS `wg show` — PASS, handshake 1m15s before 19:49:40 UTC and active peer traffic; operator reports streaming in the app. Whitelist-removal 403 and Windows Firewall scope remain to verify. |
 | 2026-10-13 | M11 final host validation. | Documentation follow-up pending | Operator-confirmed whitelist removal returns 403; documented TCP 8096 rule is limited to `10.66.66.1`, no other machine rules are reported, and app streaming continues — PASS. |
+| 2026-10-13 | Stable 1.0.0 release gate and deployment bundle. | Fix PR pending | First `./build.ps1 release -Version 1.0.0` failed because package retention assertions hard-coded `-dev`; final `./build.ps1 release -Version 1.0.0 -HostCheckEvidence docs/release-host-checks-v1.0.0.json` — PASS, `release_readiness: ready`; standalone package installed and updated offline in the isolated Docker daemon. |

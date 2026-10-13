@@ -18,14 +18,20 @@ before install/update.
 Run `./build.ps1 release -Version 1.0.0-dev` for the complete locally
 automated gate. The command writes a JSON report to
 `dist/release-validation-<Version>.json`, including individual gate statuses
-and any host-specific blockers. A passing local gate is not a publish-ready
-release while production-host checks remain blocked.
+and any host-specific blockers. Once actual-host checks pass, provide their
+version-matched evidence file with `-HostCheckEvidence`; the report then marks
+each host check and overall readiness as passed. Without that evidence, the
+report remains blocked even when local tests pass.
 
-The current `1.0.0-dev` validation passed locally. Do not promote `dev` to
-`main`, create the `v1.0.0` tag, or publish the 1.0.0 artifacts until the
-Ubuntu VPS/kernel, provider firewall, public DNS/ACME, and native Windows
-WireGuard/Firewall checks recorded in the report have passed on their actual
-target hosts.
+The actual-host evidence for the first release is recorded in
+`docs/release-host-checks-v1.0.0.json`. The full command is
+`./build.ps1 release -Version 1.0.0 -HostCheckEvidence docs/release-host-checks-v1.0.0.json`.
+Do not promote `dev` to `main`, create the `v1.0.0` tag, or publish artifacts
+unless that command passes and reports `release_readiness` as `ready`.
+The evidence file must match the requested version and contain exactly one
+passed result with a non-empty evidence description for each required host
+check. It records results from the actual Ubuntu VPS, public DNS/ACME and
+provider firewall, and native Windows WireGuard/Firewall checks.
 
 ## Required release gates
 
