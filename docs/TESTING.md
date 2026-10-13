@@ -7,6 +7,24 @@ then the complete release gate. A mandatory test is not skipped silently. A
 test requiring a Linux host, kernel capability, or public DNS must be listed as
 a blocker when unavailable and must not be represented as proven by simulation.
 
+## v1.1 TOTP stage gate status
+
+Stage 1 adds the isolated `internal/totp` engine and tests for RFC 6238 SHA-1
+reference vectors, 30-second boundaries, clock skew, invalid input, secret
+generation, replay prevention, clock rollback, and concurrent code submission.
+The tests use fixed timestamps and generated test secrets.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/totp` — PASS (2026-10-13).
+- Full command: `./build.ps1 test` — PASS (2026-10-13), including all Go
+  packages and the M1–M6 Docker integration suite on Docker Desktop 29.8.2.
+- The first focused run failed because the boundary test expected the wrong
+  value. After correcting the test and running `gofmt`, both commands above
+  passed.
+- Earlier retries were blocked while Docker Desktop was stopped. Docker became
+  available after it was reopened; these earlier environment failures are not
+  current blockers.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,

@@ -5,6 +5,32 @@ No milestone is marked complete until its mandatory tests pass.
 
 ## Current status
 
+### v1.1 — TOTP administrator authentication
+
+The user-approved v1.1 scope adds only RFC 6238 TOTP protection for the
+administrator interface, with local privileged CLI recovery. Work is staged;
+later stages must not begin before the current stage's automated gate passes.
+
+| Stage | Status | Evidence / blocker |
+| --- | --- | --- |
+| 1 — Standalone TOTP engine | **Complete** | `internal/totp` implements RFC 6238 six-digit SHA-1 codes, secure secret generation, bounded skew, constant-time comparisons, and replay prevention under concurrent verification. Focused `go test ./internal/totp` and `./build.ps1 test` both passed on 2026-10-13 using the pinned Go container and Docker Desktop 29.8.2; see `docs/TESTING.md`. The first run found and corrected a boundary-test expected value. |
+
+The execution plan follows the supplied implementation brief in order:
+standalone engine; auth state/persistence; web enrolment; login enforcement;
+root-only VPS CLI recovery; full local integration and release validation.
+No live VPS deployment is part of v1.1 testing.
+
+#### Stage 1 evidence — 2026-10-13
+
+- `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/totp` — PASS.
+- `./build.ps1 test` — PASS, including all Go packages and the M1–M6
+  integration suite on Docker Desktop 29.8.2.
+- The initial Stage 1 test run exposed an incorrect boundary expected value
+  (`TestCodeAndTimeStepBoundaries`); the expected HOTP values were corrected
+  and both commands above passed afterward.
+- Stage 1 work is on `feature/totp-engine`; PR not yet submitted.
+
 | Milestone | Status | Evidence / blocker |
 | --- | --- | --- |
 | M1 — Minimal working proxy | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; see test log below. |
