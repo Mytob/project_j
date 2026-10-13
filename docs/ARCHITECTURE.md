@@ -53,7 +53,10 @@ failed attempts. TOTP setup is server-rendered: an administrator re-enters the
 password before the service reveals a pending secret and locally generated QR
 PNG. That password check grants five minutes of setup visibility. A six-digit
 code must confirm setup; cancellation returns to the unconfigured state, and
-activation revokes all sessions. No QR service or frontend runtime is used.
+activation revokes all sessions. When enabled, every new admin login requires
+the password and an unused TOTP code; the replay checkpoint is persisted
+before a session is created. Failed code checks use the existing login
+throttle. No QR service or frontend runtime is used.
 The admin application runs as a non-root user, its test-only
 credential fixture is disposable, and its service port is private to the
 Compose network.

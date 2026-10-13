@@ -121,14 +121,20 @@ container does not become healthy, the previous credential is restored.
 ## First login and Windows WireGuard
 
 1. Open `https://admin.<domain>` and sign in with the initial password.
-2. Download the Windows WireGuard configuration from the authenticated admin
+2. In the dashboard's administrator authenticator section, re-enter the
+   administrator password, scan the locally generated QR code (or enter its
+   secret manually), then submit a six-digit authenticator code to activate
+   TOTP. Activation signs out every administrator session.
+3. Sign in again with both the administrator password and a current unused
+   authenticator code. Every new administrator login requires both factors.
+4. Download the Windows WireGuard configuration from the authenticated admin
    dashboard. The same retained configuration can be downloaded again; it uses
    split-tunnel `/32` routes and a 25-second persistent keepalive.
-3. Import it into the official WireGuard client on the Windows Jellyfin PC and
+5. Import it into the official WireGuard client on the Windows Jellyfin PC and
    activate the tunnel.
-4. Add only the desired public client IP addresses/CIDRs to the access
+6. Add only the desired public client IP addresses/CIDRs to the access
    whitelist. An empty list is default deny.
-5. Restrict the Windows Jellyfin inbound firewall rule to TCP port 8096 from
+7. Restrict the Windows Jellyfin inbound firewall rule to TCP port 8096 from
    the VPS WireGuard address `10.66.66.1`. In an elevated PowerShell window on
    Windows, a narrow example rule is:
 

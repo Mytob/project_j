@@ -72,6 +72,26 @@ successful activation. The ordinary admin image has no JavaScript runtime.
   dependency is added to the deployed admin container.
 - No live VPS was used.
 
+### Stage 4 — Login enforcement
+
+With TOTP unconfigured, the existing password-only v1.0-compatible login
+remains available. Once enabled, the rendered login form requires both the
+administrator password and a six-digit TOTP code. The handler validates both
+before creating an authenticated session; the TOTP store persists the replay
+checkpoint before reporting success. Missing, malformed, expired, reused,
+concurrent duplicate, or unpersistable codes do not create a session. Login
+session creation is serialized with TOTP activation so a password-only request
+that overlaps activation cannot survive the activation-time session revocation.
+Existing login throttling counts failed TOTP attempts too.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS on 2026-10-13.
+- Full command: `pwsh -NoProfile -File .\build.ps1 test` — PASS on
+  2026-10-13, including real Chromium login after setup and the full M1–M6
+  regression suite.
+- No live VPS was used.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
