@@ -140,7 +140,7 @@ try {
     foreach ($relative in @('manifest.json', 'images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'compose.yaml', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html')) {
         if ($normalizedEntries -notcontains $relative) { throw "Release archive is missing $relative" }
     }
-    foreach ($secretName in @('server.conf', 'windows.conf', 'admin.json')) {
+    foreach ($secretName in @('server.conf', 'windows.conf', 'admin.json', 'totp.key', 'totp-state.json')) {
         if ($normalizedEntries -match "(^|/)$([regex]::Escape($secretName))$") { throw "Release archive unexpectedly contains sensitive runtime file $secretName" }
     }
 

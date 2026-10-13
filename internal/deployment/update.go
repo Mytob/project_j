@@ -81,6 +81,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if manifest.Version == current.Version {
 		return manifest, errors.New("release version is already active")
 	}
+	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
+		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)
+	}
 	finalRelease := filepath.Join(options.InstallRoot, "releases", manifest.Version)
 	createdRelease := false
 	rollbackComplete := true

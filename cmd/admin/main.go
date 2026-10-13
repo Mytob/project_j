@@ -15,6 +15,8 @@ import (
 func main() {
 	listen := flag.String("listen", ":8080", "HTTP listen address")
 	config := flag.String("config", "/opt/jellyfin-proxy/config/admin.json", "administrator credential file")
+	totpKey := flag.String("totp-key", "/opt/jellyfin-proxy/config/totp.key", "administrator TOTP storage key file")
+	totpState := flag.String("totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "administrator TOTP state file")
 	whitelistPath := flag.String("whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "persistent whitelist file")
 	caddySocket := flag.String("caddy-socket", "/run/caddy-admin/admin.sock", "private Caddy admin Unix socket")
 	caddyfile := flag.String("caddyfile", "/etc/caddy/Caddyfile", "Caddyfile template containing the whitelist import")
@@ -25,6 +27,17 @@ func main() {
 	credential, err := auth.LoadCredential(*config)
 	if err != nil {
 		logger.Error("load administrator credential", "error", err)
+		os.Exit(1)
+	}
+	key, err := auth.LoadTOTPKey(*totpKey)
+	if err != nil {
+		logger.Error("load administrator TOTP key", "error", err)
+		os.Exit(1)
+	}
+	totpStore, err := auth.NewTOTPStore(*totpState, key)
+	clear(key)
+	if err != nil {
+		logger.Error("load administrator TOTP state", "error", err)
 		os.Exit(1)
 	}
 	store, err := whitelist.NewStore(*whitelistPath)
@@ -46,6 +59,10 @@ func main() {
 		os.Exit(1)
 	}
 	application := admin.New(credential, logger, manager)
+	if err := application.ConfigureTOTPStore(totpStore); err != nil {
+		logger.Error("configure administrator TOTP", "error", err)
+		os.Exit(1)
+	}
 	if err := application.ConfigureWireGuardConfig(*wireguardConfig); err != nil {
 		logger.Error("configure Windows WireGuard download", "error", err)
 		os.Exit(1)

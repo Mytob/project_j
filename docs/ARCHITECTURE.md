@@ -80,6 +80,12 @@ provider firewall settings, public ingress, or Ubuntu VPS WireGuard behaviour.
   Caddy and the admin container; no public TCP listener is configured.
 - WireGuard private keys and generated client config are sensitive persistent
   data with restricted permissions.
+- Administrator TOTP secrets are stored as AES-256-GCM ciphertext in the
+  writable admin data mount. A separately generated 256-bit key is kept in the
+  root-owned, read-only config mount; neither file is included in a release.
+- Missing or invalid TOTP key/state files prevent the admin process from
+  starting. An explicitly initialized unconfigured state is distinct from a
+  missing state file, so deletion cannot silently turn TOTP off.
 - Admin sessions, CSRF protection, password hashing, and non-cacheable config
   download are owned by the Go admin application.
 - Installation/update code preserves persistent data and scopes cleanup to
@@ -91,11 +97,16 @@ The planned install root is `/opt/jellyfin-proxy/` with `config/`, `data/`,
 `site/`, `releases/`, and `compose.yaml`. Deployment config is validated and
 written atomically. The updater stages and verifies each release before
 replacing active environment, Compose, and Caddy template files. It preserves
-credentials, whitelist state, WireGuard keys, and site content, then verifies
-service and HTTPS readiness. On failure it restores the previous files and
-recreates the previous services. It retains the active and previous version
-directories, deleting only older versioned directories after success. The
-current M1 test files live in the repository and create no deployment data.
+credentials, whitelist state, WireGuard keys, the separate TOTP key/state,
+and site content, then verifies service and HTTPS readiness. TOTP state is
+written mode 0600 under the app-owned mode 0700 data directory; the key is
+root-owned, readable by the dedicated admin group, and mounted read-only.
+The v1.0 migration creates both TOTP files only when neither exists; partial
+or corrupt state fails closed. Backups must retain the key and state together.
+On update failure the updater restores the previous files and recreates the
+previous services. It retains the active and previous version directories,
+deleting only older versioned directories after success. The current M1 test
+files live in the repository and create no deployment data.
 
 ## Module boundaries
 

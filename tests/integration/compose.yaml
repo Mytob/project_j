@@ -1,4 +1,11 @@
 services:
+  totp-key-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - totp_key:/key
+    command: ["sh", "-c", "dd if=/dev/urandom of=/key/totp.key bs=32 count=1 2>/dev/null && chown 0:65532 /key/totp.key && chmod 440 /key/totp.key"]
+
   wireguard-config-init:
     image: alpine:3.22
     user: "0:0"
@@ -87,9 +94,10 @@ services:
     build:
       context: ../..
       dockerfile: tests/integration/Dockerfile.admin
-    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf"]
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
+      - totp_key:/opt/jellyfin-proxy/config/totp-key:ro
       - wireguard_client:/opt/jellyfin-proxy/config/wireguard:ro
       - caddy_admin_socket:/run/caddy-admin
       - admin_data:/opt/jellyfin-proxy/data
@@ -103,6 +111,10 @@ services:
         condition: service_started
       admin-data-init:
         condition: service_completed_successfully
+      totp-state-init:
+        condition: service_completed_successfully
+      totp-key-init:
+        condition: service_completed_successfully
       wireguard-config-init:
         condition: service_completed_successfully
 
@@ -112,6 +124,16 @@ services:
     volumes:
       - admin_data:/data
     command: ["sh", "-c", "chown 65532:65532 /data && chmod 700 /data"]
+
+  totp-state-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - admin_data:/data
+    depends_on:
+      admin-data-init:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "printf '{\"version\":1,\"status\":\"unconfigured\"}\\n' > /data/totp-state.json && chown 65532:65532 /data/totp-state.json && chmod 600 /data/totp-state.json"]
 
   trusted-client:
     image: curlimages/curl:8.12.1
@@ -136,6 +158,7 @@ volumes:
   caddy_config:
   caddy_admin_socket:
   admin_data:
+  totp_key:
 
 networks:
   default:

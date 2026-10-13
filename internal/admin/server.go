@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/whitelist"
@@ -20,6 +21,7 @@ var templateFiles embed.FS
 type Server struct {
 	credential            *auth.Credential
 	sessions              *auth.Sessions
+	totpStore             *auth.TOTPStore
 	limiter               *auth.LoginLimiter
 	whitelist             *WhitelistManager
 	wireguardClientConfig string
@@ -67,6 +69,28 @@ func (s *Server) ConfigureWireGuardConfig(path string) error {
 		return err
 	}
 	s.wireguardClientConfig = path
+	return nil
+}
+
+// ConfigureTOTPStore connects validated persistent TOTP state to the admin
+// authentication boundary. The web configuration routes are added in the
+// following implementation stage.
+func (s *Server) ConfigureTOTPStore(store *auth.TOTPStore) error {
+	if store == nil {
+		return errors.New("TOTP state store is unavailable")
+	}
+	s.totpStore = store
+	return nil
+}
+
+func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
+	if s.totpStore == nil {
+		return errors.New("TOTP state store is unavailable")
+	}
+	if err := s.totpStore.ConfirmEnrollment(code, at); err != nil {
+		return err
+	}
+	s.sessions.RevokeAll()
 	return nil
 }
 

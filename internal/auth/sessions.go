@@ -81,6 +81,13 @@ func (s *Sessions) Revoke(id string) {
 	s.mu.Unlock()
 }
 
+// RevokeAll invalidates every outstanding session atomically.
+func (s *Sessions) RevokeAll() {
+	s.mu.Lock()
+	clear(s.items)
+	s.mu.Unlock()
+}
+
 func randomToken() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {

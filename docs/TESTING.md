@@ -9,6 +9,8 @@ a blocker when unavailable and must not be represented as proven by simulation.
 
 ## v1.1 TOTP stage gate status
 
+### Stage 1 — Standalone engine
+
 Stage 1 adds the isolated `internal/totp` engine and tests for RFC 6238 SHA-1
 reference vectors, 30-second boundaries, clock skew, invalid input, secret
 generation, replay prevention, clock rollback, and concurrent code submission.
@@ -24,6 +26,27 @@ The tests use fixed timestamps and generated test secrets.
 - Earlier retries were blocked while Docker Desktop was stopped. Docker became
   available after it was reopened; these earlier environment failures are not
   current blockers.
+
+### Stage 2 — Authentication state and persistence
+
+Automated tests cover initial unconfigured state, pending enrollment, incorrect
+code and cancellation, successful activation, encrypted-at-rest state, file
+permissions, storage corruption and failure, session invalidation, replay
+prevention across store reopen, concurrent code consumption, v1.0 migration,
+and key/state preservation during update.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/auth ./internal/totp
+  ./internal/admin ./internal/deployment` — PASS (2026-10-13).
+- Full command: `./build.ps1 test` — PASS (2026-10-13), including all Go
+  packages and M1–M6 integration. The first integration attempt found that the
+  key fixture volume targeted a file path; after mounting it as a read-only
+  directory, the full suite passed.
+- Package command: `./build.ps1 package -Version 1.0.0-dev` — PASS on retry
+  (2026-10-13). The first attempt had an 8-second transient HTTPS timeout in a
+  whitelist request. The successful run validated package secret exclusion,
+  offline image loading, fresh install, update, rollback, and password reset.
+- No v1.1 feature has been deployed to a live VPS.
 
 ## Local environment
 
