@@ -277,10 +277,11 @@ these limits explicitly and use VPS preflight checks.
   wireguard wg show` reported a handshake 1 minute 15 seconds earlier, with
   148.56 MiB received and 1.48 MiB sent. The operator reports they can stream
   from the app. The endpoint address and peer keys are intentionally omitted.
-- **Pending Windows gate:** Confirm that removing the temporary client
-  whitelist entry restores HTTP 403, and verify the Windows Firewall rule
-  permits TCP 8096 only from `10.66.66.1` with broader remote allow rules
-  disabled. See `docs/DEPLOYMENT.md` for the operator steps.
+- **Whitelist removal:** PASS (operator-confirmed). After removing the
+  temporary client whitelist entry, `access.darkcry.com` returned HTTP 403.
+- **Pending Windows gate:** The Windows Firewall rule scope remains
+  unverified; the operator had not added a rule. See `docs/DEPLOYMENT.md` for
+  the exact rule and review steps.
 - **Earlier failure and fix:** The first real install safely rolled back
   because Docker Engine 29's `image inspect .Id` returned an OCI index digest
   rather than the package's platform config digest. PR #12 changed install and
@@ -289,6 +290,6 @@ these limits explicitly and use VPS preflight checks.
   release-gate run then caught config blobs preceding `manifest.json`; the
   corrected verifier uses two passes. The subsequent `./build.ps1 release
   -Version 1.0.0-dev` run passed all local gates.
-- **Limits:** VPS install, public HTTPS, DNS, WireGuard handshake, and app
-  streaming have passed. The whitelist-removal check and Windows Firewall rule
-  scope still need confirmation before M11 can pass.
+- **Limits:** VPS install, public HTTPS, DNS, WireGuard handshake, app
+  streaming, and whitelist removal/default deny have passed. Windows Firewall
+  rule scope still needs confirmation before M11 can pass.
