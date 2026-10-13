@@ -60,6 +60,14 @@ func run() error {
 	if manifest.Version == "" {
 		return errors.New("installer returned an empty release version")
 	}
+	updateVersion, err := bumpPatchVersion(manifest.Version, 1)
+	if err != nil {
+		return fmt.Errorf("derive offline update version: %w", err)
+	}
+	rollbackVersion, err := bumpPatchVersion(manifest.Version, 2)
+	if err != nil {
+		return fmt.Errorf("derive rollback version: %w", err)
+	}
 	// Published Docker ports bypass many host INPUT policies after DNAT. Confirm
 	// the production WireGuard namespace installs its own narrow ingress filter.
 	for _, family := range []struct{ firewall, chain string }{
@@ -113,7 +121,7 @@ func run() error {
 	if err := os.WriteFile(filepath.Join(options.InstallRoot, "site", "operator-page.txt"), []byte("preserve operator site"), 0o644); err != nil {
 		return fmt.Errorf("write operator site fixture: %w", err)
 	}
-	updatePackage, updatePackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], "1.0.1-dev")
+	updatePackage, updatePackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], updateVersion)
 	if err != nil {
 		return fmt.Errorf("prepare update package: %w", err)
 	}
@@ -125,7 +133,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("offline update failed: %w", err)
 	}
-	if updated.Version != "1.0.1-dev" {
+	if updated.Version != updateVersion {
 		return fmt.Errorf("offline update selected unexpected version %s", updated.Version)
 	}
 	for relative, expected := range preserved {
@@ -137,12 +145,12 @@ func run() error {
 	if data, err := os.ReadFile(filepath.Join(options.InstallRoot, "site", "operator-page.txt")); err != nil || string(data) != "preserve operator site" {
 		return fmt.Errorf("update changed operator website: %q (%v)", data, err)
 	}
-	for _, version := range []string{"1.0.0-dev", "1.0.1-dev"} {
+	for _, version := range []string{manifest.Version, updateVersion} {
 		if _, err := os.Stat(filepath.Join(options.InstallRoot, "releases", version)); err != nil {
 			return fmt.Errorf("active/previous release %s was not retained: %w", version, err)
 		}
 	}
-	rollbackPackage, rollbackPackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], "1.0.2-dev")
+	rollbackPackage, rollbackPackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], rollbackVersion)
 	if err != nil {
 		return fmt.Errorf("prepare rollback package: %w", err)
 	}
@@ -155,10 +163,10 @@ func run() error {
 		return errors.New("update unexpectedly survived forced HTTPS failure")
 	}
 	environment, err := os.ReadFile(filepath.Join(options.InstallRoot, ".env"))
-	if err != nil || !strings.Contains(string(environment), "RELEASE_VERSION=1.0.1-dev\n") {
+	if err != nil || !strings.Contains(string(environment), "RELEASE_VERSION="+updateVersion+"\n") {
 		return fmt.Errorf("failed update did not restore active version: %q (%v)", environment, err)
 	}
-	if _, err := os.Lstat(filepath.Join(options.InstallRoot, "releases", "1.0.2-dev")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(options.InstallRoot, "releases", rollbackVersion)); !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("failed update release was not cleaned up: %v", err)
 	}
 	if _, err := deployment.Update(ctx, deployment.UpdateOptions{
@@ -167,12 +175,12 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("successful update after rollback failed: %w", err)
 	}
-	for _, version := range []string{"1.0.1-dev", "1.0.2-dev"} {
+	for _, version := range []string{updateVersion, rollbackVersion} {
 		if _, err := os.Stat(filepath.Join(options.InstallRoot, "releases", version)); err != nil {
 			return fmt.Errorf("active/previous release %s was not retained after successful cleanup: %w", version, err)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(options.InstallRoot, "releases", "1.0.0-dev")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(options.InstallRoot, "releases", manifest.Version)); !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("older release was not removed after successful update: %v", err)
 	}
 	if err := deployment.ResetPassword(ctx, options.InstallRoot, "reset password for installcheck", runner); err != nil {

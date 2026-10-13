@@ -46,7 +46,7 @@ function Get-LocalResponse([string]$Scheme, [int]$Port, [string]$HostName, [stri
     $uri = "${Scheme}://${HostName}:${Port}${Path}"
     $resolve = "${HostName}:${Port}:127.0.0.1"
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        $output = & curl.exe --noproxy '*' --silent --show-error --insecure --resolve $resolve --write-out "`n%{http_code}" $uri
+        $output = & curl.exe --noproxy '*' --silent --show-error --insecure --connect-timeout 3 --max-time 8 --resolve $resolve --write-out "`n%{http_code}" $uri
         if ($LASTEXITCODE -eq 0) { return Parse-CurlOutput -Output $output -Request $uri }
         if ($attempt -lt 10) { Start-Sleep -Milliseconds 300 }
     }
@@ -91,7 +91,7 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
     $resolve = "admin.domain.test:${HttpsPort}:127.0.0.1"
     $headersPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.headers')
     $bodyPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.body')
-    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--resolve', $resolve, '--cookie', $CookieJar, '--cookie-jar', $CookieJar, '--dump-header', $headersPath, '--output', $bodyPath)
+    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-timeout', '3', '--max-time', '8', '--resolve', $resolve, '--cookie', $CookieJar, '--cookie-jar', $CookieJar, '--dump-header', $headersPath, '--output', $bodyPath)
     if ($Method -eq 'POST') {
         $curlArgs += @('--request', 'POST', '--data-urlencode', "csrf=$CSRF")
         if ($Path -eq '/login') { $curlArgs += @('--data-urlencode', "password=$Password") }
@@ -107,7 +107,7 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
 
 function Get-ClientResponse([string]$Service, [string]$Path, [string]$ForwardedFor = '') {
     $uri = "https://access.domain.test$Path"
-    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-to', 'access.domain.test:443:wireguard:443')
+    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-timeout', '3', '--max-time', '8', '--connect-to', 'access.domain.test:443:wireguard:443')
     if ($ForwardedFor) {
         $curlArgs += @('--header', "X-Forwarded-For: $ForwardedFor")
     }
@@ -120,7 +120,7 @@ function Get-ClientResponse([string]$Service, [string]$Path, [string]$ForwardedF
 }
 
 function Get-MockRequestCount {
-    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard-check curl --noproxy '*' --silent --show-error --connect-timeout 3 http://10.66.66.2:8096/__requests
+    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard-check curl --noproxy '*' --silent --show-error --connect-timeout 3 --max-time 8 http://10.66.66.2:8096/__requests
     if ($LASTEXITCODE -ne 0) {
         throw "Could not read mock request count (exit $LASTEXITCODE)."
     }
@@ -139,7 +139,8 @@ function New-WireGuardTestConfigs {
 }
 
 function Get-WireGuardHealth([int]$TimeoutSeconds = 2) {
-    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard-check curl --noproxy '*' --fail --silent --show-error --connect-timeout $TimeoutSeconds http://10.66.66.2:8096/health
+    $maxTimeSeconds = $TimeoutSeconds + 1
+    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard-check curl --noproxy '*' --fail --silent --show-error --connect-timeout $TimeoutSeconds --max-time $maxTimeSeconds http://10.66.66.2:8096/health
     [pscustomobject]@{ Healthy = ($LASTEXITCODE -eq 0 -and ([string]$output).Trim() -eq 'ok'); Output = [string]$output }
 }
 

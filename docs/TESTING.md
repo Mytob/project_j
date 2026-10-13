@@ -297,3 +297,21 @@ these limits explicitly and use VPS preflight checks.
   scoped Windows Firewall rule have passed. The Windows firewall scope report
   is operator-confirmed; no host-specific checks remain open. Release
   promotion, tagging, and artifact publication remain separate M11 deliverables.
+
+### Verified stable 1.0.0 release gate — 2026-10-13
+
+- **Final command:** `./build.ps1 release -Version 1.0.0 -HostCheckEvidence
+  docs/release-host-checks-v1.0.0.json`
+- **Result:** PASS (exit 0). Go tests, M1–M6 integration, and the complete
+  stable-version package/install/update/rollback gate passed. The report at
+  `dist/release-validation-1.0.0.json` records `local_gate: passed` and
+  `release_readiness: ready`, including the three actual-host checks.
+- **Download bundle:** `dist/jellyfin-proxy-1.0.0-linux-amd64.tar.gz`; SHA-256
+  `3669b625b98fdfabc0cdc9a23b94e36505228548b87ed10529e726697ed7e8c2`.
+- **First stable-version run:** `./build.ps1 release -Version 1.0.0` failed
+  in the offline installer/update gate because retention assertions expected
+  the hard-coded starting release `1.0.0-dev`. The harness now derives test
+  patch versions from the package manifest. Its version helper unit tests
+  passed, and integration HTTP probes now have bounded timeouts.
+- **Host evidence:** The version-matched evidence file records the completed
+  Ubuntu/VPS, public DNS/ACME/provider firewall, and native Windows checks.
