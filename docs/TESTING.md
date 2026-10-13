@@ -92,6 +92,32 @@ Existing login throttling counts failed TOTP attempts too.
   regression suite.
 - No live VPS was used.
 
+### Stage 5 — Privileged VPS CLI recovery
+
+`proxyctl reset-totp` clears established or pending authenticator material and
+requires a fresh enrollment after the unchanged administrator password is
+accepted. The resulting session can reach only authenticator setup and logout;
+successful enrollment invalidates it and requires a new password-plus-code
+login. `proxyctl replace-totp` is accepted only when TOTP is enabled and uses
+the same mandatory fresh-enrollment flow. `proxyctl disable-totp` returns to
+password-only login. The three commands reject non-root execution. Persistent
+changes are saved before only the admin service is recreated; command or
+readiness failures restore the prior state and restart the prior admin service.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./cmd/proxyctl ./internal/admin
+  ./internal/auth ./internal/deployment ./internal/totp` — PASS on 2026-10-13.
+- Full command: `pwsh -NoProfile -File .\build.ps1 test` — PASS on retry
+  (2026-10-13), including all Go packages, Chromium enrollment, and the M1–M6
+  isolated Docker integration suite. The preceding run had a transient
+  8-second HTTPS timeout while posting a whitelist update; the retry passed.
+- Automated tests verify real non-root rejection, reset/disable/replace state
+  transitions, replacement eligibility, preserved password bytes, state file
+  owner/mode, admin-only stop/recreate commands, failed restart rollback,
+  recovery-only web session boundaries, required fresh enrollment, and a new
+  password-plus-TOTP login afterward.
+- No live VPS was used.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,

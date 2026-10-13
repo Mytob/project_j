@@ -118,6 +118,27 @@ and permissions, and recreates only the admin service. Admin sessions are
 in-memory, so this restart invalidates every existing session. If the new admin
 container does not become healthy, the previous credential is restored.
 
+Lost-authenticator recovery is available only from a local root shell on the
+VPS. These commands never change the administrator password:
+
+```sh
+sudo ./proxyctl-linux-amd64 reset-totp
+sudo ./proxyctl-linux-amd64 replace-totp
+sudo ./proxyctl-linux-amd64 disable-totp
+```
+
+`reset-totp` is the emergency recovery path. It invalidates the old factor,
+recreates only the admin service (which invalidates all in-memory sessions),
+and requires a new authenticator enrollment after the existing password is
+entered. Until that enrollment is verified, the session is limited to setup and
+sign-out; cancelling returns to the same required-enrollment state. `replace-totp`
+does the same when an authenticator is currently enabled. The new factor is not
+active until its six-digit code verifies successfully. `disable-totp` clears
+authenticator state and returns to password-only administrator login. Each
+command validates the installed state, and a failed state update or admin
+restart restores the prior state and restarts the prior admin service. These
+commands require root and are not available through the web interface.
+
 ## First login and Windows WireGuard
 
 1. Open `https://admin.<domain>` and sign in with the initial password.

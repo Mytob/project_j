@@ -129,6 +129,10 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
 	}
+	if _, ok := s.enrollmentOnlySession(r); ok {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
 	id, csrf, err := s.sessions.Create(false)
 	if err != nil {
 		http.Error(w, "Unable to start a session", http.StatusInternalServerError)
@@ -138,6 +142,9 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{"CSRF": csrf}
 	if s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled {
 		data["TOTPRequired"] = true
+	}
+	if s.totpStore != nil && s.totpStore.RequiresEnrollment() {
+		data["TOTPEnrollmentRequired"] = true
 	}
 	s.render(w, "login.html", data)
 }
@@ -161,6 +168,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.authTransitionMu.Lock()
 	defer s.authTransitionMu.Unlock()
 	requireTOTP := s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled
+	requireEnrollment := s.totpStore != nil && s.totpStore.RequiresEnrollment()
 	if !s.credential.Verify(r.FormValue("password")) {
 		s.limiter.Failed()
 		csrf, _, _ := s.sessions.State(oldID)
@@ -168,7 +176,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		if requireTOTP {
 			message = "The password or authenticator code was not accepted."
 		}
-		s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": message, "TOTPRequired": requireTOTP})
+		s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": message, "TOTPRequired": requireTOTP, "TOTPEnrollmentRequired": requireEnrollment})
 		return
 	}
 	if requireTOTP {
@@ -182,6 +190,36 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": "The password or authenticator code was not accepted.", "TOTPRequired": true})
 			return
 		}
+	}
+	if requireEnrollment {
+		if s.totpStore.Status() == auth.TOTPRecovery {
+			secret, err := s.totpStore.BeginEnrollment()
+			if err != nil {
+				s.limiter.Failed()
+				csrf, _, _ := s.sessions.State(oldID)
+				s.renderStatus(w, http.StatusServiceUnavailable, "login.html", map[string]any{"CSRF": csrf, "Error": "Authenticator setup could not be started.", "TOTPEnrollmentRequired": true})
+				return
+			}
+			clear(secret)
+		}
+		if oldID != "" {
+			s.sessions.Revoke(oldID)
+		}
+		id, _, err := s.sessions.CreateEnrollmentOnly()
+		if err != nil {
+			s.limiter.Failed()
+			http.Error(w, "Unable to start a session", http.StatusInternalServerError)
+			return
+		}
+		if !s.sessions.GrantRecentPasswordVerification(id, totpReauthenticationLifetime) {
+			s.sessions.Revoke(id)
+			http.Error(w, "Unable to start authenticator setup", http.StatusInternalServerError)
+			return
+		}
+		s.limiter.Succeeded()
+		s.setCookie(w, id, int(auth.DefaultSessionLifetime.Seconds()))
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
 	}
 	s.limiter.Succeeded()
 	if oldID != "" {
@@ -211,6 +249,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	id, authenticated := s.session(r)
 	if !authenticated {
+		if enrollmentID, ok := s.enrollmentOnlySession(r); ok {
+			s.recoveryEnrollmentPage(w, enrollmentID)
+			return
+		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -252,6 +294,34 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "dashboard.html", data)
 }
 
+func (s *Server) recoveryEnrollmentPage(w http.ResponseWriter, id string) {
+	csrf, _, ok := s.sessions.State(id)
+	if !ok || !s.sessions.EnrollmentOnly(id) || s.totpStore == nil || !s.totpStore.RequiresEnrollment() {
+		http.Error(w, "Authenticator setup is unavailable", http.StatusForbidden)
+		return
+	}
+	data := map[string]any{"CSRF": csrf}
+	if s.totpStore.Status() == auth.TOTPPending && s.sessions.HasRecentPasswordVerification(id) {
+		secret, err := s.totpStore.PendingSecret()
+		if err != nil {
+			s.logger.Error("read recovery TOTP setup state", "error", err)
+			http.Error(w, "Authenticator setup is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defer clear(secret)
+		encodedQR, err := qrcode.Encode(totpProvisioningURI(secret), qrcode.Medium, 256)
+		if err != nil {
+			s.logger.Error("generate recovery TOTP QR code")
+			http.Error(w, "Authenticator setup is unavailable", http.StatusInternalServerError)
+			return
+		}
+		data["TOTPSecret"] = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+		data["TOTPQRCode"] = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(encodedQR))
+		data["TOTPSetupVisible"] = true
+	}
+	s.render(w, "totp_recovery.html", data)
+}
+
 func (s *Server) startTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
@@ -259,7 +329,8 @@ func (s *Server) startTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, authenticated := s.session(r)
-	if !authenticated {
+	enrollmentOnly := s.sessions.EnrollmentOnly(id)
+	if !authenticated && !enrollmentOnly {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -308,7 +379,8 @@ func (s *Server) confirmTOTPEnrollmentHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	id, authenticated := s.session(r)
-	if !authenticated {
+	enrollmentOnly := s.sessions.EnrollmentOnly(id)
+	if !authenticated && !enrollmentOnly {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -351,7 +423,8 @@ func (s *Server) cancelTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, authenticated := s.session(r)
-	if !authenticated {
+	enrollmentOnly := s.sessions.EnrollmentOnly(id)
+	if !authenticated && !enrollmentOnly {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -460,6 +533,14 @@ func (s *Server) session(r *http.Request) (string, bool) {
 	}
 	_, authenticated, ok := s.sessions.State(cookie.Value)
 	return cookie.Value, ok && authenticated
+}
+
+func (s *Server) enrollmentOnlySession(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie("admin_session")
+	if err != nil {
+		return "", false
+	}
+	return cookie.Value, s.sessions.EnrollmentOnly(cookie.Value)
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, id string, maxAge int) {

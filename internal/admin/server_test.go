@@ -491,6 +491,78 @@ func TestTOTPLoginRequiresPasswordAndFreshUnusedCode(t *testing.T) {
 	}
 }
 
+func TestRecoveryLoginIsRestrictedUntilFreshAuthenticatorActivation(t *testing.T) {
+	server, handler, store, _ := newTOTPTestServer(t)
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	activateTestTOTP(t, store, enrolledAt)
+	if err := store.RequireFreshEnrollment(); err != nil {
+		t.Fatal(err)
+	}
+	now := enrolledAt.Add(2 * totp.Period)
+	server.now = func() time.Time { return now }
+	cookie, csrf := newAnonymousLogin(t, handler)
+	if response := request(handler, http.MethodPost, "/login", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}}, cookie); response.Code != http.StatusSeeOther {
+		t.Fatalf("recovery password login returned %d: %s", response.Code, response.Body.String())
+	} else {
+		for _, issued := range response.Result().Cookies() {
+			if issued.Name == "admin_session" {
+				cookie = issued
+			}
+		}
+	}
+	page := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "Authenticator recovery") || strings.Contains(page.Body.String(), "Whitelist") || strings.Contains(page.Body.String(), "WireGuard") {
+		t.Fatalf("recovery session did not render a restricted setup page: %d %s", page.Code, page.Body.String())
+	}
+	csrfMatch := csrfPattern.FindStringSubmatch(page.Body.String())
+	if len(csrfMatch) != 2 {
+		t.Fatal("recovery page did not render CSRF token")
+	}
+	if response := request(handler, http.MethodPost, "/whitelist/add", url.Values{"csrf": {csrfMatch[1]}, "entry": {"192.0.2.1"}}, cookie); response.Code != http.StatusSeeOther {
+		t.Fatalf("recovery session reached whitelist mutation: %d", response.Code)
+	}
+	if response := request(handler, http.MethodGet, "/wireguard/config", nil, cookie); response.Code != http.StatusSeeOther {
+		t.Fatalf("recovery session reached protected download: %d", response.Code)
+	}
+	if response := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrfMatch[1]}, "password": {"correct test administrator password"}}, cookie); response.Code != http.StatusSeeOther {
+		t.Fatalf("recovery enrollment start returned %d: %s", response.Code, response.Body.String())
+	}
+	page = request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	secretMatch := totpSecretPattern.FindStringSubmatch(page.Body.String())
+	if page.Code != http.StatusOK || len(secretMatch) != 2 {
+		t.Fatalf("recovery enrollment secret was not shown after password check: %d %s", page.Code, page.Body.String())
+	}
+	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secretMatch[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(secret)
+	code, err := totp.Code(secret, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrfMatch = csrfPattern.FindStringSubmatch(page.Body.String())
+	confirmed := request(handler, http.MethodPost, "/totp/enroll/confirm", url.Values{"csrf": {csrfMatch[1]}, "code": {code}}, cookie)
+	if confirmed.Code != http.StatusSeeOther || store.Status() != auth.TOTPEnabled || store.RequiresEnrollment() {
+		t.Fatalf("fresh recovery enrollment did not activate TOTP: %d status=%s", confirmed.Code, store.Status())
+	}
+	if response := request(handler, http.MethodGet, "/dashboard", nil, cookie); response.Code != http.StatusSeeOther {
+		t.Fatalf("enrollment session survived activation: %d", response.Code)
+	}
+	freshCookie, freshCSRF := newAnonymousLogin(t, handler)
+	if response := request(handler, http.MethodPost, "/login", url.Values{"csrf": {freshCSRF}, "password": {"correct test administrator password"}}, freshCookie); response.Code != http.StatusUnauthorized {
+		t.Fatalf("password-only login succeeded after re-enrollment: %d", response.Code)
+	}
+	freshCode, err := totp.Code(secret, now.Add(totp.Period))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := request(handler, http.MethodPost, "/login", url.Values{"csrf": {freshCSRF}, "password": {"correct test administrator password"}, "code": {freshCode}}, freshCookie)
+	if accepted.Code != http.StatusSeeOther {
+		t.Fatalf("password-plus-new-TOTP login failed: %d %s", accepted.Code, accepted.Body.String())
+	}
+}
+
 func TestConcurrentTOTPLoginsConsumeCodeOnce(t *testing.T) {
 	server, handler, store, _ := newTOTPTestServer(t)
 	enrolledAt := time.Unix(1_700_000_010, 0)

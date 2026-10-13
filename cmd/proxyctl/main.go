@@ -24,10 +24,10 @@ func main() {
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, _ = fmt.Fprintln(stdout, "Usage: proxyctl install <release-package.tar.gz> | update <release-package.tar.gz> | reset-password")
+		_, _ = fmt.Fprintln(stdout, "Usage: proxyctl install <release-package.tar.gz> | update <release-package.tar.gz> | reset-password | reset-totp | disable-totp | replace-totp")
 		return nil
 	}
-	if args[0] != "install" && args[0] != "update" && args[0] != "reset-password" {
+	if args[0] != "install" && args[0] != "update" && args[0] != "reset-password" && args[0] != "reset-totp" && args[0] != "disable-totp" && args[0] != "replace-totp" {
 		return fmt.Errorf("unknown command %q; run proxyctl help", args[0])
 	}
 	if (args[0] == "install" || args[0] == "update") && len(args) != 2 {
@@ -35,6 +35,31 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if args[0] == "reset-password" && len(args) != 1 {
 		return errors.New("usage: proxyctl reset-password")
+	}
+	if args[0] != "install" && args[0] != "update" && args[0] != "reset-password" && len(args) != 1 {
+		return fmt.Errorf("usage: proxyctl %s", args[0])
+	}
+	if args[0] == "reset-totp" || args[0] == "disable-totp" || args[0] == "replace-totp" {
+		if !runningAsRoot() {
+			return errors.New("TOTP recovery commands must be run as root")
+		}
+		action := map[string]deployment.TOTPRecoveryAction{
+			"reset-totp":   deployment.TOTPReset,
+			"disable-totp": deployment.TOTPDisable,
+			"replace-totp": deployment.TOTPReplace,
+		}[args[0]]
+		if err := deployment.RecoverTOTP(ctx, deployment.DefaultInstallRoot, action, deployment.ExecRunner{}); err != nil {
+			return err
+		}
+		switch action {
+		case deployment.TOTPDisable:
+			fmt.Fprintln(stdout, "Authenticator disabled. The next administrator login can use the existing password.")
+		case deployment.TOTPReplace:
+			fmt.Fprintln(stdout, "Authenticator replaced. Sign in with the existing password and complete enrollment of the new authenticator before using the dashboard.")
+		default:
+			fmt.Fprintln(stdout, "Authenticator reset. Sign in with the existing password and complete a new authenticator enrollment before using the dashboard.")
+		}
+		return nil
 	}
 
 	runner := deployment.ExecRunner{}
