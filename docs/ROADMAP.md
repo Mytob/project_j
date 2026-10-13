@@ -17,7 +17,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | In progress | VPS install, public DNS/ACME and HTTPS, admin/profile download, WireGuard UDP handshake, app streaming, whitelist removal returning HTTP 403, and operator-reported streaming after adding the scoped Windows Firewall rule have passed. Existing broader Windows allow rules have not been checked. No stable release tag or publication has been made. |
+| M11 — Version 1.0.0 release | Release preparation pending | All local and actual-host validation gates have passed, including operator-confirmed Windows Firewall scope and successful streaming. Remaining deliverables are promotion from `dev` to `main`, the `v1.0.0` tag, and official artifacts where permissions allow. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -249,7 +249,7 @@ merge commit `7470ef3`.
 
 ### M11 — Version 1.0.0 release
 
-- **Status:** In progress; Windows client gate pending
+- **Status:** Host validation complete; release preparation pending
 - **Dependencies:** M10.
 - **Deliverables:** Validated promotion from `dev` to `main`, verified release
   commit and tag, official artifacts where permissions allow, install/update
@@ -276,9 +276,11 @@ merge commit `7470ef3`.
 - **Windows follow-up (2026-10-13):** The operator reports they can stream in
   the app. At 19:49:40 UTC, the VPS reported a handshake 1 minute 15 seconds
   earlier and 148.56 MiB received / 1.48 MiB sent for the peer.
-- **Remaining gate:** Confirm that removing the temporary client whitelist
-  entry makes access return 403, and that the Windows Firewall rule permits
-  TCP 8096 only from `10.66.66.1` with broader remote allow rules disabled. The
+- **Final host gate (2026-10-13):** The operator confirmed the temporary
+  whitelist removal returns 403, installed the documented Windows inbound
+  TCP 8096 rule limited to `10.66.66.1`, reports there are no other rules on
+  the machine, and confirmed streaming still works. Host validation is
+  complete based on the operator's report. Release preparation remains: the
   development package is not a 1.0.0 release; no `v1.0.0` tag, `main`
   promotion, or public artifact has been created.
 
@@ -298,3 +300,4 @@ merge commit `7470ef3`.
 | 2026-10-13 | Docker 29 image config digest compatibility fix. | [PR #12](https://github.com/Mytob/project_j/pull/12), merged as `a3239e9` | `./build.ps1 release -Version 1.0.0-dev` — PASS after a first run reproduced the Docker 29 inspect-ID and archive-ordering failures; complete local Go, M1–M6, and M7–M9 gates passed. |
 | 2026-10-13 | M11 real VPS install and public routing validation. | Docs evidence pending | Guided install on Ubuntu 26.04 — PASS; all services healthy, public ACME certificates valid for all hostnames, HTTPS/HTTP redirect/access default-deny and repeat authenticated config download checks PASS. Native Windows client and firewall gate pending operator verification. |
 | 2026-10-13 | M11 Windows WireGuard tunnel and streaming follow-up. | Docs evidence pending | VPS `wg show` — PASS, handshake 1m15s before 19:49:40 UTC and active peer traffic; operator reports streaming in the app. Whitelist-removal 403 and Windows Firewall scope remain to verify. |
+| 2026-10-13 | M11 final host validation. | Documentation follow-up pending | Operator-confirmed whitelist removal returns 403; documented TCP 8096 rule is limited to `10.66.66.1`, no other machine rules are reported, and app streaming continues — PASS. |
