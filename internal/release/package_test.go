@@ -26,6 +26,16 @@ func TestExtractAndValidatePackage(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(destination, "site", "index.html")); err != nil || string(data) != "site" {
 		t.Fatalf("extracted site: %q, %v", data, err)
 	}
+	for _, path := range []string{"bin/admin-linux-amd64", "bin/proxyctl-linux-amd64"} {
+		info, err := os.Stat(filepath.Join(destination, path))
+		if err != nil || info.Mode().Perm() != 0o755 {
+			t.Fatalf("extracted executable %s mode = %v, %v", path, info, err)
+		}
+	}
+	info, err := os.Stat(filepath.Join(destination, "compose.yaml"))
+	if err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("extracted data file mode = %v, %v", info, err)
+	}
 }
 
 func TestExtractAndValidateRejectsTamperedFile(t *testing.T) {

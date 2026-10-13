@@ -112,7 +112,8 @@ The planned install root is `/opt/jellyfin-proxy/` with `config/`, `data/`,
 written atomically. The updater stages and verifies each release before
 replacing active environment, Compose, and Caddy template files. It preserves
 credentials, whitelist state, WireGuard keys, the separate TOTP key/state,
-and site content, then verifies service and HTTPS readiness. TOTP state is
+and site content, rejects a lower release version, then verifies service and
+HTTPS readiness. TOTP state is
 written mode 0600 under the app-owned mode 0700 data directory; the key is
 root-owned, readable by the dedicated admin group, and mounted read-only.
 The v1.0 migration creates both TOTP files only when neither exists; partial

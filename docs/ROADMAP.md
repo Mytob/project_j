@@ -17,8 +17,8 @@ later stages must not begin before the current stage's automated gate passes.
 | 2 — Authentication state and persistence | **Complete** | `internal/auth` persists pending/active TOTP states using AES-GCM and a separate 256-bit key; missing, corrupt, or partial state fails closed. Installer provisions the protected files; updater migrates v1.0 and preserves active state. Focused tests, full `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` passed; [PR #24](https://github.com/Mytob/project_j/pull/24) merged to `dev` as `7fe172e`. |
 | 3 — Web enrolment | **Complete** | Server-rendered setup requires fresh password verification before secret/QR display, generates a local PNG QR, confirms a six-digit code, supports cancellation, and revokes sessions after activation. Real Chromium tests exercise rendered controls and the full enrolment journey through the HTTPS test route. `./build.ps1 test` passed; [PR #25](https://github.com/Mytob/project_j/pull/25) merged to `dev` as `9de712c`. |
 | 4 — Login enforcement | **Complete** | Enabled TOTP is required with the password for every new admin session. Persistent replay checks, shared login throttling, fail-closed storage errors, and concurrent login tests pass. Browser and full regression gate passed on 2026-10-13; PR #26 merged to `dev` as `298224d`. |
-| 5 — Privileged VPS CLI recovery | **Complete** | Root-only `reset-totp`, `disable-totp`, and `replace-totp`; replacement is enabled-only and requires a verified new enrollment before normal access returns. Recovery sessions are limited to setup/logout. Focused Go tests and `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-13; PR pending. |
-| 6 — Full integration and release testing | Not started | Begins after Stage 5 passes; package, v1.0 upgrade, backup/restore, rollback and downgrade guard release gate required. No live VPS deployment. |
+| 5 — Privileged VPS CLI recovery | **Complete** | Root-only `reset-totp`, `disable-totp`, and `replace-totp`; replacement is enabled-only and requires a verified new enrollment before normal access returns. Recovery sessions are limited to setup/logout. Focused Go tests and `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-13; [PR #27](https://github.com/Mytob/project_j/pull/27) merged to `dev` as `06805d1`. |
+| 6 — Full integration and release testing | **Complete (local gate)** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` passed on 2026-10-14, including Go, M1–M6 browser/integration, and offline package install/update/rollback. Tests verify TOTP key/state preservation and backup/restore, packaged CLI recovery, downgrade rejection, and package binary permissions. Actual-host v1.1 checks are not part of this stage; no live VPS deployment was made. |
 
 The execution plan follows the supplied implementation brief in order:
 standalone engine; auth state/persistence; web enrolment; login enforcement;
@@ -39,6 +39,26 @@ No live VPS deployment is part of v1.1 testing.
   preservation, admin-only restart, failed-restart rollback, mandatory fresh
   enrollment, recovery-session API restrictions, and post-enrollment login.
 - Docker Desktop was reopened for this run. No live VPS was used.
+
+#### Stage 6 evidence — 2026-10-14
+
+- `pwsh -NoProfile -File .\build.ps1 package -Version 1.1.0-dev` — PASS.
+  The actual release archive installed in an isolated Docker-in-Docker daemon;
+  TOTP remained enabled across update, backup/restore retained its encrypted
+  state and replay checkpoint, and the packaged `proxyctl` reset/disable/replace
+  commands passed. Forced update failure rolled back, a lower-version update
+  was rejected before changing active files, retention and failed-install
+  cleanup passed, and the unrelated port-conflict container remained running.
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` — PASS on
+  2026-10-14, exit 0. All local Go, M1–M6 integration/browser and M7–M9
+  package gates passed. `dist/release-validation-1.1.0-dev.json` records local
+  gate `passed` and host-specific checks as blocked.
+- The first package attempt exposed missing executable bits on the Linux CLI
+  after a Windows-created archive was extracted. The release extractor now
+  sets execute permission only on the two known Linux binaries; focused tests
+  and the complete package gate passed after the fix.
+- No live v1.1 deployment was performed. Public ACME/provider-firewall,
+  Ubuntu VPS and native Windows checks remain outside this local stage.
 
 #### Stage 1 evidence — 2026-10-13
 
@@ -418,4 +438,5 @@ merge commit `7470ef3`.
 | 2026-10-13 | v1.1 Stage 2 encrypted TOTP persistence and v1.0 update migration. | [PR #24](https://github.com/Mytob/project_j/pull/24), merged as `7fe172e` | Focused auth/TOTP/admin/deployment tests, `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` — PASS; no live VPS used. |
 | 2026-10-13 | v1.1 Stage 3 rendered TOTP setup and real-browser coverage. | [PR #25](https://github.com/Mytob/project_j/pull/25), merged as `9de712c` | Focused admin/auth/TOTP tests and `pwsh -NoProfile -File .\build.ps1 test` — PASS; first run exposed non-idempotent TOTP test initializers, corrected and re-run. |
 | 2026-10-13 | v1.1 Stage 4 password-plus-TOTP login enforcement. | [PR #26](https://github.com/Mytob/project_j/pull/26), merged to `dev` as `298224d` | Focused admin/auth/TOTP tests and `pwsh -NoProfile -File .\build.ps1 test` — PASS; Go tests cover replay, expiry, concurrency, and storage failure; Chromium covers actual login form use. |
-| 2026-10-13 | v1.1 Stage 5 root-only TOTP reset, disable and replace commands with restricted recovery enrollment. | `feature/totp-cli-recovery`, PR pending | Focused proxyctl/admin/auth/deployment/TOTP tests, Windows cross-build, and `pwsh -NoProfile -File .\build.ps1 test` — PASS; see Stage 5 evidence above. |
+| 2026-10-13 | v1.1 Stage 5 root-only TOTP reset, disable and replace commands with restricted recovery enrollment. | [PR #27](https://github.com/Mytob/project_j/pull/27), merged to `dev` as `06805d1` | Focused proxyctl/admin/auth/deployment/TOTP tests, Windows cross-build, and `pwsh -NoProfile -File .\build.ps1 test` — PASS. |
+| 2026-10-14 | v1.1 Stage 6 update downgrade guard, package permission fix, full TOTP package and release gate. | `feature/totp-release-gate`, PR pending | `pwsh -NoProfile -File .\build.ps1 package -Version 1.1.0-dev` and `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` — PASS; local gate passed, production host checks blocked. |
