@@ -111,11 +111,8 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if _, err := options.Runner.Run(ctx, "docker", "image", "load", "--input", imagesPath); err != nil {
 		return manifest, fmt.Errorf("load bundled update images: %w", err)
 	}
-	for _, image := range manifest.Images {
-		loadedID, err := options.Runner.Run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image.Reference)
-		if err != nil || strings.TrimSpace(loadedID) != image.ImageID {
-			return manifest, fmt.Errorf("bundled image %s did not match its verified package digest", image.Reference)
-		}
+	if err := verifyLoadedImages(ctx, options.Runner, manifest.Images); err != nil {
+		return manifest, fmt.Errorf("verify bundled update images (%s): %w", imageReferences(manifest.Images), err)
 	}
 
 	paths := []string{".env", "compose.yaml", filepath.Join("config", "Caddyfile")}
