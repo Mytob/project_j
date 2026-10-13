@@ -281,8 +281,9 @@ these limits explicitly and use VPS preflight checks.
   temporary client whitelist entry, `access.darkcry.com` returned HTTP 403.
 - **Windows Firewall follow-up:** The operator reports adding the documented
   inbound TCP 8096 allow rule scoped to remote address `10.66.66.1`; streaming
-  continued to work. Whether any other broader Jellyfin allow rules are
-  enabled remains unverified. See `docs/DEPLOYMENT.md` for review steps.
+  continued to work. The operator reports there are no other rules on the
+  machine. Windows host gate: PASS (operator-confirmed). See
+  `docs/DEPLOYMENT.md` for the rule and removal command.
 - **Earlier failure and fix:** The first real install safely rolled back
   because Docker Engine 29's `image inspect .Id` returned an OCI index digest
   rather than the package's platform config digest. PR #12 changed install and
@@ -293,5 +294,6 @@ these limits explicitly and use VPS preflight checks.
   -Version 1.0.0-dev` run passed all local gates.
 - **Limits:** VPS install, public HTTPS, DNS, WireGuard handshake, app
   streaming, whitelist removal/default deny, and streaming with the documented
-  scoped Windows Firewall rule have passed. Review of any broader Windows
-  allow rules remains before M11 can pass.
+  scoped Windows Firewall rule have passed. The Windows firewall scope report
+  is operator-confirmed; no host-specific checks remain open. Release
+  promotion, tagging, and artifact publication remain separate M11 deliverables.
