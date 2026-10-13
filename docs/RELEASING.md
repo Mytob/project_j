@@ -33,6 +33,10 @@ passed result with a non-empty evidence description for each required host
 check. It records results from the actual Ubuntu VPS, public DNS/ACME and
 provider firewall, and native Windows WireGuard/Firewall checks.
 
+Version 1.0.0 was promoted to `main`, tagged `v1.0.0`, and published at
+https://github.com/Mytob/project_j/releases/tag/v1.0.0. The release contains
+the self-contained Linux amd64 package, checksum, and validation report.
+
 ## Required release gates
 
 - All Go unit and integration tests pass.

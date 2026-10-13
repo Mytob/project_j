@@ -295,8 +295,9 @@ these limits explicitly and use VPS preflight checks.
 - **Limits:** VPS install, public HTTPS, DNS, WireGuard handshake, app
   streaming, whitelist removal/default deny, and streaming with the documented
   scoped Windows Firewall rule have passed. The Windows firewall scope report
-  is operator-confirmed; no host-specific checks remain open. Release
-  promotion, tagging, and artifact publication remain separate M11 deliverables.
+  is operator-confirmed; no host-specific checks remain open. PR #20 promoted
+  the release to `main`, and tag `v1.0.0` plus the downloadable GitHub Release
+  are published.
 
 ### Verified stable 1.0.0 release gate — 2026-10-13
 
@@ -306,8 +307,9 @@ these limits explicitly and use VPS preflight checks.
   stable-version package/install/update/rollback gate passed. The report at
   `dist/release-validation-1.0.0.json` records `local_gate: passed` and
   `release_readiness: ready`, including the three actual-host checks.
-- **Download bundle:** `dist/jellyfin-proxy-1.0.0-linux-amd64.tar.gz`. The
-  published release will include a matching SHA-256 file beside the archive.
+- **Published bundle:** [GitHub Release v1.0.0](https://github.com/Mytob/project_j/releases/tag/v1.0.0)
+  contains `jellyfin-proxy-1.0.0-linux-amd64.tar.gz`, its matching `.sha256`
+  file, and `release-validation-1.0.0.json`.
 - **First stable-version run:** `./build.ps1 release -Version 1.0.0` failed
   in the offline installer/update gate because retention assertions expected
   the hard-coded starting release `1.0.0-dev`. The harness now derives test
@@ -315,3 +317,8 @@ these limits explicitly and use VPS preflight checks.
   passed, and integration HTTP probes now have bounded timeouts.
 - **Host evidence:** The version-matched evidence file records the completed
   Ubuntu/VPS, public DNS/ACME/provider firewall, and native Windows checks.
+- **Release publication:** PR #20 promoted `dev` to `main` at `350a69f`; the
+  `v1.0.0` tag and stable GitHub release were published and verified. One
+  post-merge full-gate attempt had a transient curl connection reset in M1–M6;
+  the subsequent full release command completed successfully with all checks
+  passed.
