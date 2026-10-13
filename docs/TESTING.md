@@ -48,6 +48,30 @@ and key/state preservation during update.
   offline image loading, fresh install, update, rollback, and password reset.
 - No v1.1 feature has been deployed to a live VPS.
 
+### Stage 3 — Web enrolment
+
+The admin dashboard asks for the current administrator password before it
+reveals the pending secret and locally generated QR image. Browser automation
+uses the pinned Playwright Chromium container on the same isolated HTTPS
+Compose network; it exercises actual rendered controls, navigation, bad and
+good password checks, QR image loading, a rejected code, cancellation, and
+successful activation. The ordinary admin image has no JavaScript runtime.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS on 2026-10-13.
+- Full command: `pwsh -NoProfile -File .\build.ps1 test` — PASS on
+  2026-10-13. The real-browser test passed and the full M1–M6 regression
+  suite passed with TOTP active across admin restarts.
+- First complete run failed after Compose reran the fixture initializers,
+  replacing the test encryption key. The initializers were made idempotent;
+  the repeated run passed. This failure confirmed the app denies startup when
+  enabled state cannot be decrypted.
+- Browser tooling is test-only: Playwright `1.64.0` is pinned in the test
+  package lock and `mcr.microsoft.com/playwright:v1.64.0-noble`; no browser
+  dependency is added to the deployed admin container.
+- No live VPS was used.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
@@ -62,7 +86,8 @@ go test ./...
 ./build.ps1 package -Version 1.0.0-dev
 ```
 
-`build.ps1 test` runs Go unit tests and the M1–M6 Compose integration runner.
+`build.ps1 test` runs Go unit tests and the M1–M6 Compose integration runner,
+including the real-browser TOTP enrollment flow.
 The runner builds the Go admin and mock Jellyfin images, starts a uniquely
 named temporary Compose project, verifies routing, authentication, and access
 control, exercises protected WireGuard config generation and authenticated

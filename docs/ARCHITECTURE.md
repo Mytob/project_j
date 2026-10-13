@@ -49,7 +49,12 @@ default deny, and rejection of spoofed forwarding headers. The admin service
 loads a single file-based password credential, serves server-rendered sign-in
 and dashboard pages, rotates opaque in-memory sessions at login, expires them
 after 12 hours, protects state-changing forms with CSRF, and throttles repeated
-failed attempts. The admin application runs as a non-root user, its test-only
+failed attempts. TOTP setup is server-rendered: an administrator re-enters the
+password before the service reveals a pending secret and locally generated QR
+PNG. That password check grants five minutes of setup visibility. A six-digit
+code must confirm setup; cancellation returns to the unconfigured state, and
+activation revokes all sessions. No QR service or frontend runtime is used.
+The admin application runs as a non-root user, its test-only
 credential fixture is disposable, and its service port is private to the
 Compose network.
 

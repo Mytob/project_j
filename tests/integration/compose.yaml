@@ -4,7 +4,7 @@ services:
     user: "0:0"
     volumes:
       - totp_key:/key
-    command: ["sh", "-c", "dd if=/dev/urandom of=/key/totp.key bs=32 count=1 2>/dev/null && chown 0:65532 /key/totp.key && chmod 440 /key/totp.key"]
+    command: ["sh", "-c", "if [ ! -f /key/totp.key ]; then dd if=/dev/urandom of=/key/totp.key bs=32 count=1 2>/dev/null && chown 0:65532 /key/totp.key && chmod 440 /key/totp.key; fi"]
 
   wireguard-config-init:
     image: alpine:3.22
@@ -29,6 +29,12 @@ services:
     depends_on:
       wireguard-config-init:
         condition: service_completed_successfully
+    networks:
+      default:
+        aliases:
+          - domain.test
+          - admin.domain.test
+          - access.domain.test
     restart: unless-stopped
 
   home-peer:
@@ -118,6 +124,19 @@ services:
       wireguard-config-init:
         condition: service_completed_successfully
 
+  browser-tests:
+    image: mcr.microsoft.com/playwright:v1.64.0-noble
+    profiles: [browser-tests]
+    working_dir: /tmp
+    volumes:
+      - ./browser:/tests:ro
+    environment:
+      BASE_URL: https://admin.domain.test
+    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm ci && npx playwright test --reporter=line"]
+    depends_on:
+      admin:
+        condition: service_started
+
   admin-data-init:
     image: alpine:3.22
     user: "0:0"
@@ -133,7 +152,7 @@ services:
     depends_on:
       admin-data-init:
         condition: service_completed_successfully
-    command: ["sh", "-c", "printf '{\"version\":1,\"status\":\"unconfigured\"}\\n' > /data/totp-state.json && chown 65532:65532 /data/totp-state.json && chmod 600 /data/totp-state.json"]
+    command: ["sh", "-c", "if [ ! -f /data/totp-state.json ]; then printf '{\"version\":1,\"status\":\"unconfigured\"}\\n' > /data/totp-state.json && chown 65532:65532 /data/totp-state.json && chmod 600 /data/totp-state.json; fi"]
 
   trusted-client:
     image: curlimages/curl:8.12.1

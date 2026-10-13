@@ -1,6 +1,6 @@
 FROM golang:1.25.2-alpine3.22 AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
 COPY internal/totp ./internal/totp

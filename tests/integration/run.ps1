@@ -211,6 +211,8 @@ try {
         throw "WireGuard did not recover. Server state:`n$($serverState -join "`n")`nPeer state:`n$($peerState -join "`n")`nRoutes:`n$($serverRoutes -join "`n")"
     }
 
+    Invoke-Compose --profile browser-tests run --rm browser-tests
+
     Assert-Equal '308' ([string][int]$httpCheck.StatusCode) 'Base hostname did not redirect HTTP to HTTPS.'
     $site = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'domain.test'
     Assert-Equal '200' ([string][int]$site.StatusCode) 'Base hostname HTTPS did not serve the site.'
@@ -372,7 +374,7 @@ try {
     $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
-    Write-Host 'M6 integration checks passed: retained WireGuard config generation, authenticated repeat download, encrypted tunnel reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M5 gates, and isolated test resources.'
+    Write-Host 'M6 and TOTP enrolment browser integration checks passed: real Chromium admin navigation and rendered controls, password reauthentication, QR display, rejected code, cancellation, successful activation, retained WireGuard config, encrypted tunnel reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M5 gates, and isolated test resources.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1

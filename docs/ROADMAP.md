@@ -14,7 +14,11 @@ later stages must not begin before the current stage's automated gate passes.
 | Stage | Status | Evidence / blocker |
 | --- | --- | --- |
 | 1 — Standalone TOTP engine | **Complete** | `internal/totp` implements RFC 6238 six-digit SHA-1 codes, secure secret generation, bounded skew, constant-time comparisons, and replay prevention under concurrent verification. Focused `go test ./internal/totp` and `./build.ps1 test` passed on 2026-10-13; PR #23 merged to `dev` as `2ea9bf2`. The first test run exposed a boundary expected-value mistake that was corrected before the passing runs. |
-| 2 — Authentication state and persistence | **Complete** | `internal/auth` persists pending/active TOTP states using AES-GCM and a separate 256-bit key; missing, corrupt, or partial state fails closed. Installer provisions the protected files; updater migrates v1.0 and preserves active state. Focused auth/admin/deployment tests, `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; see `docs/TESTING.md`. |
+| 2 — Authentication state and persistence | **Complete** | `internal/auth` persists pending/active TOTP states using AES-GCM and a separate 256-bit key; missing, corrupt, or partial state fails closed. Installer provisions the protected files; updater migrates v1.0 and preserves active state. Focused tests, full `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` passed; [PR #24](https://github.com/Mytob/project_j/pull/24) merged to `dev` as `7fe172e`. |
+| 3 — Web enrolment | **Complete** | Server-rendered setup requires fresh password verification before secret/QR display, generates a local PNG QR, confirms a six-digit code, supports cancellation, and revokes sessions after activation. Real Chromium tests exercise rendered controls and the full enrolment journey through the HTTPS test route. `./build.ps1 test` passed on 2026-10-13; see `docs/TESTING.md`. |
+| 4 — Login enforcement | Not started | Begins after Stage 3 merges; password-plus-TOTP login, replay/rate-limit and bypass tests required. |
+| 5 — Privileged VPS CLI recovery | Not started | Begins after Stage 4 passes; root privilege enforcement, reset/disable/replace, session revocation, and persistence tests required. |
+| 6 — Full integration and release testing | Not started | Begins after Stage 5 passes; package, v1.0 upgrade, backup/restore, rollback and downgrade guard release gate required. No live VPS deployment. |
 
 The execution plan follows the supplied implementation brief in order:
 standalone engine; auth state/persistence; web enrolment; login enforcement;
@@ -48,7 +52,24 @@ No live VPS deployment is part of v1.1 testing.
 - Initial integration run exposed a test-only named-volume mount at a file
   destination; the fixture now mounts the read-only key directory, matching
   production boundaries. No live VPS was used.
-- Stage 2 work is on `feature/totp-auth-state`; PR not yet submitted.
+- Stage 2 was implemented on `feature/totp-auth-state`; [PR #24](https://github.com/Mytob/project_j/pull/24) merged to `dev` as `7fe172e`.
+
+#### Stage 3 evidence — 2026-10-13
+
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS after adding the real
+  Chromium flow to the existing Docker integration project. It covers
+  navigation, rendered setup controls, invalid and valid password
+  reauthentication, QR rendering, a rejected code, cancellation, successful
+  activation, and the existing M1–M6 regression suite.
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS.
+- The first full integration attempt correctly failed closed after a test
+  Compose invocation reran fixture initializers, replacing the test key while
+  preserving newly enabled state. Both TOTP fixture initializers now preserve
+  existing files; the repeated full gate passed, including admin container
+  restart with active TOTP state.
+- No live VPS was used. Stage 3 is on `feature/totp-enrolment`; PR pending.
 
 | Milestone | Status | Evidence / blocker |
 | --- | --- | --- |
@@ -358,3 +379,5 @@ merge commit `7470ef3`.
 | 2026-10-13 | M11 final host validation. | [PR #17](https://github.com/Mytob/project_j/pull/17), merged as `a3e0387` | Operator-confirmed whitelist removal returns 403; documented TCP 8096 rule is limited to `10.66.66.1`, no other machine rules are reported, and app streaming continues — PASS. |
 | 2026-10-13 | Stable 1.0.0 release gate and deployment bundle. | [PR #18](https://github.com/Mytob/project_j/pull/18), merged as `fd92909` | First `./build.ps1 release -Version 1.0.0` failed because package retention assertions hard-coded `-dev`; final `./build.ps1 release -Version 1.0.0 -HostCheckEvidence docs/release-host-checks-v1.0.0.json` — PASS, `release_readiness: ready`; standalone package installed and updated offline in the isolated Docker daemon. |
 | 2026-10-13 | M11 stable release promotion and publication. | [PR #20](https://github.com/Mytob/project_j/pull/20), merged as `350a69f`; tag `v1.0.0`; [GitHub Release](https://github.com/Mytob/project_j/releases/tag/v1.0.0) | Full release gate passed; the self-contained Linux amd64 package, SHA-256 checksum, and `release_readiness: ready` report were uploaded and verified on GitHub. |
+| 2026-10-13 | v1.1 Stage 2 encrypted TOTP persistence and v1.0 update migration. | [PR #24](https://github.com/Mytob/project_j/pull/24), merged as `7fe172e` | Focused auth/TOTP/admin/deployment tests, `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` — PASS; no live VPS used. |
+| 2026-10-13 | v1.1 Stage 3 rendered TOTP setup and real-browser coverage. | `feature/totp-enrolment`, commit/PR pending | Focused admin/auth/TOTP tests and `pwsh -NoProfile -File .\build.ps1 test` — PASS; first run exposed non-idempotent TOTP test initializers, corrected and re-run. |
