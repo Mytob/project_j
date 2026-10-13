@@ -194,6 +194,111 @@ func TestTOTPStoreSerializesConcurrentCodeConsumption(t *testing.T) {
 	}
 }
 
+func TestRecoveryRequiresNewEnrollmentAndCannotCancelBackToOptional(t *testing.T) {
+	store, statePath, key := testTOTPStore(t)
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	code, err := totp.Code(secret, enrolledAt)
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmEnrollment(code, enrolledAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RequireFreshEnrollment(); err != nil {
+		t.Fatal(err)
+	}
+	if store.Status() != TOTPRecovery || !store.RequiresEnrollment() {
+		t.Fatalf("recovery did not require enrollment: status=%s required=%v", store.Status(), store.RequiresEnrollment())
+	}
+	store, err = NewTOTPStore(statePath, key)
+	if err != nil || store.Status() != TOTPRecovery || !store.RequiresEnrollment() {
+		t.Fatalf("recovery marker did not survive reopen: status=%v err=%v", store, err)
+	}
+	secret, err = store.BeginEnrollment()
+	if err != nil || store.Status() != TOTPPending || !store.RequiresEnrollment() {
+		t.Fatalf("replacement enrollment did not remain mandatory: status=%s err=%v", store.Status(), err)
+	}
+	clear(secret)
+	if err := store.CancelEnrollment(); err != nil {
+		t.Fatal(err)
+	}
+	if store.Status() != TOTPRecovery || !store.RequiresEnrollment() {
+		t.Fatal("cancelling recovery enrollment returned to optional TOTP")
+	}
+	store, err = NewTOTPStore(statePath, key)
+	if err != nil || store.Status() != TOTPRecovery {
+		t.Fatalf("cancelled recovery enrollment did not persist: status=%v err=%v", store, err)
+	}
+	secret, err = store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err = totp.Code(secret, enrolledAt.Add(totp.Period))
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmEnrollment(code, enrolledAt.Add(totp.Period)); err != nil {
+		t.Fatal(err)
+	}
+	if store.Status() != TOTPEnabled || store.RequiresEnrollment() {
+		t.Fatal("successful recovery enrollment did not activate TOTP")
+	}
+}
+
+func TestPrivilegedDisableClearsTOTPAndIsAtomic(t *testing.T) {
+	store, statePath, key := testTOTPStore(t)
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	code, err := totp.Code(secret, enrolledAt)
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmEnrollment(code, enrolledAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Disable(); err != nil || store.Status() != TOTPUnconfigured {
+		t.Fatalf("disable failed: status=%s err=%v", store.Status(), err)
+	}
+	store, err = NewTOTPStore(statePath, key)
+	if err != nil || store.Status() != TOTPUnconfigured {
+		t.Fatalf("disabled state did not persist: status=%v err=%v", store, err)
+	}
+	secret, err = store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err = totp.Code(secret, enrolledAt.Add(totp.Period))
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmEnrollment(code, enrolledAt.Add(totp.Period)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(statePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RequireFreshEnrollment(); err == nil || store.Status() != TOTPEnabled {
+		t.Fatal("failed recovery transition modified in-memory state")
+	}
+	if err := store.Disable(); err == nil || store.Status() != TOTPEnabled {
+		t.Fatal("failed disable transition modified in-memory state")
+	}
+}
+
 func TestTOTPStoreFailsClosedOnMissingKeyCorruptionAndBadPermissions(t *testing.T) {
 	store, statePath, key := testTOTPStore(t)
 	secret, err := store.BeginEnrollment()

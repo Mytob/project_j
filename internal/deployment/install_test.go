@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 type fakeRunner struct {
 	commands          []string
 	failOn            string
+	failOnce          string
+	failedOnce        bool
 	unhealthy         bool
 	existingResources bool
 }
@@ -31,6 +34,10 @@ type fakeRunner struct {
 func (r *fakeRunner) Run(_ context.Context, executable string, args ...string) (string, error) {
 	command := executable + " " + strings.Join(args, " ")
 	r.commands = append(r.commands, command)
+	if r.failOnce != "" && !r.failedOnce && strings.Contains(command, r.failOnce) {
+		r.failedOnce = true
+		return "simulated one-time command failure", fmt.Errorf("simulated one-time failure: %s", r.failOnce)
+	}
 	if r.failOn != "" && strings.Contains(command, r.failOn) {
 		return "simulated command failure", fmt.Errorf("simulated failure: %s", r.failOn)
 	}
@@ -438,6 +445,112 @@ func TestResetPasswordRecreatesOnlyAdminAndChangesCredential(t *testing.T) {
 	commands := strings.Join(runner.commands, "\n")
 	if !strings.Contains(commands, "--no-deps --force-recreate --pull never admin") {
 		t.Fatal("password reset did not recreate only the admin service")
+	}
+}
+
+func TestRecoverTOTPCommandsPreservePasswordAndRecreateOnlyAdmin(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("deployment filesystem test requires a root Linux test container")
+	}
+	for _, test := range []struct {
+		name    string
+		action  TOTPRecoveryAction
+		initial auth.TOTPStatus
+		want    auth.TOTPStatus
+		wantErr bool
+	}{
+		{name: "reset requires new enrollment", action: TOTPReset, initial: auth.TOTPUnconfigured, want: auth.TOTPRecovery},
+		{name: "replace requires enabled factor", action: TOTPReplace, initial: auth.TOTPEnabled, want: auth.TOTPRecovery},
+		{name: "disable clears enabled factor", action: TOTPDisable, initial: auth.TOTPEnabled, want: auth.TOTPUnconfigured},
+		{name: "replace refuses unconfigured factor", action: TOTPReplace, initial: auth.TOTPUnconfigured, want: auth.TOTPUnconfigured, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+			runner := &fakeRunner{}
+			installFixture(t, root, runner)
+			statePath := filepath.Join(root, "data", "totp-state.json")
+			key := mustLoadTOTPKey(t, filepath.Join(root, "config", "totp.key"))
+			store, err := auth.NewTOTPStore(statePath, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.initial == auth.TOTPEnabled {
+				secret, err := store.BeginEnrollment()
+				if err != nil {
+					t.Fatal(err)
+				}
+				at := time.Unix(1_700_000_010, 0)
+				code, err := totp.Code(secret, at)
+				clear(secret)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.ConfirmEnrollment(code, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			credentialPath := filepath.Join(root, "config", "admin.json")
+			credentialBefore, err := os.ReadFile(credentialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = RecoverTOTP(context.Background(), root, test.action, runner)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("ineligible action succeeded")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			updated, err := auth.NewTOTPStore(statePath, key)
+			if err != nil || updated.Status() != test.want {
+				t.Fatalf("TOTP state = %v, want %s (err=%v)", updated, test.want, err)
+			}
+			credentialAfter, err := os.ReadFile(credentialPath)
+			if err != nil || string(credentialAfter) != string(credentialBefore) {
+				t.Fatalf("recovery changed administrator password file: %v", err)
+			}
+			info, err := os.Stat(statePath)
+			if err != nil || info.Mode().Perm() != 0o600 || info.Sys().(*syscall.Stat_t).Uid != adminContainerUID || info.Sys().(*syscall.Stat_t).Gid != adminContainerUID {
+				t.Fatalf("recovered state permissions/ownership invalid: %v err=%v", info, err)
+			}
+			commands := strings.Join(runner.commands, "\n")
+			if !strings.Contains(commands, " stop admin") || !strings.Contains(commands, "--no-deps --force-recreate --pull never admin") {
+				t.Fatalf("recovery did not stop/recreate only admin: %s", commands)
+			}
+			for _, service := range []string{" caddy", " wireguard"} {
+				if strings.Contains(commands, "up "+service) || strings.Contains(commands, "stop"+service) {
+					t.Fatalf("recovery command touched unrelated service %q: %s", service, commands)
+				}
+			}
+		})
+	}
+}
+
+func TestRecoverTOTPRestoresPersistentStateIfAdminRestartFails(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("deployment filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{failOnce: "up --detach --no-deps --force-recreate --pull never admin"}
+	installFixture(t, root, runner)
+	statePath := filepath.Join(root, "data", "totp-state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverTOTP(context.Background(), root, TOTPReset, runner); err == nil {
+		t.Fatal("simulated admin restart failure was ignored")
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("TOTP state was not restored after restart failure: %v", err)
+	}
+	store, err := auth.NewTOTPStore(statePath, mustLoadTOTPKey(t, filepath.Join(root, "config", "totp.key")))
+	if err != nil || store.Status() != auth.TOTPUnconfigured {
+		t.Fatalf("restored TOTP state invalid: status=%v err=%v", store, err)
 	}
 }
 

@@ -56,7 +56,13 @@ code must confirm setup; cancellation returns to the unconfigured state, and
 activation revokes all sessions. When enabled, every new admin login requires
 the password and an unused TOTP code; the replay checkpoint is persisted
 before a session is created. Failed code checks use the existing login
-throttle. No QR service or frontend runtime is used.
+throttle. No QR service or frontend runtime is used. Lost-factor recovery is
+restricted to root-only `proxyctl` commands. Reset and replace persist a
+mandatory recovery state; the password-authenticated session can access only
+authenticator setup and logout until a new factor is verified. Disable clears
+the factor and returns to password-only login. The CLI stops and recreates only
+the admin service so its in-memory sessions are discarded; on failure it
+restores the previous TOTP state before restarting admin.
 The admin application runs as a non-root user, its test-only
 credential fixture is disposable, and its service port is private to the
 Compose network.

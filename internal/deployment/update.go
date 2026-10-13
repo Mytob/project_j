@@ -256,6 +256,119 @@ func ResetPassword(ctx context.Context, installRoot, password string, runner Com
 	return nil
 }
 
+// TOTPRecoveryAction identifies a local privileged TOTP state transition.
+type TOTPRecoveryAction string
+
+const (
+	TOTPReset   TOTPRecoveryAction = "reset"
+	TOTPDisable TOTPRecoveryAction = "disable"
+	TOTPReplace TOTPRecoveryAction = "replace"
+)
+
+// RecoverTOTP changes the persistent authenticator state and recreates only
+// the admin service. On any failure after the transition, it restores the
+// original state file and restarts the previous admin service.
+func RecoverTOTP(ctx context.Context, installRoot string, action TOTPRecoveryAction, runner CommandRunner) (resultErr error) {
+	if installRoot == "" {
+		installRoot = DefaultInstallRoot
+	}
+	if !filepath.IsAbs(installRoot) {
+		return errors.New("installation root must be an absolute path")
+	}
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	if action != TOTPReset && action != TOTPDisable && action != TOTPReplace {
+		return errors.New("unknown TOTP recovery action")
+	}
+	if err := validateInstalledLayout(installRoot); err != nil {
+		return err
+	}
+	statePath := filepath.Join(installRoot, "data", "totp-state.json")
+	stateInfo, err := os.Lstat(statePath)
+	if err != nil || stateInfo.Mode()&os.ModeSymlink != 0 || !stateInfo.Mode().IsRegular() {
+		return errors.New("TOTP state file is missing or unsafe")
+	}
+	previous, err := os.ReadFile(statePath)
+	if err != nil {
+		return fmt.Errorf("read current TOTP state: %w", err)
+	}
+	key, err := auth.LoadTOTPKey(filepath.Join(installRoot, "config", "totp.key"))
+	if err != nil {
+		return fmt.Errorf("validate TOTP storage key: %w", err)
+	}
+	defer clear(key)
+	store, err := auth.NewTOTPStore(statePath, key)
+	if err != nil {
+		return fmt.Errorf("validate current TOTP state: %w", err)
+	}
+	if action == TOTPReplace && store.Status() != auth.TOTPEnabled {
+		return errors.New("replace-totp requires an enabled authenticator; use reset-totp for recovery")
+	}
+	composeStatus, err := runner.Run(ctx, "docker", composeArgs(installRoot, "ps", "--format", "json")...)
+	if err != nil || !composeServicesHealthy(composeStatus) {
+		return errors.New("the existing Jellyfin Proxy deployment is not healthy; restore it before changing TOTP")
+	}
+	if _, err := runner.Run(ctx, "docker", composeArgs(installRoot, "stop", "admin")...); err != nil {
+		if _, restartErr := runner.Run(context.Background(), "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); restartErr != nil {
+			return fmt.Errorf("stop admin before changing TOTP: %w; admin restart also failed: %v", err, restartErr)
+		}
+		return fmt.Errorf("stop admin before changing TOTP: %w", err)
+	}
+	changed := false
+	rollback := func() error {
+		var failures []string
+		if changed {
+			if err := atomicReplace(statePath, previous, 0o600); err != nil {
+				failures = append(failures, "restore TOTP state: "+err.Error())
+			} else if err := os.Chown(statePath, adminContainerUID, adminContainerUID); err != nil {
+				failures = append(failures, "restore TOTP state ownership: "+err.Error())
+			}
+		}
+		if _, err := runner.Run(context.Background(), "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+			failures = append(failures, "restart admin: "+err.Error())
+		} else if err := waitForReadiness(context.Background(), InstallOptions{InstallRoot: installRoot, Runner: runner, WaitInterval: time.Second, WaitAttempts: 90}); err != nil {
+			failures = append(failures, "admin readiness: "+err.Error())
+		}
+		if len(failures) != 0 {
+			return errors.New(strings.Join(failures, "; "))
+		}
+		return nil
+	}
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		if rollbackErr := rollback(); rollbackErr != nil {
+			resultErr = fmt.Errorf("%w; recovery rollback failed: %v", resultErr, rollbackErr)
+		}
+	}()
+	switch action {
+	case TOTPReset, TOTPReplace:
+		if err := store.RequireFreshEnrollment(); err != nil {
+			return fmt.Errorf("require fresh authenticator enrollment: %w", err)
+		}
+	case TOTPDisable:
+		if err := store.Disable(); err != nil {
+			return fmt.Errorf("disable authenticator: %w", err)
+		}
+	}
+	changed = true
+	if err := os.Chown(statePath, adminContainerUID, adminContainerUID); err != nil {
+		return fmt.Errorf("set TOTP state ownership: %w", err)
+	}
+	if err := os.Chmod(statePath, 0o600); err != nil {
+		return fmt.Errorf("set TOTP state permissions: %w", err)
+	}
+	if _, err := runner.Run(ctx, "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+		return fmt.Errorf("restart admin with the updated authenticator state: %w", err)
+	}
+	if err := waitForReadiness(ctx, InstallOptions{InstallRoot: installRoot, Runner: runner, WaitInterval: time.Second, WaitAttempts: 90}); err != nil {
+		return fmt.Errorf("admin did not become healthy after TOTP recovery: %w", err)
+	}
+	return nil
+}
+
 type activeEnvironment struct {
 	Domain        string
 	Version       string

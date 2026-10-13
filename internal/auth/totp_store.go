@@ -29,6 +29,7 @@ const (
 	TOTPUnconfigured TOTPStatus = "unconfigured"
 	TOTPPending      TOTPStatus = "pending"
 	TOTPEnabled      TOTPStatus = "enabled"
+	TOTPRecovery     TOTPStatus = "recovery_required"
 )
 
 var (
@@ -40,12 +41,13 @@ var (
 )
 
 type totpStateFile struct {
-	Version          int        `json:"version"`
-	Status           TOTPStatus `json:"status"`
-	Secret           []byte     `json:"secret,omitempty"`
-	PendingSecret    []byte     `json:"pending_secret,omitempty"`
-	LastAcceptedStep int64      `json:"last_accepted_step,omitempty"`
-	HasAcceptedStep  bool       `json:"has_accepted_step,omitempty"`
+	Version           int        `json:"version"`
+	Status            TOTPStatus `json:"status"`
+	RequireEnrollment bool       `json:"require_enrollment,omitempty"`
+	Secret            []byte     `json:"secret,omitempty"`
+	PendingSecret     []byte     `json:"pending_secret,omitempty"`
+	LastAcceptedStep  int64      `json:"last_accepted_step,omitempty"`
+	HasAcceptedStep   bool       `json:"has_accepted_step,omitempty"`
 }
 
 // TOTPStore stores the authenticator secret encrypted with a separate
@@ -169,17 +171,28 @@ func (s *TOTPStore) Status() TOTPStatus {
 	return s.file.Status
 }
 
+// RequiresEnrollment reports whether a root recovery operation requires the
+// next password-authenticated session to complete a new enrollment first.
+func (s *TOTPStore) RequiresEnrollment() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.file.Status == TOTPRecovery || (s.file.Status == TOTPPending && s.file.RequireEnrollment)
+}
+
 // BeginEnrollment creates and persists a pending secret. It is not active
 // until ConfirmEnrollment accepts a code for it.
 func (s *TOTPStore) BeginEnrollment() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	requireEnrollment := false
 	switch s.file.Status {
 	case TOTPEnabled:
 		return nil, ErrTOTPAlreadyEnabled
 	case TOTPPending:
 		return nil, ErrTOTPEnrollmentPending
 	case TOTPUnconfigured:
+	case TOTPRecovery:
+		requireEnrollment = true
 	default:
 		return nil, errors.New("TOTP state is invalid")
 	}
@@ -192,7 +205,7 @@ func (s *TOTPStore) BeginEnrollment() ([]byte, error) {
 		clear(secret)
 		return nil, err
 	}
-	candidate := totpStateFile{Version: totpStateFormat, Status: TOTPPending, PendingSecret: ciphertext}
+	candidate := totpStateFile{Version: totpStateFormat, Status: TOTPPending, PendingSecret: ciphertext, RequireEnrollment: requireEnrollment}
 	if err := s.persist(candidate); err != nil {
 		clear(secret)
 		return nil, err
@@ -252,6 +265,43 @@ func (s *TOTPStore) CancelEnrollment() error {
 	defer s.mu.Unlock()
 	if s.file.Status != TOTPPending {
 		return ErrNoTOTPEnrollment
+	}
+	status := TOTPUnconfigured
+	if s.file.RequireEnrollment {
+		status = TOTPRecovery
+	}
+	candidate := totpStateFile{Version: totpStateFormat, Status: status}
+	if err := s.persist(candidate); err != nil {
+		return err
+	}
+	s.file = candidate
+	return nil
+}
+
+// RequireFreshEnrollment invalidates every current/pending factor and marks
+// TOTP mandatory for the next admin session. This is reserved for root CLI
+// recovery; it is never exposed through an HTTP handler.
+func (s *TOTPStore) RequireFreshEnrollment() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.file.Status == TOTPRecovery {
+		return nil
+	}
+	candidate := totpStateFile{Version: totpStateFormat, Status: TOTPRecovery}
+	if err := s.persist(candidate); err != nil {
+		return err
+	}
+	s.file = candidate
+	return nil
+}
+
+// Disable clears any TOTP credential and returns to the optional, unconfigured
+// state. Only the privileged local CLI calls this operation.
+func (s *TOTPStore) Disable() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.file.Status == TOTPUnconfigured {
+		return nil
 	}
 	candidate := totpStateFile{Version: totpStateFormat, Status: TOTPUnconfigured}
 	if err := s.persist(candidate); err != nil {
@@ -334,8 +384,12 @@ func (s *TOTPStore) validate(state totpStateFile) error {
 	}
 	switch state.Status {
 	case TOTPUnconfigured:
-		if len(state.Secret) != 0 || len(state.PendingSecret) != 0 || state.HasAcceptedStep || state.LastAcceptedStep != 0 {
+		if state.RequireEnrollment || len(state.Secret) != 0 || len(state.PendingSecret) != 0 || state.HasAcceptedStep || state.LastAcceptedStep != 0 {
 			return errors.New("unconfigured TOTP state contains credentials")
+		}
+	case TOTPRecovery:
+		if state.RequireEnrollment || len(state.Secret) != 0 || len(state.PendingSecret) != 0 || state.HasAcceptedStep || state.LastAcceptedStep != 0 {
+			return errors.New("recovery-required TOTP state contains credentials")
 		}
 	case TOTPPending:
 		if len(state.Secret) != 0 || len(state.PendingSecret) == 0 || state.HasAcceptedStep || state.LastAcceptedStep != 0 {
@@ -347,7 +401,7 @@ func (s *TOTPStore) validate(state totpStateFile) error {
 		}
 		clear(secret)
 	case TOTPEnabled:
-		if len(state.Secret) == 0 || len(state.PendingSecret) != 0 || !state.HasAcceptedStep || state.LastAcceptedStep < 0 {
+		if state.RequireEnrollment || len(state.Secret) == 0 || len(state.PendingSecret) != 0 || !state.HasAcceptedStep || state.LastAcceptedStep < 0 {
 			return errors.New("enabled TOTP state is invalid")
 		}
 		secret, err := s.decrypt(state.Secret, "active")
