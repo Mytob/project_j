@@ -383,6 +383,67 @@ func TestUpdateMigratesLegacyV10AndRefusesPartialTOTPState(t *testing.T) {
 	}
 }
 
+func TestUpdateRefusesOlderReleaseWhenTOTPIsEnabled(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("deployment filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{}
+	_, err := Install(context.Background(), InstallOptions{
+		PackagePath: makeInstallPackageVersion(t, "1.1.0"), InstallRoot: root, Domain: "example.com",
+		Password: "correct horse battery staple", WireGuardPort: 51820, Host: validHost(), Runner: runner,
+		DNSLookup:  func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
+		HTTPSCheck: func(context.Context, string) error { return nil }, WaitInterval: time.Millisecond, WaitAttempts: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := mustLoadTOTPKey(t, filepath.Join(root, "config", "totp.key"))
+	statePath := filepath.Join(root, "data", "totp-state.json")
+	store, err := auth.NewTOTPStore(statePath, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	code, err := totp.Code(secret, enrolledAt)
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmEnrollment(code, enrolledAt); err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentBefore, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandCountBefore := len(runner.commands)
+	_, err = Update(context.Background(), UpdateOptions{
+		PackagePath: makeInstallPackageVersion(t, "1.0.0"), InstallRoot: root, Host: validHost(), Runner: runner,
+		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing downgrade") {
+		t.Fatalf("older TOTP-unaware release was not rejected: %v", err)
+	}
+	stateAfter, readErr := os.ReadFile(statePath)
+	environmentAfter, envErr := os.ReadFile(filepath.Join(root, ".env"))
+	if readErr != nil || string(stateAfter) != string(stateBefore) || envErr != nil || string(environmentAfter) != string(environmentBefore) {
+		t.Fatalf("rejected downgrade changed active files: stateErr=%v envErr=%v", readErr, envErr)
+	}
+	commands := strings.Join(runner.commands[commandCountBefore:], "\n")
+	if strings.Contains(commands, "docker image load") || strings.Contains(commands, "up --detach --force-recreate") {
+		t.Fatalf("downgrade performed update operations before rejection: %s", commands)
+	}
+}
+
 func mustLoadTOTPKey(t *testing.T, path string) []byte {
 	t.Helper()
 	key, err := auth.LoadTOTPKey(path)

@@ -78,8 +78,15 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := validatePackagePortAndVersion(manifest, 51820); err != nil {
 		return manifest, err
 	}
-	if manifest.Version == current.Version {
+	versionOrder, err := release.CompareVersions(manifest.Version, current.Version)
+	if err != nil {
+		return manifest, fmt.Errorf("compare release versions: %w", err)
+	}
+	if versionOrder == 0 {
 		return manifest, errors.New("release version is already active")
+	}
+	if versionOrder < 0 {
+		return manifest, fmt.Errorf("refusing downgrade from %s to older release %s", current.Version, manifest.Version)
 	}
 	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
 		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)

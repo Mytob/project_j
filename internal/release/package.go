@@ -123,8 +123,11 @@ func ExtractAndValidate(archivePath, destination string) (Manifest, error) {
 			if closeErr != nil {
 				return Manifest{}, closeErr
 			}
+			// Windows-built release archives may not preserve Unix executable
+			// bits. Restore executable permission only for the two known Linux
+			// programs; never trust arbitrary archive mode bits.
 			mode := os.FileMode(0o644)
-			if header.Mode&0o111 != 0 {
+			if name == "bin/admin-linux-amd64" || name == "bin/proxyctl-linux-amd64" {
 				mode = 0o755
 			}
 			if err := os.Chmod(target, mode); err != nil {

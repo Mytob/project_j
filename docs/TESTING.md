@@ -118,6 +118,32 @@ readiness failures restore the prior state and restart the prior admin service.
   password-plus-TOTP login afterward.
 - No live VPS was used.
 
+### Stage 6 — Full integration and release testing
+
+The release gate exercises the packaged recovery commands and verifies that
+TOTP remains enabled across a v1.0-to-v1.1-style package update. It also backs
+up and restores the encrypted TOTP state with its separate key, checking that
+the replay checkpoint remains consumed. Update rejects an older release before
+loading images or changing active configuration. Package extraction restores
+execute permission only for the two named Linux executables, even when the
+archive was created on Windows.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 sh -c 'gofmt -w internal/release/package.go
+  internal/release/package_test.go && go test ./internal/release
+  ./internal/deployment ./tests/deployment/installcheck'` — PASS on
+  2026-10-14.
+- Package command: `pwsh -NoProfile -File .\build.ps1 package -Version
+  1.1.0-dev` — PASS on 2026-10-14. This uses a disposable Docker-in-Docker
+  daemon with networking disabled for the shipped package and images.
+- Full command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.1.0-dev` — PASS on 2026-10-14, exit 0. The JSON report records the local
+  Go, M1–M6, and M7–M9 gates as passed; release readiness remains blocked on
+  host-specific checks. No live VPS was used.
+- The first package run failed because the Windows-created archive did not
+  preserve the executable bit for `proxyctl`; the deterministic extractor fix
+  and regression test passed in both the package and full release reruns.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
@@ -169,9 +195,10 @@ successful local gate does not mean the release is ready to publish.
 | Windows client config | Key/config validation, repeat authenticated downloads, restricted permissions, persistence | PASS 2026-10-12 |
 | Package | Extract/verify manifest and load images in an isolated Docker daemon without registry access | PASS 2026-10-12 |
 | Installer | Actual package install, IPv4/IPv6 namespace firewall, host INPUT preservation, forced startup rollback, unrelated container preservation | PASS 2026-10-13; Ubuntu host checks remain |
-| Updater | Actual offline update, credentials/whitelist/WireGuard/site preservation, forced failure recovery, active+previous retention, no global prune | PASS 2026-10-13; Ubuntu host checks remain |
+| Updater | Actual offline update, credentials/whitelist/WireGuard/TOTP/site preservation, forced failure recovery, downgrade rejection, active+previous retention, no global prune | PASS 2026-10-14; Ubuntu host checks remain |
+| TOTP recovery and backup | Packaged reset/disable/replace commands, encrypted key+state restore, consumed-code replay checkpoint, admin restart | PASS 2026-10-14; no live v1.1 deployment |
 | Password reset | Hashed credential replacement, admin-only recreation, existing sessions invalidated by process restart | PASS 2026-10-13; Ubuntu host checks remain |
-| Full release | Go tests, M1–M6 integration, M7–M9 package/install/update; JSON report records host-only checks | PASS 2026-10-13; production host checks blocked |
+| Full release | Go tests, M1–M6 integration, M7–M9 package/install/update; JSON report records host-only checks | PASS 2026-10-14; production host checks blocked |
 
 ## Host-specific limitations
 

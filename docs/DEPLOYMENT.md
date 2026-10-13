@@ -96,10 +96,11 @@ run:
 sudo ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.0.1.tar.gz
 ```
 
-The updater verifies the release manifest and bundled image digests, loads the
-images without registry pulls, and recreates only the `jellyfin-proxy`
-services. It preserves the administrator credential, whitelist, WireGuard
-keys, and all site files. After healthy services and public HTTPS are verified,
+The updater verifies the release manifest and bundled image digests, refuses
+version downgrades, loads images without registry pulls, and recreates only the
+`jellyfin-proxy` services. It preserves the administrator credential,
+whitelist, WireGuard keys, TOTP key and encrypted state, and all site files.
+After healthy services and public HTTPS are verified,
 it retains the new active release and the immediately previous release and
 removes only older versioned release directories. It does not prune Docker
 images. If updated readiness fails, the prior Compose files and version are
