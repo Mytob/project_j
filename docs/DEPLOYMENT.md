@@ -47,12 +47,27 @@ The installed directories are:
 ```text
 /opt/jellyfin-proxy/
 ├── config/       # admin credentials, Caddy config, retained WireGuard peers
-├── data/         # persistent admin-managed whitelist
+├── data/         # persistent whitelist and encrypted administrator TOTP state
 ├── site/         # persistent base-domain website
 ├── releases/     # verified package archive contents by version
 ├── compose.yaml
 └── .env
 ```
+
+The installer also creates `config/totp.key` as an independent random
+256-bit key. It is owned by root, readable by the admin container's dedicated
+group, and mounted read-only. `data/totp-state.json` stores pending or active
+authenticator material encrypted with AES-256-GCM; it is owned by the admin
+container and mode 0600 inside the mode 0700 data directory. The key is not
+stored in or derived from the encrypted state.
+
+The admin process fails closed if either file is missing, has unsafe
+permissions, or cannot be validated. A v1.0 update creates both files only
+when neither exists. A partial pair or corrupt state stops the update rather
+than treating TOTP as unconfigured. For backup and restore, preserve
+`config/totp.key` and `data/totp-state.json` together. Restoring only one will
+prevent the admin service from starting. Neither file is included in release
+packages.
 
 ## VPS firewall and ports
 

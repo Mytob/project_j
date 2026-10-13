@@ -62,13 +62,22 @@ type Verifier struct {
 // NewVerifier creates a replay-protecting verifier. allowedSkewSteps is
 // deliberately bounded; one step (30 seconds) is the usual deployment value.
 func NewVerifier(secret []byte, allowedSkewSteps int) (*Verifier, error) {
+	return NewVerifierWithLastStep(secret, allowedSkewSteps, 0, false)
+}
+
+// NewVerifierWithLastStep restores replay state that has been persisted by a
+// caller. When hasLastStep is true, steps at or before lastStep are rejected.
+func NewVerifierWithLastStep(secret []byte, allowedSkewSteps int, lastStep int64, hasLastStep bool) (*Verifier, error) {
 	if err := validateSecret(secret); err != nil {
 		return nil, err
 	}
 	if allowedSkewSteps < 0 || allowedSkewSteps > maximumSkewSteps {
 		return nil, ErrInvalidSkew
 	}
-	return &Verifier{secret: append([]byte(nil), secret...), skew: int64(allowedSkewSteps)}, nil
+	if hasLastStep && lastStep < 0 {
+		return nil, errors.New("last accepted TOTP step is invalid")
+	}
+	return &Verifier{secret: append([]byte(nil), secret...), skew: int64(allowedSkewSteps), lastStep: lastStep, used: hasLastStep}, nil
 }
 
 // Verify accepts a current or permitted adjacent time-step code once. The
@@ -106,6 +115,13 @@ func (v *Verifier) Verify(code string, at time.Time) bool {
 	v.lastStep = matched
 	v.used = true
 	return true
+}
+
+// LastAcceptedStep returns the replay checkpoint after verification.
+func (v *Verifier) LastAcceptedStep() (int64, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.lastStep, v.used
 }
 
 func validateSecret(secret []byte) error {

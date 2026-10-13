@@ -18,6 +18,7 @@ import (
 
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/release"
+	"github.com/Mytob/project_j/internal/totp"
 )
 
 type fakeRunner struct {
@@ -95,6 +96,23 @@ func TestInstallCreatesFreshDefaultDenyDeployment(t *testing.T) {
 	clientInfo, err := os.Stat(filepath.Join(root, "config", "wireguard", "windows.conf"))
 	if err != nil || clientInfo.Mode().Perm() != 0o640 {
 		t.Fatalf("Windows config mode = %v, %v", clientInfo, err)
+	}
+	totpKeyPath := filepath.Join(root, "config", "totp.key")
+	totpKey, err := auth.LoadTOTPKey(totpKeyPath)
+	if err != nil || len(totpKey) != 32 {
+		t.Fatalf("administrator TOTP key length=%d err=%v", len(totpKey), err)
+	}
+	clear(totpKey)
+	if info, err := os.Stat(totpKeyPath); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("TOTP key mode = %v, %v", info, err)
+	}
+	totpStatePath := filepath.Join(root, "data", "totp-state.json")
+	totpStore, err := auth.NewTOTPStore(totpStatePath, mustLoadTOTPKey(t, totpKeyPath))
+	if err != nil || totpStore.Status() != auth.TOTPUnconfigured {
+		t.Fatalf("initial TOTP state = %v, %v", totpStore, err)
+	}
+	if info, err := os.Stat(totpStatePath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("TOTP state mode = %v, %v", info, err)
 	}
 	environment, err := os.ReadFile(filepath.Join(root, ".env"))
 	if err != nil || !strings.Contains(string(environment), "BASE_DOMAIN=example.com\n") || !strings.Contains(string(environment), "WIREGUARD_PORT=51820\n") {
@@ -231,10 +249,29 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
 	runner := &fakeRunner{}
 	installFixture(t, root, runner)
+	totpKey := mustLoadTOTPKey(t, filepath.Join(root, "config", "totp.key"))
+	totpStore, err := auth.NewTOTPStore(filepath.Join(root, "data", "totp-state.json"), totpKey)
+	clear(totpKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := totpStore.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	enrollmentCode, err := totp.Code(secret, enrolledAt)
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := totpStore.ConfirmEnrollment(enrollmentCode, enrolledAt); err != nil {
+		t.Fatal(err)
+	}
 	preserved := map[string][]byte{}
 	for _, relative := range []string{
 		"config/admin.json", "config/wireguard/server.conf", "config/wireguard/windows.conf",
-		"data/whitelist.json", "site/index.html",
+		"config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html",
 	} {
 		path := filepath.Join(root, relative)
 		data, err := os.ReadFile(path)
@@ -270,6 +307,16 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 			t.Errorf("update changed persistent %s: got %q, err=%v", relative, actual, err)
 		}
 	}
+	preservedKey := mustLoadTOTPKey(t, filepath.Join(root, "config", "totp.key"))
+	preservedTOTP, err := auth.NewTOTPStore(filepath.Join(root, "data", "totp-state.json"), preservedKey)
+	clear(preservedKey)
+	if err != nil || preservedTOTP.Status() != auth.TOTPEnabled {
+		t.Fatalf("TOTP state after update: store=%v err=%v", preservedTOTP, err)
+	}
+	accepted, err := preservedTOTP.Verify(enrollmentCode, enrolledAt)
+	if err != nil || accepted {
+		t.Fatalf("update allowed enrollment-code replay accepted=%v err=%v", accepted, err)
+	}
 	if data, err := os.ReadFile(filepath.Join(root, "site", "operator-page.txt")); err != nil || string(data) != "keep site content" {
 		t.Errorf("update changed operator site file: %q, %v", data, err)
 	}
@@ -294,6 +341,48 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	if strings.Contains(commands, "docker pull ") || strings.Contains(commands, " compose pull ") || !strings.Contains(commands, "--force-recreate --pull never") {
 		t.Fatalf("update pulled images or did not force an offline controlled recreate: %s", commands)
 	}
+}
+
+func TestUpdateMigratesLegacyV10AndRefusesPartialTOTPState(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("installer filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{}
+	installFixture(t, root, runner)
+	if err := os.Remove(filepath.Join(root, "config", "totp.key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "data", "totp-state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Update(context.Background(), UpdateOptions{
+		PackagePath: makeInstallPackageVersion(t, "1.0.1-dev"), InstallRoot: root, Host: validHost(), Runner: runner,
+		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key := mustLoadTOTPKey(t, filepath.Join(root, "config", "totp.key"))
+	store, err := auth.NewTOTPStore(filepath.Join(root, "data", "totp-state.json"), key)
+	clear(key)
+	if err != nil || store.Status() != auth.TOTPUnconfigured {
+		t.Fatalf("migrated TOTP state: store=%v err=%v", store, err)
+	}
+	if err := os.Remove(filepath.Join(root, "data", "totp-state.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureTOTPStorage(root); err == nil {
+		t.Fatal("missing state with an existing key was accepted as a legacy install")
+	}
+}
+
+func mustLoadTOTPKey(t *testing.T, path string) []byte {
+	t.Helper()
+	key, err := auth.LoadTOTPKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }
 
 func TestUpdateHTTPSFailureRestoresPreviousRelease(t *testing.T) {

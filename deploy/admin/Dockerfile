@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod ./
 COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
+COPY internal/totp ./internal/totp
 COPY internal/admin ./internal/admin
 COPY internal/whitelist ./internal/whitelist
 COPY internal/wireguard ./internal/wireguard

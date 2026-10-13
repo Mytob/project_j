@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/totp"
 	"github.com/Mytob/project_j/internal/wireguard"
 )
 
@@ -133,6 +135,62 @@ func TestWrongPasswordAndLogoutCSRF(t *testing.T) {
 	}
 	if badLogout := request(handler, "POST", "/logout", url.Values{"csrf": {"wrong"}}, cookie); badLogout.Code != http.StatusForbidden {
 		t.Fatalf("bad logout CSRF status %d", badLogout.Code)
+	}
+}
+
+func TestConfirmTOTPEnrollmentRevokesAllSessionsAfterPersistence(t *testing.T) {
+	credentialPath := filepath.Join(t.TempDir(), "admin.json")
+	if err := auth.SaveCredential(credentialPath, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(credentialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	store, err := auth.InitializeTOTPStore(filepath.Join(root, "totp-state.json"), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(credential, nil)
+	if err := server.ConfigureTOTPStore(store); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_010, 0)
+	validCode, err := totp.Code(secret, now)
+	clear(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.confirmTOTPEnrollment("000000", now); err == nil {
+		t.Fatal("incorrect enrollment code activated TOTP")
+	}
+	if _, authenticated, ok := server.sessions.State(first); !ok || !authenticated {
+		t.Fatal("failed activation revoked an existing session")
+	}
+	if err := server.confirmTOTPEnrollment(validCode, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{first, second} {
+		if _, _, ok := server.sessions.State(id); ok {
+			t.Fatal("successful activation did not revoke every existing session")
+		}
 	}
 }
 
