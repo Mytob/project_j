@@ -230,7 +230,63 @@ these limits explicitly and use VPS preflight checks.
   Docker-in-Docker.
 - Report: `dist/release-validation-1.0.0-dev.json`; local gate is `passed` and
   release readiness is `blocked_host_checks_pending`.
-- Host checks still blocked: Ubuntu 26.04 VPS/kernel and provider firewall,
-  public DNS and ACME issuance, and native Windows WireGuard client import and
-  Windows Firewall behaviour. Docker simulation is not evidence for those
-  checks.
+- At report generation time, host checks were blocked for Ubuntu 26.04,
+  provider ingress, public DNS/ACME, and native Windows setup. The VPS and
+  public HTTPS checks were subsequently run as recorded below. Docker
+  simulation is not evidence for native Windows behaviour.
+
+### Verified M11 VPS install and public routes — 2026-10-13
+
+- **Target:** Disposable Ubuntu 26.04.1 LTS x86_64 VPS at the user-provided
+  public address; Docker Engine 29.9.0. The configured base, admin, and access
+  DNS names resolved to that VPS. No credentials, private keys, or deployment
+  state are recorded here.
+- **Package:** `1.0.0-dev`, rebuilt after PR #12 fixed Docker Engine 29 image
+  identity verification.
+- **Install command:** `./proxyctl-linux-amd64 install
+  ./jellyfin-proxy-1.0.0-dev-linux-amd64.tar.gz`.
+- **Install result:** PASS. The installer confirmed all three DNS names,
+  started the deployment, waited for readiness, and reported `1.0.0-dev` ready.
+  Docker reported the admin, Caddy, and WireGuard services healthy. No
+  pre-existing Jellyfin Proxy project was present on the disposable host.
+- **ACME/TLS:** PASS. Caddy logs showed successful Let’s Encrypt certificate
+  acquisition for `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com`.
+  External `curl.exe` checks reported `ssl_verify_result=0` for each HTTPS
+  hostname.
+- **External route results:**
+
+  | Hostname | HTTPS status | HTTP status | Result |
+  | --- | ---: | ---: | --- |
+  | `darkcry.com` | 200 | 308 | Static site served; HTTP redirected to HTTPS. |
+  | `admin.darkcry.com` | 200 | 308 | Admin login served; HTTP redirected to HTTPS. |
+  | `access.darkcry.com` | 403 | 308 | Empty whitelist denied access; HTTP redirected to HTTPS. |
+
+- **Admin/profile:** PASS. Read-only HTTPS login with the install credential
+  opened the dashboard. Two authenticated Windows WireGuard profile downloads
+  returned HTTP 200 and matched byte-for-byte. The profile has split-tunnel
+  `10.66.66.1/32` routing and 25-second keepalive; the private key was not
+  printed or saved to the workstation during this check.
+- **Host and namespace firewall:** PASS for observed rules. Host UFW was
+  inactive and host `INPUT` policy was `ACCEPT`. The WireGuard container had
+  IPv4 and IPv6 ingress chains permitting established traffic, loopback, TCP
+  80/443 and UDP 51820, followed by a drop rule; IPv4 also allowed the expected
+  WireGuard peer address. The provider panel screenshot showed ingress rules
+  for TCP 80/443 and UDP 51820. End-to-end UDP reachability remains unproven.
+- **Pending Windows gate:** No peer handshake had occurred at the time of this
+  check. Native Windows WireGuard import/activation, Jellyfin reachability over
+  the tunnel, a temporary whitelist allow/remove cycle, and the Windows
+  Firewall restriction to TCP 8096 from `10.66.66.1` remain unverified. The
+  operator will run these steps using the authenticated dashboard and the
+  checklist in `docs/DEPLOYMENT.md`.
+- **Earlier failure and fix:** The first real install safely rolled back
+  because Docker Engine 29's `image inspect .Id` returned an OCI index digest
+  rather than the package's platform config digest. PR #12 changed install and
+  update verification to hash image config blobs from `docker image save` and
+  read archive manifests independently of config entry ordering. A first
+  release-gate run then caught config blobs preceding `manifest.json`; the
+  corrected verifier uses two passes. The subsequent `./build.ps1 release
+  -Version 1.0.0-dev` run passed all local gates.
+- **Limits:** This validates a disposable Ubuntu VPS, public HTTPS, DNS,
+  installation, and access-control defaults. It does not establish a recent
+  WireGuard handshake, native Windows client behavior, or Jellyfin service
+  reachability until the pending client test passes.
