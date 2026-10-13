@@ -17,7 +17,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | In progress | VPS install, public DNS/ACME and HTTPS, admin/profile download, and WireGuard UDP handshake passed on 2026-10-13. The operator reports streaming from the Windows app. Whitelist removal/default-deny and Windows Firewall rule scope still need confirmation. No stable release tag or publication has been made. |
+| M11 — Version 1.0.0 release | In progress | VPS install, public DNS/ACME and HTTPS, admin/profile download, WireGuard UDP handshake, app streaming, and whitelist removal returning HTTP 403 have passed. The Windows Firewall rule scope remains unverified. No stable release tag or publication has been made. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
