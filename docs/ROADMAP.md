@@ -17,7 +17,7 @@ No milestone is marked complete until its mandatory tests pass.
 | M8 — Guided VPS installer | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13; real package installed and forced-startup failure rolled back in isolated Docker-in-Docker. |
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
-| M11 — Version 1.0.0 release | In progress | Actual Ubuntu VPS install, public TCP 80/443, DNS/ACME, HTTPS routes, admin login, and repeat profile downloads passed on 2026-10-13. WireGuard UDP handshake, native Windows import, Jellyfin access, and Windows Firewall verification remain with the operator. No stable release tag or publication has been made. |
+| M11 — Version 1.0.0 release | In progress | VPS install, public DNS/ACME and HTTPS, admin/profile download, and WireGuard UDP handshake passed on 2026-10-13. The operator reports streaming from the Windows app. Whitelist removal/default-deny and Windows Firewall rule scope still need confirmation. No stable release tag or publication has been made. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -271,15 +271,16 @@ merge commit `7470ef3`.
   WireGuard profile downloads matched byte-for-byte. IPv4 and IPv6 namespace
   filters allow only the documented service ports and drop remaining ingress;
   host UFW remained inactive and host INPUT policy remained ACCEPT. The
-  provider rule screenshot includes UDP 51820, but end-to-end UDP reachability
-  is not yet proven because the VPS reports no peer handshake.
-- **Remaining gate:** Native Windows WireGuard import/activation, a recent
-  server handshake, successful Jellyfin access through the access hostname,
-  denied access after removing a temporary whitelist entry, and Windows
-  Firewall restriction to `10.66.66.1` have not been observed. The operator
-  will run those Windows-host steps and report the results. The development
-  package is not a 1.0.0 release; no `v1.0.0` tag, `main` promotion, or public
-  artifact has been created.
+  provider rule screenshot includes UDP 51820. A later `wg show` confirmed a
+  recent handshake and active traffic from the Windows peer.
+- **Windows follow-up (2026-10-13):** The operator reports they can stream in
+  the app. At 19:49:40 UTC, the VPS reported a handshake 1 minute 15 seconds
+  earlier and 148.56 MiB received / 1.48 MiB sent for the peer.
+- **Remaining gate:** Confirm that removing the temporary client whitelist
+  entry makes access return 403, and that the Windows Firewall rule permits
+  TCP 8096 only from `10.66.66.1` with broader remote allow rules disabled. The
+  development package is not a 1.0.0 release; no `v1.0.0` tag, `main`
+  promotion, or public artifact has been created.
 
 ## Change and test log
 
@@ -296,3 +297,4 @@ merge commit `7470ef3`.
 | 2026-10-13 | M10 full local release validation runner and JSON blocker report. | [PR #10](https://github.com/Mytob/project_j/pull/10), merged as `da9d281` | `pwsh -NoProfile -File .\build.ps1 release -Version 1.0.0-dev` — PASS, exit 0; local gates pass, production-host checks explicitly BLOCKED. |
 | 2026-10-13 | Docker 29 image config digest compatibility fix. | [PR #12](https://github.com/Mytob/project_j/pull/12), merged as `a3239e9` | `./build.ps1 release -Version 1.0.0-dev` — PASS after a first run reproduced the Docker 29 inspect-ID and archive-ordering failures; complete local Go, M1–M6, and M7–M9 gates passed. |
 | 2026-10-13 | M11 real VPS install and public routing validation. | Docs evidence pending | Guided install on Ubuntu 26.04 — PASS; all services healthy, public ACME certificates valid for all hostnames, HTTPS/HTTP redirect/access default-deny and repeat authenticated config download checks PASS. Native Windows client and firewall gate pending operator verification. |
+| 2026-10-13 | M11 Windows WireGuard tunnel and streaming follow-up. | Docs evidence pending | VPS `wg show` — PASS, handshake 1m15s before 19:49:40 UTC and active peer traffic; operator reports streaming in the app. Whitelist-removal 403 and Windows Firewall scope remain to verify. |
