@@ -231,11 +231,8 @@ func Install(ctx context.Context, options InstallOptions) (manifest release.Mani
 	if _, err := options.Runner.Run(ctx, "docker", "image", "load", "--input", filepath.Join(releaseDir, "images.tar")); err != nil {
 		return manifest, fmt.Errorf("load bundled deployment images: %w", err)
 	}
-	for _, image := range manifest.Images {
-		loadedID, err := options.Runner.Run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image.Reference)
-		if err != nil || strings.TrimSpace(loadedID) != image.ImageID {
-			return manifest, fmt.Errorf("bundled image %s did not match its verified package digest", image.Reference)
-		}
+	if err := verifyLoadedImages(ctx, options.Runner, manifest.Images); err != nil {
+		return manifest, fmt.Errorf("verify bundled deployment images (%s): %w", imageReferences(manifest.Images), err)
 	}
 	composeMayBeRunning = true
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "up", "--detach", "--pull", "never")...); err != nil {

@@ -47,18 +47,11 @@ func (r *fakeRunner) Run(_ context.Context, executable string, args ...string) (
 			"{\"Service\":\"caddy\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
 			"{\"Service\":\"admin\",\"State\":\"running\",\"Health\":\"healthy\"}\n", nil
 	}
-	if strings.Contains(command, " image inspect ") {
-		switch {
-		case strings.Contains(command, "jellyfin-proxy/admin:"):
-			return "sha256:" + strings.Repeat("a", 64), nil
-		case strings.Contains(command, "jellyfin-proxy/wireguard:"):
-			return "sha256:" + strings.Repeat("b", 64), nil
-		case strings.Contains(command, "caddy:2.10.2-alpine"):
-			return "sha256:" + strings.Repeat("c", 64), nil
-		case strings.Contains(command, "alpine:3.22"):
-			return "sha256:" + strings.Repeat("d", 64), nil
+	if len(args) >= 5 && args[0] == "image" && args[1] == "save" && args[2] == "--output" {
+		if err := writeFakeDockerArchive(args[3], args[4:]); err != nil {
+			return "", err
 		}
-		return "", fmt.Errorf("unexpected image inspection")
+		return "", nil
 	}
 	return "ok", nil
 }
@@ -383,32 +376,32 @@ func makeInstallPackage(t *testing.T) string {
 func makeInstallPackageVersion(t *testing.T, version string) string {
 	t.Helper()
 	root := t.TempDir()
-	files := map[string]string{
-		"images.tar":               "test-image-archive",
-		"bin/admin-linux-amd64":    "admin",
-		"bin/proxyctl-linux-amd64": "proxyctl",
-		"compose.yaml":             "services: {}\n",
-		".env.example":             "BASE_DOMAIN=example.invalid\n",
-		"config/Caddyfile":         "admin unix//run/caddy-admin/admin.sock|0220\n{$BASE_DOMAIN} {}\n",
-		"config/whitelist.caddy":   "respond 403\n",
-		"site/index.html":          "Jellyfin Proxy",
-		"DEPLOYMENT.md":            "deployment notes",
+	images, configs := fakeReleaseImages(version)
+	imageArchive, err := makeFakeDockerArchive(images, configs)
+	if err != nil {
+		t.Fatal(err)
 	}
-	manifest := release.Manifest{SchemaVersion: 1, Version: version, Platform: "linux/amd64", Images: []release.Image{
-		{Reference: "jellyfin-proxy/admin:" + version, ImageID: "sha256:" + strings.Repeat("a", 64)},
-		{Reference: "jellyfin-proxy/wireguard:" + version, ImageID: "sha256:" + strings.Repeat("b", 64)},
-		{Reference: "caddy:2.10.2-alpine", ImageID: "sha256:" + strings.Repeat("c", 64)},
-		{Reference: "alpine:3.22", ImageID: "sha256:" + strings.Repeat("d", 64)},
-	}}
+	files := map[string][]byte{
+		"images.tar":               imageArchive,
+		"bin/admin-linux-amd64":    []byte("admin"),
+		"bin/proxyctl-linux-amd64": []byte("proxyctl"),
+		"compose.yaml":             []byte("services: {}\n"),
+		".env.example":             []byte("BASE_DOMAIN=example.invalid\n"),
+		"config/Caddyfile":         []byte("admin unix//run/caddy-admin/admin.sock|0220\n{$BASE_DOMAIN} {}\n"),
+		"config/whitelist.caddy":   []byte("respond 403\n"),
+		"site/index.html":          []byte("Jellyfin Proxy"),
+		"DEPLOYMENT.md":            []byte("deployment notes"),
+	}
+	manifest := release.Manifest{SchemaVersion: 1, Version: version, Platform: "linux/amd64", Images: images}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		hash := sha256.Sum256([]byte(content))
+		hash := sha256.Sum256(content)
 		manifest.Files = append(manifest.Files, release.ManifestFile{Path: name, SizeBytes: int64(len(content)), SHA256: hex.EncodeToString(hash[:])})
 	}
 	manifestJSON, err := json.Marshal(manifest)
