@@ -5,6 +5,138 @@ No milestone is marked complete until its mandatory tests pass.
 
 ## Current status
 
+### v1.1 — TOTP administrator authentication
+
+The user-approved v1.1 scope adds only RFC 6238 TOTP protection for the
+administrator interface, with local privileged CLI recovery. Work is staged;
+later stages must not begin before the current stage's automated gate passes.
+
+| Stage | Status | Evidence / blocker |
+| --- | --- | --- |
+| 1 — Standalone TOTP engine | **Complete** | `internal/totp` implements RFC 6238 six-digit SHA-1 codes, secure secret generation, bounded skew, constant-time comparisons, and replay prevention under concurrent verification. Focused `go test ./internal/totp` and `./build.ps1 test` passed on 2026-10-13; PR #23 merged to `dev` as `2ea9bf2`. The first test run exposed a boundary expected-value mistake that was corrected before the passing runs. |
+| 2 — Authentication state and persistence | **Complete** | `internal/auth` persists pending/active TOTP states using AES-GCM and a separate 256-bit key; missing, corrupt, or partial state fails closed. Installer provisions the protected files; updater migrates v1.0 and preserves active state. Focused tests, full `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` passed; [PR #24](https://github.com/Mytob/project_j/pull/24) merged to `dev` as `7fe172e`. |
+| 3 — Web enrolment | **Complete** | Server-rendered setup requires fresh password verification before secret/QR display, generates a local PNG QR, confirms a six-digit code, supports cancellation, and revokes sessions after activation. Real Chromium tests exercise rendered controls and the full enrolment journey through the HTTPS test route. `./build.ps1 test` passed; [PR #25](https://github.com/Mytob/project_j/pull/25) merged to `dev` as `9de712c`. |
+| 4 — Login enforcement | **Complete** | Enabled TOTP is required with the password for every new admin session. Persistent replay checks, shared login throttling, fail-closed storage errors, and concurrent login tests pass. Browser and full regression gate passed on 2026-10-13; PR #26 merged to `dev` as `298224d`. |
+| 5 — Privileged VPS CLI recovery | **Complete** | Root-only `reset-totp`, `disable-totp`, and `replace-totp`; replacement is enabled-only and requires a verified new enrollment before normal access returns. Recovery sessions are limited to setup/logout. Focused Go tests and `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-13; [PR #27](https://github.com/Mytob/project_j/pull/27) merged to `dev` as `06805d1`. |
+| 6 — Full integration and release testing | **Complete (local gate)** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` passed on 2026-10-14, including Go, M1–M6 browser/integration, and offline package install/update/rollback. Tests verify TOTP key/state preservation and backup/restore, packaged CLI recovery, downgrade rejection, and package binary permissions. Actual-host v1.1 checks were separate from this local stage. The operator later reported updating the test VPS to 1.1.0-dev and confirmed streaming worked. |
+
+The execution plan follows the supplied implementation brief in order:
+standalone engine; auth state/persistence; web enrolment; login enforcement;
+root-only VPS CLI recovery; full local integration and release validation.
+The Stage 6 host checks were separate from the local gate. The operator later
+reported updating the test VPS to v1.1.0-dev and confirmed streaming worked;
+the follow-up changes below require their own package validation.
+
+### Authorized operator follow-up — v1.1.1-dev
+
+| Change | Status | Evidence / blocker |
+| --- | --- | --- |
+| Password-and-TOTP protected admin control to disable TOTP, with global session revocation | **Complete (local release gate)** | Handler tests cover CSRF, wrong password, invalid code, and session revocation; Chromium verifies the end-to-end disable and password-only login in `build.ps1 release -Version 1.1.1-dev`. |
+| Show packaged version and source commit build number in the admin dashboard | **Complete (local release gate)** | Browser integration verifies linker-injected metadata; package validation checks image version/revision labels in `build.ps1 release -Version 1.1.1-dev`. |
+| Show updater milestone percentage and live activity while long operations run | **Complete (local release gate)** | Focused tests cover progress events and output; `build.ps1 release -Version 1.1.1-dev` passed. Percentage is based on completed milestones; activity continues during wait phases. |
+
+#### Stage 5 evidence — 2026-10-13
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./cmd/proxyctl ./internal/admin
+  ./internal/auth ./internal/deployment ./internal/totp` — PASS.
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS on retry. The first
+  integration attempt failed on an 8-second HTTPS timeout during a whitelist
+  request; the repeated complete run passed all Go packages, real Chromium
+  enrollment, and the M1–M6 Docker integration suite. No tests were skipped.
+- Automated coverage includes execution under a non-root UID, recovery,
+  disable, enabled-only replacement, state ownership/mode, password-file
+  preservation, admin-only restart, failed-restart rollback, mandatory fresh
+  enrollment, recovery-session API restrictions, and post-enrollment login.
+- Docker Desktop was reopened for this run. No live VPS was used.
+
+#### Stage 6 evidence — 2026-10-14
+
+- `pwsh -NoProfile -File .\build.ps1 package -Version 1.1.0-dev` — PASS.
+  The actual release archive installed in an isolated Docker-in-Docker daemon;
+  TOTP remained enabled across update, backup/restore retained its encrypted
+  state and replay checkpoint, and the packaged `proxyctl` reset/disable/replace
+  commands passed. Forced update failure rolled back, a lower-version update
+  was rejected before changing active files, retention and failed-install
+  cleanup passed, and the unrelated port-conflict container remained running.
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` — PASS on
+  2026-10-14, exit 0. All local Go, M1–M6 integration/browser and M7–M9
+  package gates passed. `dist/release-validation-1.1.0-dev.json` records local
+  gate `passed` and host-specific checks as blocked.
+- The first package attempt exposed missing executable bits on the Linux CLI
+  after a Windows-created archive was extracted. The release extractor now
+  sets execute permission only on the two known Linux binaries; focused tests
+  and the complete package gate passed after the fix.
+- No live v1.1 deployment was performed. Public ACME/provider-firewall,
+  Ubuntu VPS and native Windows checks remain outside this local stage.
+
+#### Stage 1 evidence — 2026-10-13
+
+- `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/totp` — PASS.
+- `./build.ps1 test` — PASS, including all Go packages and the M1–M6
+  integration suite on Docker Desktop 29.8.2.
+- The initial Stage 1 test run exposed an incorrect boundary expected value
+  (`TestCodeAndTimeStepBoundaries`); the expected HOTP values were corrected
+  and both commands above passed afterward.
+- Stage 1 work is on `feature/totp-engine`; [PR #23](https://github.com/Mytob/project_j/pull/23) merged to `dev` as `2ea9bf2`.
+
+#### Stage 2 evidence — 2026-10-13
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/auth ./internal/totp
+  ./internal/admin ./internal/deployment` — PASS after correcting a
+  fault-injection fixture.
+- `./build.ps1 test` — PASS. It includes password-only v1.0-compatible admin
+  login, admin container restart, and all M1–M6 integration checks.
+- `./build.ps1 package -Version 1.0.0-dev` — PASS on retry. The first run
+  encountered an 8-second transient HTTPS timeout during a whitelist test; the
+  subsequent full run passed M1–M6, archive secret exclusion, offline image
+  loading, fresh install, v1.0 state migration, update preservation, rollback,
+  retention, and password reset.
+- Initial integration run exposed a test-only named-volume mount at a file
+  destination; the fixture now mounts the read-only key directory, matching
+  production boundaries. No live VPS was used.
+- Stage 2 was implemented on `feature/totp-auth-state`; [PR #24](https://github.com/Mytob/project_j/pull/24) merged to `dev` as `7fe172e`.
+
+#### Stage 3 evidence — 2026-10-13
+
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS after adding the real
+  Chromium flow to the existing Docker integration project. It covers
+  navigation, rendered setup controls, invalid and valid password
+  reauthentication, QR rendering, a rejected code, cancellation, successful
+  activation, and the existing M1–M6 regression suite.
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS.
+- The first full integration attempt correctly failed closed after a test
+  Compose invocation reran fixture initializers, replacing the test key while
+  preserving newly enabled state. Both TOTP fixture initializers now preserve
+  existing files; the repeated full gate passed, including admin container
+  restart with active TOTP state.
+- No live VPS was used. Stage 3 was implemented on `feature/totp-enrolment`;
+  [PR #25](https://github.com/Mytob/project_j/pull/25) merged as `9de712c`.
+
+#### Stage 4 evidence — 2026-10-13
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS.
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS after adding a transition
+  lock and a concurrent enrollment-confirmation/password-only-login test. The
+  Go suite checks
+  password-only login while TOTP is unconfigured; missing, incorrect,
+  expired, and reused TOTP codes; session rotation; protected routes; parallel
+  duplicate-code login; and fail-closed replay-state writes. Real Chromium
+  completes enrollment, rejects an incorrect login code, accepts the
+  password-plus-code login, signs out, and confirms reuse is rejected.
+- The browser enrollment journey now runs after password-only regression tests
+  and then restarts the admin container with TOTP enabled, avoiding state
+  coupling with the v1.0 compatibility checks.
+- No live VPS was used. Stage 4 was implemented on `feature/totp-login` and
+  merged through [PR #26](https://github.com/Mytob/project_j/pull/26) to `dev`
+  as `298224d`.
+
 | Milestone | Status | Evidence / blocker |
 | --- | --- | --- |
 | M1 — Minimal working proxy | Complete | `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-12; see test log below. |
@@ -313,3 +445,10 @@ merge commit `7470ef3`.
 | 2026-10-13 | M11 final host validation. | [PR #17](https://github.com/Mytob/project_j/pull/17), merged as `a3e0387` | Operator-confirmed whitelist removal returns 403; documented TCP 8096 rule is limited to `10.66.66.1`, no other machine rules are reported, and app streaming continues — PASS. |
 | 2026-10-13 | Stable 1.0.0 release gate and deployment bundle. | [PR #18](https://github.com/Mytob/project_j/pull/18), merged as `fd92909` | First `./build.ps1 release -Version 1.0.0` failed because package retention assertions hard-coded `-dev`; final `./build.ps1 release -Version 1.0.0 -HostCheckEvidence docs/release-host-checks-v1.0.0.json` — PASS, `release_readiness: ready`; standalone package installed and updated offline in the isolated Docker daemon. |
 | 2026-10-13 | M11 stable release promotion and publication. | [PR #20](https://github.com/Mytob/project_j/pull/20), merged as `350a69f`; tag `v1.0.0`; [GitHub Release](https://github.com/Mytob/project_j/releases/tag/v1.0.0) | Full release gate passed; the self-contained Linux amd64 package, SHA-256 checksum, and `release_readiness: ready` report were uploaded and verified on GitHub. |
+| 2026-10-13 | v1.1 Stage 2 encrypted TOTP persistence and v1.0 update migration. | [PR #24](https://github.com/Mytob/project_j/pull/24), merged as `7fe172e` | Focused auth/TOTP/admin/deployment tests, `./build.ps1 test`, and `./build.ps1 package -Version 1.0.0-dev` — PASS; no live VPS used. |
+| 2026-10-13 | v1.1 Stage 3 rendered TOTP setup and real-browser coverage. | [PR #25](https://github.com/Mytob/project_j/pull/25), merged as `9de712c` | Focused admin/auth/TOTP tests and `pwsh -NoProfile -File .\build.ps1 test` — PASS; first run exposed non-idempotent TOTP test initializers, corrected and re-run. |
+| 2026-10-13 | v1.1 Stage 4 password-plus-TOTP login enforcement. | [PR #26](https://github.com/Mytob/project_j/pull/26), merged to `dev` as `298224d` | Focused admin/auth/TOTP tests and `pwsh -NoProfile -File .\build.ps1 test` — PASS; Go tests cover replay, expiry, concurrency, and storage failure; Chromium covers actual login form use. |
+| 2026-10-13 | v1.1 Stage 5 root-only TOTP reset, disable and replace commands with restricted recovery enrollment. | [PR #27](https://github.com/Mytob/project_j/pull/27), merged to `dev` as `06805d1` | Focused proxyctl/admin/auth/deployment/TOTP tests, Windows cross-build, and `pwsh -NoProfile -File .\build.ps1 test` — PASS. |
+| 2026-10-14 | v1.1 Stage 6 update downgrade guard, package permission fix, full TOTP package and release gate. | [PR #28](https://github.com/Mytob/project_j/pull/28), merged to `dev` as `0e17798` | `pwsh -NoProfile -File .\build.ps1 package -Version 1.1.0-dev` and `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` — PASS; local gate passed, production host checks blocked. |
+| 2026-10-14 | Responsive TOTP disable form layout and 1.1.2-dev package. | [PR #31](https://github.com/Mytob/project_j/pull/31), merged to `dev` as `8df2ca7` | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2-dev` — PASS, exit 0; Go, browser integration, and offline package gates passed. Host-specific checks remain blocked; package not published. |
+| 2026-10-14 | Stable 1.1.2 release gate and actual-host evidence. | This evidence PR | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2 -HostCheckEvidence docs/release-host-checks-v1.1.2.json` — PASS, exit 0; report `release_readiness: ready`. Local Go, Chromium/WireGuard integration, offline package/install/update/rollback/retention checks passed. Host evidence records the operator-confirmed 1.1.2-dev build and carries forward public DNS/ACME/provider-firewall checks verified on the same VPS for 1.0.0. This run detected a dirty docs working tree; rebuild from the clean merged dev commit before publishing. |

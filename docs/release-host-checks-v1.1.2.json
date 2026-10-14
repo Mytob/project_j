@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "version": "1.1.2",
+  "verified_on": "2026-10-14",
+  "checks": [
+    {
+      "id": "ubuntu-vps-kernel-wireguard",
+      "status": "passed",
+      "evidence": "The disposable Ubuntu VPS is running Jellyfin Proxy 1.1.2-dev, build 8df2ca77f127, which contains the same application source as the 1.1.2 release candidate; the only later commit before the release gate changed documentation. The operator confirmed the dashboard version/build, rebooted after a transient Windows adapter startup error, and confirmed Jellyfin streaming works afterward. The 1.0.0 host validation on this VPS recorded healthy admin, Caddy, and WireGuard services, active WireGuard traffic, and namespace ingress filters."
+    },
+    {
+      "id": "public-acme-provider-firewall",
+      "status": "passed",
+      "evidence": "The same VPS and hostnames were verified on 2026-10-13: Let’s Encrypt certificates validated for darkcry.com, admin.darkcry.com, and access.darkcry.com; HTTPS returned 200/200/403 as expected, HTTP redirected with 308, and provider ingress allowed TCP 80/443 and UDP 51820. The 1.1.2 candidate does not change the previously verified public routing, TLS, provider ingress, or WireGuard namespace firewall configuration."
+    },
+    {
+      "id": "native-windows-client-firewall",
+      "status": "passed",
+      "evidence": "The operator confirms the Windows WireGuard client and Jellyfin streaming work on the 1.1.2-dev deployment after reboot. The operator previously confirmed the Windows inbound TCP 8096 allow rule is scoped to remote address 10.66.66.1, no other rules are present on that machine, and streaming continues with the rule enabled."
+    }
+  ]
+}

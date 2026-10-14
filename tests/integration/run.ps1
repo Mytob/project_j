@@ -372,7 +372,12 @@ try {
     $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
-    Write-Host 'M6 integration checks passed: retained WireGuard config generation, authenticated repeat download, encrypted tunnel reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M5 gates, and isolated test resources.'
+    Invoke-Compose --profile browser-tests run --rm browser-tests
+    Invoke-Compose restart admin
+    $postEnrollmentAdmin = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'admin.domain.test'
+    Assert-Equal '200' ([string][int]$postEnrollmentAdmin.StatusCode) 'Admin service did not recover with active TOTP after restart.'
+
+    Write-Host 'M6 and TOTP admin browser integration checks passed: real Chromium navigation, dashboard build information, password reauthentication, QR setup, rejected and accepted codes, cancellation, authenticator disable with password and TOTP, session revocation, password-only login, retained WireGuard config, encrypted tunnel reachability, outage and recovery, and isolated test resources.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1

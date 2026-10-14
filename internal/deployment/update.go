@@ -26,12 +26,30 @@ type UpdateOptions struct {
 	WaitInterval time.Duration
 	WaitAttempts int
 	HTTPSCheck   func(context.Context, string) error
+	Progress     func(UpdateProgress)
+}
+
+// UpdateProgress reports completion of an updater milestone. Percentage is
+// derived from completed milestones; it is not a byte-level estimate for
+// Docker or network operations.
+type UpdateProgress struct {
+	Step    int
+	Total   int
+	Message string
+	Done    bool
 }
 
 // Update installs a verified release over an existing deployment while
 // preserving operator-owned data and restoring the previous release if the
 // new one fails its health or HTTPS checks.
 func Update(ctx context.Context, options UpdateOptions) (manifest release.Manifest, resultErr error) {
+	const updateSteps = 8
+	progress := func(step int, done bool, message string) {
+		if options.Progress != nil {
+			options.Progress(UpdateProgress{Step: step, Total: updateSteps, Message: message, Done: done})
+		}
+	}
+	progress(1, false, "Checking the current installation")
 	if err := ValidateHost(options.Host); err != nil {
 		return manifest, err
 	}
@@ -64,7 +82,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err != nil || !composeServicesHealthy(composeStatus) {
 		return manifest, errors.New("the existing Jellyfin Proxy deployment is not healthy; restore it before updating")
 	}
+	progress(1, true, "Current installation is healthy")
 
+	progress(2, false, "Verifying the release package and version")
 	stageRoot, err := os.MkdirTemp(filepath.Join(options.InstallRoot, "releases"), ".update-")
 	if err != nil {
 		return manifest, fmt.Errorf("create update staging directory: %w", err)
@@ -78,9 +98,21 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := validatePackagePortAndVersion(manifest, 51820); err != nil {
 		return manifest, err
 	}
-	if manifest.Version == current.Version {
+	versionOrder, err := release.CompareVersions(manifest.Version, current.Version)
+	if err != nil {
+		return manifest, fmt.Errorf("compare release versions: %w", err)
+	}
+	if versionOrder == 0 {
 		return manifest, errors.New("release version is already active")
 	}
+	if versionOrder < 0 {
+		return manifest, fmt.Errorf("refusing downgrade from %s to older release %s", current.Version, manifest.Version)
+	}
+	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
+		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)
+	}
+	progress(2, true, "Release package and persistent TOTP storage verified")
+	progress(3, false, "Retaining the verified release files")
 	finalRelease := filepath.Join(options.InstallRoot, "releases", manifest.Version)
 	createdRelease := false
 	rollbackComplete := true
@@ -96,6 +128,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	} else {
 		createdRelease = true
 	}
+	progress(3, true, "Release files retained")
 	if createdRelease {
 		defer func() {
 			if resultErr != nil && rollbackComplete {
@@ -104,6 +137,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		}()
 	}
 
+	progress(4, false, "Loading the bundled Docker images; this can take a few minutes")
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "config", "--quiet")...); err != nil {
 		return manifest, fmt.Errorf("validate current Compose configuration: %w", err)
 	}
@@ -114,7 +148,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := verifyLoadedImages(ctx, options.Runner, manifest.Images); err != nil {
 		return manifest, fmt.Errorf("verify bundled update images (%s): %w", imageReferences(manifest.Images), err)
 	}
+	progress(4, true, "Bundled Docker images loaded")
 
+	progress(5, false, "Preparing configuration while preserving deployment data")
 	paths := []string{".env", "compose.yaml", filepath.Join("config", "Caddyfile")}
 	previous := make(map[string][]byte, len(paths))
 	for _, relative := range paths {
@@ -132,12 +168,15 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		return manifest, errors.New("active release metadata changed while update was being prepared")
 	}
 	newEnvironment := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\n", environment.Domain, manifest.Version, environment.WireGuardPort)
+	progress(5, true, "Existing configuration captured")
+	progress(6, false, "Activating the new release files")
 	changed := false
 	composeMayBeRunning := false
 	defer func() {
 		if resultErr == nil || !changed {
 			return
 		}
+		progress(7, false, "Restoring the previous release after update failure")
 		var restoreErrors []string
 		for _, relative := range paths {
 			mode := os.FileMode(0o644)
@@ -180,6 +219,8 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "config", "--quiet")...); err != nil {
 		return manifest, fmt.Errorf("validate updated Compose configuration: %w", err)
 	}
+	progress(6, true, "Updated configuration validated")
+	progress(7, false, "Restarting services and waiting for health checks")
 	composeMayBeRunning = true
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "up", "--detach", "--force-recreate", "--pull", "never")...); err != nil {
 		return manifest, fmt.Errorf("start updated Jellyfin Proxy services: %w", err)
@@ -187,6 +228,8 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := waitForReadiness(ctx, InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
 		return manifest, fmt.Errorf("updated services did not become healthy; the previous release was restored: %w", err)
 	}
+	progress(7, true, "Updated services are healthy")
+	progress(8, false, "Checking public HTTPS and retaining the active release")
 	if options.HTTPSCheck == nil {
 		options.HTTPSCheck = checkPublicHTTPS
 	}
@@ -197,6 +240,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		return manifest, fmt.Errorf("update succeeded, but release retention cleanup failed: %w", err)
 	}
 	changed = false
+	progress(8, true, "Update completed successfully")
 	return manifest, nil
 }
 
@@ -249,6 +293,119 @@ func ResetPassword(ctx context.Context, installRoot, password string, runner Com
 		rollbackCredential(credentialPath, old)
 		_, _ = runner.Run(context.Background(), "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...)
 		return fmt.Errorf("admin did not become healthy after password reset; the previous credential was restored: %w", err)
+	}
+	return nil
+}
+
+// TOTPRecoveryAction identifies a local privileged TOTP state transition.
+type TOTPRecoveryAction string
+
+const (
+	TOTPReset   TOTPRecoveryAction = "reset"
+	TOTPDisable TOTPRecoveryAction = "disable"
+	TOTPReplace TOTPRecoveryAction = "replace"
+)
+
+// RecoverTOTP changes the persistent authenticator state and recreates only
+// the admin service. On any failure after the transition, it restores the
+// original state file and restarts the previous admin service.
+func RecoverTOTP(ctx context.Context, installRoot string, action TOTPRecoveryAction, runner CommandRunner) (resultErr error) {
+	if installRoot == "" {
+		installRoot = DefaultInstallRoot
+	}
+	if !filepath.IsAbs(installRoot) {
+		return errors.New("installation root must be an absolute path")
+	}
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	if action != TOTPReset && action != TOTPDisable && action != TOTPReplace {
+		return errors.New("unknown TOTP recovery action")
+	}
+	if err := validateInstalledLayout(installRoot); err != nil {
+		return err
+	}
+	statePath := filepath.Join(installRoot, "data", "totp-state.json")
+	stateInfo, err := os.Lstat(statePath)
+	if err != nil || stateInfo.Mode()&os.ModeSymlink != 0 || !stateInfo.Mode().IsRegular() {
+		return errors.New("TOTP state file is missing or unsafe")
+	}
+	previous, err := os.ReadFile(statePath)
+	if err != nil {
+		return fmt.Errorf("read current TOTP state: %w", err)
+	}
+	key, err := auth.LoadTOTPKey(filepath.Join(installRoot, "config", "totp.key"))
+	if err != nil {
+		return fmt.Errorf("validate TOTP storage key: %w", err)
+	}
+	defer clear(key)
+	store, err := auth.NewTOTPStore(statePath, key)
+	if err != nil {
+		return fmt.Errorf("validate current TOTP state: %w", err)
+	}
+	if action == TOTPReplace && store.Status() != auth.TOTPEnabled {
+		return errors.New("replace-totp requires an enabled authenticator; use reset-totp for recovery")
+	}
+	composeStatus, err := runner.Run(ctx, "docker", composeArgs(installRoot, "ps", "--format", "json")...)
+	if err != nil || !composeServicesHealthy(composeStatus) {
+		return errors.New("the existing Jellyfin Proxy deployment is not healthy; restore it before changing TOTP")
+	}
+	if _, err := runner.Run(ctx, "docker", composeArgs(installRoot, "stop", "admin")...); err != nil {
+		if _, restartErr := runner.Run(context.Background(), "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); restartErr != nil {
+			return fmt.Errorf("stop admin before changing TOTP: %w; admin restart also failed: %v", err, restartErr)
+		}
+		return fmt.Errorf("stop admin before changing TOTP: %w", err)
+	}
+	changed := false
+	rollback := func() error {
+		var failures []string
+		if changed {
+			if err := atomicReplace(statePath, previous, 0o600); err != nil {
+				failures = append(failures, "restore TOTP state: "+err.Error())
+			} else if err := os.Chown(statePath, adminContainerUID, adminContainerUID); err != nil {
+				failures = append(failures, "restore TOTP state ownership: "+err.Error())
+			}
+		}
+		if _, err := runner.Run(context.Background(), "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+			failures = append(failures, "restart admin: "+err.Error())
+		} else if err := waitForReadiness(context.Background(), InstallOptions{InstallRoot: installRoot, Runner: runner, WaitInterval: time.Second, WaitAttempts: 90}); err != nil {
+			failures = append(failures, "admin readiness: "+err.Error())
+		}
+		if len(failures) != 0 {
+			return errors.New(strings.Join(failures, "; "))
+		}
+		return nil
+	}
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		if rollbackErr := rollback(); rollbackErr != nil {
+			resultErr = fmt.Errorf("%w; recovery rollback failed: %v", resultErr, rollbackErr)
+		}
+	}()
+	switch action {
+	case TOTPReset, TOTPReplace:
+		if err := store.RequireFreshEnrollment(); err != nil {
+			return fmt.Errorf("require fresh authenticator enrollment: %w", err)
+		}
+	case TOTPDisable:
+		if err := store.Disable(); err != nil {
+			return fmt.Errorf("disable authenticator: %w", err)
+		}
+	}
+	changed = true
+	if err := os.Chown(statePath, adminContainerUID, adminContainerUID); err != nil {
+		return fmt.Errorf("set TOTP state ownership: %w", err)
+	}
+	if err := os.Chmod(statePath, 0o600); err != nil {
+		return fmt.Errorf("set TOTP state permissions: %w", err)
+	}
+	if _, err := runner.Run(ctx, "docker", composeArgs(installRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+		return fmt.Errorf("restart admin with the updated authenticator state: %w", err)
+	}
+	if err := waitForReadiness(ctx, InstallOptions{InstallRoot: installRoot, Runner: runner, WaitInterval: time.Second, WaitAttempts: 90}); err != nil {
+		return fmt.Errorf("admin did not become healthy after TOTP recovery: %w", err)
 	}
 	return nil
 }

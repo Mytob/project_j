@@ -10,6 +10,13 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$buildNumber = (& git -C $repoRoot rev-parse --short=12 HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $buildNumber -notmatch '^[0-9a-f]{7,40}$') {
+    throw 'Could not determine the source commit for the admin build number.'
+}
+$workingTreeChanges = & git -C $repoRoot status --porcelain
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the source working tree for the admin build number.' }
+if ($workingTreeChanges) { $buildNumber = "$buildNumber-dirty" }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'dist' }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $outputRoot = (Resolve-Path $OutputDirectory).Path
@@ -59,7 +66,11 @@ try {
 
     $adminImage = $imageReferences[0]
     $wireguardImage = $imageReferences[1]
-    Invoke-Checked 'docker' @('build', '--file', 'deploy/admin/Dockerfile', '--tag', $adminImage, '.')
+    Invoke-Checked 'docker' @('build', '--file', 'deploy/admin/Dockerfile', '--build-arg', "VERSION=$Version", '--build-arg', "BUILD_NUMBER=$buildNumber", '--tag', $adminImage, '.')
+    $builtVersion = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' $adminImage
+    if ($LASTEXITCODE -ne 0 -or [string]$builtVersion -ne $Version) { throw 'Packaged admin image does not contain the requested version metadata.' }
+    $builtRevision = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' $adminImage
+    if ($LASTEXITCODE -ne 0 -or [string]$builtRevision -ne $buildNumber) { throw 'Packaged admin image does not contain the expected source build number.' }
     Invoke-Checked 'docker' @('build', '--file', 'deploy/wireguard/Dockerfile', '--tag', $wireguardImage, '.')
     Invoke-Checked 'docker' @('pull', $imageReferences[2])
     Invoke-Checked 'docker' @('pull', $imageReferences[3])
@@ -140,7 +151,7 @@ try {
     foreach ($relative in @('manifest.json', 'images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'compose.yaml', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html')) {
         if ($normalizedEntries -notcontains $relative) { throw "Release archive is missing $relative" }
     }
-    foreach ($secretName in @('server.conf', 'windows.conf', 'admin.json')) {
+    foreach ($secretName in @('server.conf', 'windows.conf', 'admin.json', 'totp.key', 'totp-state.json')) {
         if ($normalizedEntries -match "(^|/)$([regex]::Escape($secretName))$") { throw "Release archive unexpectedly contains sensitive runtime file $secretName" }
     }
 

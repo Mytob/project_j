@@ -50,6 +50,10 @@ services:
       - :8080
       - --config
       - /opt/jellyfin-proxy/config/admin.json
+      - --totp-key
+      - /opt/jellyfin-proxy/config/totp.key
+      - --totp-state
+      - /opt/jellyfin-proxy/data/totp-state.json
       - --whitelist
       - /opt/jellyfin-proxy/data/whitelist.json
       - --caddy-socket
@@ -60,6 +64,7 @@ services:
       - /opt/jellyfin-proxy/config/wireguard/windows.conf
     volumes:
       - ./config/admin.json:/opt/jellyfin-proxy/config/admin.json:ro
+      - ./config/totp.key:/opt/jellyfin-proxy/config/totp.key:ro
       - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./config/wireguard:/opt/jellyfin-proxy/config/wireguard:ro
       - ./data:/opt/jellyfin-proxy/data

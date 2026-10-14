@@ -7,6 +7,181 @@ then the complete release gate. A mandatory test is not skipped silently. A
 test requiring a Linux host, kernel capability, or public DNS must be listed as
 a blocker when unavailable and must not be represented as proven by simulation.
 
+## v1.1 TOTP stage gate status
+
+### Stage 1 — Standalone engine
+
+Stage 1 adds the isolated `internal/totp` engine and tests for RFC 6238 SHA-1
+reference vectors, 30-second boundaries, clock skew, invalid input, secret
+generation, replay prevention, clock rollback, and concurrent code submission.
+The tests use fixed timestamps and generated test secrets.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/totp` — PASS (2026-10-13).
+- Full command: `./build.ps1 test` — PASS (2026-10-13), including all Go
+  packages and the M1–M6 Docker integration suite on Docker Desktop 29.8.2.
+- The first focused run failed because the boundary test expected the wrong
+  value. After correcting the test and running `gofmt`, both commands above
+  passed.
+- Earlier retries were blocked while Docker Desktop was stopped. Docker became
+  available after it was reopened; these earlier environment failures are not
+  current blockers.
+
+### Stage 2 — Authentication state and persistence
+
+Automated tests cover initial unconfigured state, pending enrollment, incorrect
+code and cancellation, successful activation, encrypted-at-rest state, file
+permissions, storage corruption and failure, session invalidation, replay
+prevention across store reopen, concurrent code consumption, v1.0 migration,
+and key/state preservation during update.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/auth ./internal/totp
+  ./internal/admin ./internal/deployment` — PASS (2026-10-13).
+- Full command: `./build.ps1 test` — PASS (2026-10-13), including all Go
+  packages and M1–M6 integration. The first integration attempt found that the
+  key fixture volume targeted a file path; after mounting it as a read-only
+  directory, the full suite passed.
+- Package command: `./build.ps1 package -Version 1.0.0-dev` — PASS on retry
+  (2026-10-13). The first attempt had an 8-second transient HTTPS timeout in a
+  whitelist request. The successful run validated package secret exclusion,
+  offline image loading, fresh install, update, rollback, and password reset.
+- No v1.1 feature has been deployed to a live VPS.
+
+### Stage 3 — Web enrolment
+
+The admin dashboard asks for the current administrator password before it
+reveals the pending secret and locally generated QR image. Browser automation
+uses the pinned Playwright Chromium container on the same isolated HTTPS
+Compose network; it exercises actual rendered controls, navigation, bad and
+good password checks, QR image loading, a rejected code, cancellation, and
+successful activation. The ordinary admin image has no JavaScript runtime.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS on 2026-10-13.
+- Full command: `pwsh -NoProfile -File .\build.ps1 test` — PASS on
+  2026-10-13. The real-browser test passed and the full M1–M6 regression
+  suite passed with TOTP active across admin restarts.
+- First complete run failed after Compose reran the fixture initializers,
+  replacing the test encryption key. The initializers were made idempotent;
+  the repeated run passed. This failure confirmed the app denies startup when
+  enabled state cannot be decrypted.
+- Browser tooling is test-only: Playwright `1.64.0` is pinned in the test
+  package lock and `mcr.microsoft.com/playwright:v1.64.0-noble`; no browser
+  dependency is added to the deployed admin container.
+- No live VPS was used.
+
+### Stage 4 — Login enforcement
+
+With TOTP unconfigured, the existing password-only v1.0-compatible login
+remains available. Once enabled, the rendered login form requires both the
+administrator password and a six-digit TOTP code. The handler validates both
+before creating an authenticated session; the TOTP store persists the replay
+checkpoint before reporting success. Missing, malformed, expired, reused,
+concurrent duplicate, or unpersistable codes do not create a session. Login
+session creation is serialized with TOTP activation so a password-only request
+that overlaps activation cannot survive the activation-time session revocation.
+Existing login throttling counts failed TOTP attempts too.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./internal/auth
+  ./internal/totp` — PASS on 2026-10-13.
+- Full command: `pwsh -NoProfile -File .\build.ps1 test` — PASS on
+  2026-10-13, including real Chromium login after setup and the full M1–M6
+  regression suite.
+- No live VPS was used.
+
+### Stage 5 — Privileged VPS CLI recovery
+
+`proxyctl reset-totp` clears established or pending authenticator material and
+requires a fresh enrollment after the unchanged administrator password is
+accepted. The resulting session can reach only authenticator setup and logout;
+successful enrollment invalidates it and requires a new password-plus-code
+login. `proxyctl replace-totp` is accepted only when TOTP is enabled and uses
+the same mandatory fresh-enrollment flow. `proxyctl disable-totp` returns to
+password-only login. The three commands reject non-root execution. Persistent
+changes are saved before only the admin service is recreated; command or
+readiness failures restore the prior state and restart the prior admin service.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./cmd/proxyctl ./internal/admin
+  ./internal/auth ./internal/deployment ./internal/totp` — PASS on 2026-10-13.
+- Full command: `pwsh -NoProfile -File .\build.ps1 test` — PASS on retry
+  (2026-10-13), including all Go packages, Chromium enrollment, and the M1–M6
+  isolated Docker integration suite. The preceding run had a transient
+  8-second HTTPS timeout while posting a whitelist update; the retry passed.
+- Automated tests verify real non-root rejection, reset/disable/replace state
+  transitions, replacement eligibility, preserved password bytes, state file
+  owner/mode, admin-only stop/recreate commands, failed restart rollback,
+  recovery-only web session boundaries, required fresh enrollment, and a new
+  password-plus-TOTP login afterward.
+- No live VPS was used.
+
+### Stage 6 — Full integration and release testing
+
+The release gate exercises the packaged recovery commands and verifies that
+TOTP remains enabled across a v1.0-to-v1.1-style package update. It also backs
+up and restores the encrypted TOTP state with its separate key, checking that
+the replay checkpoint remains consumed. Update rejects an older release before
+loading images or changing active configuration. Package extraction restores
+execute permission only for the two named Linux executables, even when the
+archive was created on Windows.
+
+- Focused command: `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 sh -c 'gofmt -w internal/release/package.go
+  internal/release/package_test.go && go test ./internal/release
+  ./internal/deployment ./tests/deployment/installcheck'` — PASS on
+  2026-10-14.
+- Package command: `pwsh -NoProfile -File .\build.ps1 package -Version
+  1.1.0-dev` — PASS on 2026-10-14. This uses a disposable Docker-in-Docker
+  daemon with networking disabled for the shipped package and images.
+- Full command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.1.0-dev` — PASS on 2026-10-14, exit 0. The JSON report records the local
+  Go, M1–M6, and M7–M9 gates as passed; release readiness remains blocked on
+  host-specific checks. No live VPS was used.
+- The first package run failed because the Windows-created archive did not
+  preserve the executable bit for `proxyctl`; the deterministic extractor fix
+  and regression test passed in both the package and full release reruns.
+
+### Authorized operator follow-up — admin controls and update progress
+
+The follow-up adds a password-and-current-TOTP guarded web disable action,
+version/build information in the admin dashboard, and milestone progress in
+`proxyctl update`. The percentage represents completed milestones, while a
+spinner/elapsed indicator (or periodic log messages) keeps long Docker and
+readiness waits visibly active.
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.1-dev` — PASS on
+  2026-10-14, exit 0. Go tests, M1–M6 integration/browser, and the M7–M9
+  offline package checks passed. The package gate verified version and source
+  revision metadata on the admin image and loaded all bundled images into an
+  isolated daemon. `dist/release-validation-1.1.1-dev.json` records the local
+  gate as passed and actual-host checks as blocked.
+- Chromium verified dashboard version/build rendering, authenticator disable
+  with password and current code, global session revocation, and password-only
+  login. Unit tests also reject bad credentials/codes and missing CSRF.
+- The operator subsequently reported deploying v1.1.1-dev and that it worked
+  as expected; the follow-up screenshot identified the disable-form layout
+  issue corrected by PR #31. The updated 1.1.2-dev package has not been
+  deployed, so its version-matched actual-host checks remain unverified.
+
+### Authorized operator follow-up — responsive authenticator-disable form
+
+PR #31 fixes the password and current-code fields wrapping into their labels by
+placing each field in a responsive grid. Wider screens show two columns; narrow
+screens stack the fields.
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2-dev` — PASS on
+  2026-10-14, exit 0. Go tests, M1–M6 integration/browser checks, and M7–M9
+  offline package/install/update/rollback checks passed.
+- The generated package is
+  `dist/jellyfin-proxy-1.1.2-dev-linux-amd64.tar.gz`. The validation report
+  `dist/release-validation-1.1.2-dev.json` records the local gate as passed and
+  host-specific readiness as blocked pending version-matched Ubuntu VPS,
+  provider-firewall/public ACME, and native Windows checks. The package has not
+  been published.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,
@@ -21,7 +196,8 @@ go test ./...
 ./build.ps1 package -Version 1.0.0-dev
 ```
 
-`build.ps1 test` runs Go unit tests and the M1–M6 Compose integration runner.
+`build.ps1 test` runs Go unit tests and the M1–M6 Compose integration runner,
+including the real-browser TOTP enrollment flow.
 The runner builds the Go admin and mock Jellyfin images, starts a uniquely
 named temporary Compose project, verifies routing, authentication, and access
 control, exercises protected WireGuard config generation and authenticated
@@ -57,9 +233,30 @@ successful local gate does not mean the release is ready to publish.
 | Windows client config | Key/config validation, repeat authenticated downloads, restricted permissions, persistence | PASS 2026-10-12 |
 | Package | Extract/verify manifest and load images in an isolated Docker daemon without registry access | PASS 2026-10-12 |
 | Installer | Actual package install, IPv4/IPv6 namespace firewall, host INPUT preservation, forced startup rollback, unrelated container preservation | PASS 2026-10-13; Ubuntu host checks remain |
-| Updater | Actual offline update, credentials/whitelist/WireGuard/site preservation, forced failure recovery, active+previous retention, no global prune | PASS 2026-10-13; Ubuntu host checks remain |
+| Updater | Actual offline update, credentials/whitelist/WireGuard/TOTP/site preservation, forced failure recovery, downgrade rejection, active+previous retention, no global prune | PASS 2026-10-14; Ubuntu host checks remain |
+
+### Stable 1.1.2 local release gate — 2026-10-14
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2`.
+- Result: PASS on retry. Go tests, M1–M6 integration (including Chromium
+  TOTP disable with password and current code, session revocation, WireGuard
+  outage/recovery), and M7–M9 offline package/install/update/rollback/retention
+  checks passed. The first run stopped when its PID-derived integration subnet
+  collided with an existing empty project test network; the retry selected a
+  free subnet. No unrelated Docker resources were removed.
+- Package: `dist/jellyfin-proxy-1.1.2-linux-amd64.tar.gz`.
+- Host evidence: `docs/release-host-checks-v1.1.2.json` records the operator's
+  current 1.1.2-dev build/streaming confirmation and the previously verified
+  public DNS, ACME, and provider ingress results for the same VPS.
+- Limits: This local-gate run used Docker Desktop's Linux engine. External DNS
+  lookups from this runner were unavailable, so the public host results are
+  carried forward from the documented 2026-10-13 verification. The
+  evidence-backed run passed with `release_readiness: ready`, but this run's
+  docs working tree was dirty, so rebuild from the clean merged `dev` commit
+  before publishing the stable package.
+| TOTP recovery and backup | Packaged reset/disable/replace commands, encrypted key+state restore, consumed-code replay checkpoint, admin restart | PASS 2026-10-14; no live v1.1 deployment |
 | Password reset | Hashed credential replacement, admin-only recreation, existing sessions invalidated by process restart | PASS 2026-10-13; Ubuntu host checks remain |
-| Full release | Go tests, M1–M6 integration, M7–M9 package/install/update; JSON report records host-only checks | PASS 2026-10-13; production host checks blocked |
+| Full release | Go tests, M1–M6 integration, M7–M9 package/install/update; JSON report records host-only checks | PASS 2026-10-14; production host checks blocked |
 
 ## Host-specific limitations
 

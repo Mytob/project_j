@@ -191,11 +191,37 @@ func Install(ctx context.Context, options InstallOptions) (manifest release.Mani
 	if err := os.Chmod(credentialPath, 0o640); err != nil {
 		return manifest, fmt.Errorf("set administrator credential permissions: %w", err)
 	}
+	totpKeyPath := filepath.Join(options.InstallRoot, "config", "totp.key")
+	if err := auth.CreateTOTPKey(totpKeyPath); err != nil {
+		return manifest, fmt.Errorf("create administrator TOTP key: %w", err)
+	}
+	if err := os.Chown(totpKeyPath, 0, adminContainerUID); err != nil {
+		return manifest, fmt.Errorf("set administrator TOTP key ownership: %w", err)
+	}
+	if err := os.Chmod(totpKeyPath, 0o640); err != nil {
+		return manifest, fmt.Errorf("set administrator TOTP key permissions: %w", err)
+	}
 	if err := os.Chown(filepath.Join(options.InstallRoot, "data"), adminContainerUID, adminContainerUID); err != nil {
 		return manifest, fmt.Errorf("set admin data ownership: %w", err)
 	}
 	if err := os.Chmod(filepath.Join(options.InstallRoot, "data"), 0o700); err != nil {
 		return manifest, fmt.Errorf("set admin data permissions: %w", err)
+	}
+	totpKey, err := auth.LoadTOTPKey(totpKeyPath)
+	if err != nil {
+		return manifest, fmt.Errorf("validate generated administrator TOTP key: %w", err)
+	}
+	_, initializeErr := auth.InitializeTOTPStore(filepath.Join(options.InstallRoot, "data", "totp-state.json"), totpKey)
+	clear(totpKey)
+	if initializeErr != nil {
+		return manifest, fmt.Errorf("initialize administrator TOTP state: %w", initializeErr)
+	}
+	totpStatePath := filepath.Join(options.InstallRoot, "data", "totp-state.json")
+	if err := os.Chown(totpStatePath, adminContainerUID, adminContainerUID); err != nil {
+		return manifest, fmt.Errorf("set administrator TOTP state ownership: %w", err)
+	}
+	if err := os.Chmod(totpStatePath, 0o600); err != nil {
+		return manifest, fmt.Errorf("set administrator TOTP state permissions: %w", err)
 	}
 	serverAddress, _ := netip.ParsePrefix(serverTunnelPrefix)
 	clientAddress, _ := netip.ParsePrefix(clientTunnelPrefix)

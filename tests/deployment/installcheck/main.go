@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/deployment"
 	"github.com/Mytob/project_j/internal/release"
+	"github.com/Mytob/project_j/internal/totp"
 )
 
 func main() {
@@ -34,15 +36,15 @@ func run() error {
 	if len(os.Args) != 2 {
 		return errors.New("usage: installcheck <release-package.tar.gz>")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	runner := deployment.ExecRunner{}
+	runner := installcheckRunner{}
 	packagePath, err := filepath.Abs(os.Args[1])
 	if err != nil {
 		return err
 	}
 	options := deployment.InstallOptions{
-		PackagePath: packagePath, InstallRoot: "/opt/jellyfin-proxy-installcheck", Domain: "installcheck.example.invalid",
+		PackagePath: packagePath, InstallRoot: deployment.DefaultInstallRoot, Domain: "installcheck.example.invalid",
 		Password: "correct horse battery staple", WireGuardPort: 51820,
 		Host:   deployment.HostFacts{OSID: "ubuntu", VersionID: "26.04", Codename: "resolute", Arch: "x86_64", EffectiveUID: 0},
 		Runner: runner, WaitInterval: time.Second, WaitAttempts: 60,
@@ -97,9 +99,13 @@ func run() error {
 	// Exercise an actual offline update, persistent-data preservation, failed
 	// update rollback, and a local administrator password reset in the same
 	// isolated daemon.
-	options.InstallRoot = "/opt/jellyfin-proxy-installcheck"
+	options.InstallRoot = deployment.DefaultInstallRoot
+	enrollmentCode, enrollmentTime, err := enableTOTP(options.InstallRoot)
+	if err != nil {
+		return fmt.Errorf("enable test TOTP before package update: %w", err)
+	}
 	preserved := map[string][]byte{}
-	for _, relative := range []string{"config/admin.json", "config/wireguard/server.conf", "config/wireguard/windows.conf", "data/whitelist.json", "site/index.html"} {
+	for _, relative := range []string{"config/admin.json", "config/wireguard/server.conf", "config/wireguard/windows.conf", "config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html"} {
 		path := filepath.Join(options.InstallRoot, relative)
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -142,6 +148,9 @@ func run() error {
 			return fmt.Errorf("update changed persistent %s: %q (%v)", relative, data, err)
 		}
 	}
+	if err := verifyEnabledTOTP(options.InstallRoot, enrollmentCode, enrollmentTime); err != nil {
+		return fmt.Errorf("TOTP did not survive the packaged update: %w", err)
+	}
 	if data, err := os.ReadFile(filepath.Join(options.InstallRoot, "site", "operator-page.txt")); err != nil || string(data) != "preserve operator site" {
 		return fmt.Errorf("update changed operator website: %q (%v)", data, err)
 	}
@@ -183,6 +192,12 @@ func run() error {
 	if _, err := os.Lstat(filepath.Join(options.InstallRoot, "releases", manifest.Version)); !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("older release was not removed after successful update: %v", err)
 	}
+	if err := backupRestoreEnabledTOTP(ctx, runner, options.InstallRoot, enrollmentCode, enrollmentTime); err != nil {
+		return fmt.Errorf("TOTP backup/restore check failed: %w", err)
+	}
+	if err := exercisePackagedTOTPRecovery(ctx, runner, options.InstallRoot, rollbackVersion); err != nil {
+		return fmt.Errorf("packaged TOTP recovery CLI check failed: %w", err)
+	}
 	if err := deployment.ResetPassword(ctx, options.InstallRoot, "reset password for installcheck", runner); err != nil {
 		return fmt.Errorf("local password reset failed: %w", err)
 	}
@@ -218,6 +233,25 @@ func run() error {
 	return nil
 }
 
+type installcheckRunner struct{}
+
+func (installcheckRunner) Run(ctx context.Context, executable string, args ...string) (string, error) {
+	command := executable + " " + strings.Join(args, " ")
+	trace := strings.Contains(command, " ps --format json") || strings.Contains(command, " up --detach") || strings.Contains(command, " stop admin")
+	if trace {
+		fmt.Printf("Install-check command started: %s\n", command)
+	}
+	output, err := (deployment.ExecRunner{}).Run(ctx, executable, args...)
+	if trace {
+		if err != nil {
+			fmt.Printf("Install-check command failed: %s: %v\n", command, err)
+		} else {
+			fmt.Printf("Install-check command completed: %s\n", command)
+		}
+	}
+	return output, err
+}
+
 func cleanupDeployment(runner deployment.CommandRunner, root string) error {
 	_, err := runner.Run(context.Background(), "docker", "compose", "--project-name", "jellyfin-proxy", "--file", filepath.Join(root, "compose.yaml"), "--env-file", filepath.Join(root, ".env"), "down", "--remove-orphans", "--volumes")
 	if err != nil {
@@ -227,6 +261,229 @@ func cleanupDeployment(runner deployment.CommandRunner, root string) error {
 		return fmt.Errorf("remove installer fixture: %w", err)
 	}
 	return nil
+}
+
+func enableTOTP(root string) (string, time.Time, error) {
+	key, err := auth.LoadTOTPKey(filepath.Join(root, "config", "totp.key"))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	defer clear(key)
+	statePath := filepath.Join(root, "data", "totp-state.json")
+	store, err := auth.NewTOTPStore(statePath, key)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	secret, err := store.BeginEnrollment()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	at := time.Now().UTC().Truncate(totp.Period)
+	code, err := totp.Code(secret, at)
+	clear(secret)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if err := store.ConfirmEnrollment(code, at); err != nil {
+		return "", time.Time{}, err
+	}
+	if err := os.Chown(statePath, 65532, 65532); err != nil {
+		return "", time.Time{}, err
+	}
+	if err := os.Chmod(statePath, 0o600); err != nil {
+		return "", time.Time{}, err
+	}
+	return code, at, nil
+}
+
+func verifyEnabledTOTP(root, consumedCode string, at time.Time) error {
+	key, err := auth.LoadTOTPKey(filepath.Join(root, "config", "totp.key"))
+	if err != nil {
+		return err
+	}
+	defer clear(key)
+	store, err := auth.NewTOTPStore(filepath.Join(root, "data", "totp-state.json"), key)
+	if err != nil {
+		return err
+	}
+	if store.Status() != auth.TOTPEnabled {
+		return fmt.Errorf("TOTP status is %s, not enabled", store.Status())
+	}
+	accepted, err := store.Verify(consumedCode, at)
+	if err != nil {
+		return err
+	}
+	if accepted {
+		return errors.New("a consumed enrollment code became reusable")
+	}
+	return nil
+}
+
+func backupRestoreEnabledTOTP(ctx context.Context, runner deployment.CommandRunner, root, consumedCode string, at time.Time) error {
+	backupRoot, err := os.MkdirTemp("", "jellyfin-proxy-totp-backup-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(backupRoot)
+	keyPath := filepath.Join(root, "config", "totp.key")
+	statePath := filepath.Join(root, "data", "totp-state.json")
+	keyBackup, stateBackup := filepath.Join(backupRoot, "totp.key"), filepath.Join(backupRoot, "totp-state.json")
+	for _, file := range []struct {
+		source, destination string
+		mode                os.FileMode
+	}{
+		{source: keyPath, destination: keyBackup, mode: 0o640},
+		{source: statePath, destination: stateBackup, mode: 0o600},
+	} {
+		data, err := os.ReadFile(file.source)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(file.destination, data, file.mode); err != nil {
+			return err
+		}
+	}
+	if _, err := runner.Run(ctx, "docker", composeArgs(root, "stop", "admin")...); err != nil {
+		return fmt.Errorf("stop admin for restore: %w", err)
+	}
+	if err := os.Remove(statePath); err != nil {
+		return err
+	}
+	if err := os.Remove(keyPath); err != nil {
+		return err
+	}
+	for _, file := range []struct {
+		source, destination string
+		mode                os.FileMode
+		uid, gid            int
+	}{
+		{source: keyBackup, destination: keyPath, mode: 0o640, uid: 0, gid: 65532},
+		{source: stateBackup, destination: statePath, mode: 0o600, uid: 65532, gid: 65532},
+	} {
+		data, err := os.ReadFile(file.source)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(file.destination, data, file.mode); err != nil {
+			return err
+		}
+		if err := os.Chown(file.destination, file.uid, file.gid); err != nil {
+			return err
+		}
+		if err := os.Chmod(file.destination, file.mode); err != nil {
+			return err
+		}
+	}
+	if err := verifyEnabledTOTP(root, consumedCode, at); err != nil {
+		return fmt.Errorf("restored key/state pair failed validation: %w", err)
+	}
+	if _, err := runner.Run(ctx, "docker", composeArgs(root, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+		return fmt.Errorf("restart admin after restore: %w", err)
+	}
+	return waitAdminHealthy(ctx, runner, root)
+}
+
+func exercisePackagedTOTPRecovery(ctx context.Context, runner deployment.CommandRunner, root, version string) error {
+	cliPath := filepath.Join(root, "releases", version, "bin", "proxyctl-linux-amd64")
+	credentialPath := filepath.Join(root, "config", "admin.json")
+	credentialBefore, err := os.ReadFile(credentialPath)
+	if err != nil {
+		return err
+	}
+	runCLI := func(command string) error {
+		output, err := exec.CommandContext(ctx, cliPath, command).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("proxyctl %s: %w: %s", command, err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+	readStatus := func(want auth.TOTPStatus) error {
+		key, err := auth.LoadTOTPKey(filepath.Join(root, "config", "totp.key"))
+		if err != nil {
+			return err
+		}
+		defer clear(key)
+		store, err := auth.NewTOTPStore(filepath.Join(root, "data", "totp-state.json"), key)
+		if err != nil {
+			return err
+		}
+		if store.Status() != want {
+			return fmt.Errorf("TOTP status is %s, want %s", store.Status(), want)
+		}
+		return waitAdminHealthy(ctx, runner, root)
+	}
+	if err := runCLI("reset-totp"); err != nil {
+		return err
+	}
+	if err := readStatus(auth.TOTPRecovery); err != nil {
+		return err
+	}
+	if err := runCLI("disable-totp"); err != nil {
+		return err
+	}
+	if err := readStatus(auth.TOTPUnconfigured); err != nil {
+		return err
+	}
+	if _, _, err := enableTOTP(root); err != nil {
+		return fmt.Errorf("prepare enabled factor for replace-totp: %w", err)
+	}
+	if err := runCLI("replace-totp"); err != nil {
+		return err
+	}
+	if err := readStatus(auth.TOTPRecovery); err != nil {
+		return err
+	}
+	stateBefore, err := os.ReadFile(filepath.Join(root, "data", "totp-state.json"))
+	if err != nil {
+		return err
+	}
+	output, err := exec.CommandContext(ctx, cliPath, "replace-totp").CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "requires an enabled authenticator") {
+		return fmt.Errorf("replace-totp accepted recovery state: err=%v output=%s", err, strings.TrimSpace(string(output)))
+	}
+	stateAfter, err := os.ReadFile(filepath.Join(root, "data", "totp-state.json"))
+	if err != nil || string(stateAfter) != string(stateBefore) {
+		return fmt.Errorf("rejected replace changed state: %v", err)
+	}
+	if err := runCLI("disable-totp"); err != nil {
+		return err
+	}
+	if err := readStatus(auth.TOTPUnconfigured); err != nil {
+		return err
+	}
+	credentialAfter, err := os.ReadFile(credentialPath)
+	if err != nil || string(credentialAfter) != string(credentialBefore) {
+		return fmt.Errorf("TOTP recovery changed the administrator password: %v", err)
+	}
+	return nil
+}
+
+func waitAdminHealthy(ctx context.Context, runner deployment.CommandRunner, root string) error {
+	for attempt := 0; attempt < 60; attempt++ {
+		output, err := runner.Run(ctx, "docker", composeArgs(root, "ps", "--format", "json")...)
+		if err == nil {
+			for _, line := range strings.Split(output, "\n") {
+				var service struct {
+					Service string
+					Health  string
+				}
+				if json.Unmarshal([]byte(line), &service) == nil && service.Service == "admin" && service.Health == "healthy" {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return errors.New("admin did not become healthy after restart")
+}
+
+func composeArgs(root string, args ...string) []string {
+	base := []string{"compose", "--project-name", "jellyfin-proxy", "--file", filepath.Join(root, "compose.yaml"), "--env-file", filepath.Join(root, ".env")}
+	return append(base, args...)
 }
 
 func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sourceArchive, version string) (archivePath, workDirectory string, resultErr error) {

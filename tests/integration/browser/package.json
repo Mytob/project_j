@@ -1,0 +1,10 @@
+{
+  "name": "jellyfin-proxy-admin-browser-tests",
+  "private": true,
+  "scripts": {
+    "test": "playwright test --reporter=line"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0"
+  }
+}

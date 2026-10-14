@@ -47,12 +47,30 @@ The installed directories are:
 ```text
 /opt/jellyfin-proxy/
 ├── config/       # admin credentials, Caddy config, retained WireGuard peers
-├── data/         # persistent admin-managed whitelist
+├── data/         # persistent whitelist and encrypted administrator TOTP state
 ├── site/         # persistent base-domain website
 ├── releases/     # verified package archive contents by version
 ├── compose.yaml
 └── .env
 ```
+
+The installer also creates `config/totp.key` as an independent random
+256-bit key. It is owned by root, readable by the admin container's dedicated
+group, and mounted read-only. `data/totp-state.json` stores pending or active
+authenticator material encrypted with AES-256-GCM; it is owned by the admin
+container and mode 0600 inside the mode 0700 data directory. The key is not
+stored in or derived from the encrypted state.
+
+The admin process fails closed if either file is missing, has unsafe
+permissions, or cannot be validated. A v1.0 update creates both files only
+when neither exists. A partial pair or corrupt state stops the update rather
+than treating TOTP as unconfigured. For backup and restore, preserve
+`config/totp.key` and `data/totp-state.json` together. Restoring only one will
+prevent the admin service from starting. Neither file is included in release
+packages.
+
+Release images include the package version and source commit build number;
+both are shown in the authenticated admin dashboard.
 
 ## VPS firewall and ports
 
@@ -81,10 +99,15 @@ run:
 sudo ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.0.1.tar.gz
 ```
 
-The updater verifies the release manifest and bundled image digests, loads the
-images without registry pulls, and recreates only the `jellyfin-proxy`
-services. It preserves the administrator credential, whitelist, WireGuard
-keys, and all site files. After healthy services and public HTTPS are verified,
+The updater reports its completed milestones as a percentage. A live spinner
+and elapsed time remain visible while Docker loads images or the health checks
+wait; non-interactive output emits periodic wait messages. The percentage
+tracks completed stages, not Docker's byte-level work. The updater verifies the
+release manifest and bundled image digests, refuses version downgrades, loads
+images without registry pulls, and recreates only the `jellyfin-proxy` services.
+It preserves the administrator credential,
+whitelist, WireGuard keys, TOTP key and encrypted state, and all site files.
+After healthy services and public HTTPS are verified,
 it retains the new active release and the immediately previous release and
 removes only older versioned release directories. It does not prune Docker
 images. If updated readiness fails, the prior Compose files and version are
@@ -103,17 +126,49 @@ and permissions, and recreates only the admin service. Admin sessions are
 in-memory, so this restart invalidates every existing session. If the new admin
 container does not become healthy, the previous credential is restored.
 
+Lost-authenticator recovery is available only from a local root shell on the
+VPS. These commands never change the administrator password:
+
+```sh
+sudo ./proxyctl-linux-amd64 reset-totp
+sudo ./proxyctl-linux-amd64 replace-totp
+sudo ./proxyctl-linux-amd64 disable-totp
+```
+
+`reset-totp` is the emergency recovery path. It invalidates the old factor,
+recreates only the admin service (which invalidates all in-memory sessions),
+and requires a new authenticator enrollment after the existing password is
+entered. Until that enrollment is verified, the session is limited to setup and
+sign-out; cancelling returns to the same required-enrollment state. `replace-totp`
+does the same when an authenticator is currently enabled. The new factor is not
+active until its six-digit code verifies successfully. `disable-totp` clears
+authenticator state and returns to password-only administrator login. Each
+command validates the installed state, and a failed state update or admin
+restart restores the prior state and restarts the prior admin service. The
+local recovery commands require root. To disable an authenticator during
+normal operation, open the administrator dashboard, expand **Disable
+two-factor authentication**, and submit the administrator password plus a
+current unused authenticator code. This clears the factor and signs out every
+admin session. The dashboard also shows the running release version and source
+commit build number.
+
 ## First login and Windows WireGuard
 
 1. Open `https://admin.<domain>` and sign in with the initial password.
-2. Download the Windows WireGuard configuration from the authenticated admin
+2. In the dashboard's administrator authenticator section, re-enter the
+   administrator password, scan the locally generated QR code (or enter its
+   secret manually), then submit a six-digit authenticator code to activate
+   TOTP. Activation signs out every administrator session.
+3. Sign in again with both the administrator password and a current unused
+   authenticator code. Every new administrator login requires both factors.
+4. Download the Windows WireGuard configuration from the authenticated admin
    dashboard. The same retained configuration can be downloaded again; it uses
    split-tunnel `/32` routes and a 25-second persistent keepalive.
-3. Import it into the official WireGuard client on the Windows Jellyfin PC and
+5. Import it into the official WireGuard client on the Windows Jellyfin PC and
    activate the tunnel.
-4. Add only the desired public client IP addresses/CIDRs to the access
+6. Add only the desired public client IP addresses/CIDRs to the access
    whitelist. An empty list is default deny.
-5. Restrict the Windows Jellyfin inbound firewall rule to TCP port 8096 from
+7. Restrict the Windows Jellyfin inbound firewall rule to TCP port 8096 from
    the VPS WireGuard address `10.66.66.1`. In an elevated PowerShell window on
    Windows, a narrow example rule is:
 

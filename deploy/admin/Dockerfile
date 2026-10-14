@@ -1,14 +1,21 @@
 FROM golang:1.25.2-alpine3.22 AS build
 WORKDIR /src
-COPY go.mod ./
+ARG VERSION=development
+ARG BUILD_NUMBER=unknown
+COPY go.mod go.sum ./
 COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
+COPY internal/totp ./internal/totp
 COPY internal/admin ./internal/admin
 COPY internal/whitelist ./internal/whitelist
 COPY internal/wireguard ./internal/wireguard
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/admin ./cmd/admin
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildNumber=${BUILD_NUMBER}" -o /out/admin ./cmd/admin
 
 FROM alpine:3.22
+ARG VERSION=development
+ARG BUILD_NUMBER=unknown
+LABEL org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${BUILD_NUMBER}"
 RUN addgroup -S -g 65532 app && adduser -S -D -H -u 65532 -G app app
 COPY --from=build /out/admin /usr/local/bin/admin
 USER 65532:65532
