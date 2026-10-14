@@ -22,8 +22,8 @@ if ($Target -eq 'release') {
     $reportPath = Join-Path $outputDirectory "release-validation-$Version.json"
     $checks = @(
         [ordered]@{ id = 'go-tests'; status = 'not_run'; evidence = 'Go unit tests and compilation.' }
-        [ordered]@{ id = 'm1-m6-integration'; status = 'not_run'; evidence = 'Caddy routes, auth, whitelist, WireGuard tunnel, restart and recovery.' }
-        [ordered]@{ id = 'm7-m9-package'; status = 'not_run'; evidence = 'Release archive, offline image loading, install, firewall, update, rollback, retention, and password reset.' }
+        [ordered]@{ id = 'integration-browser-monitoring'; status = 'not_run'; evidence = 'M1–M6 regressions plus Chromium admin, host collector, authenticated live/history statistics, and real Caddy streaming/range/WebSocket checks.' }
+        [ordered]@{ id = 'package-install-update-rollback'; status = 'not_run'; evidence = 'Release archive, offline image loading, install, firewall, monitoring image, statistics history preservation, update, rollback, retention, and password reset.' }
     )
     $hostChecks = [ordered]@{
         status = 'blocked'
@@ -120,7 +120,7 @@ if ($Target -eq 'release') {
         Write-Error "M10 local release validation failed: $($failure.Message)"
         exit 1
     }
-    Write-Host 'M10 local release validation passed: Go, M1–M6 integration, and M7–M9 offline package gates all passed.'
+    Write-Host 'Local release validation passed: Go, browser/monitoring integration, and offline package/install/update/rollback gates all passed.'
     if ($report.release_readiness -eq 'ready') {
         Write-Host 'Release readiness is READY: local gates and all required actual-host checks passed.'
     }

@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -16,12 +17,13 @@ import (
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/whitelist"
 	"github.com/Mytob/project_j/internal/wireguard"
 	"github.com/skip2/go-qrcode"
 )
 
-//go:embed templates/*.html
+//go:embed templates/*
 var templateFiles embed.FS
 
 type Server struct {
@@ -37,6 +39,7 @@ type Server struct {
 	authTransitionMu      sync.Mutex
 	version               string
 	buildNumber           string
+	statistics            *monitoring.Feed
 }
 
 const totpReauthenticationLifetime = 5 * time.Minute
@@ -55,6 +58,8 @@ func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /assets/admin.css", s.stylesheet)
+	mux.HandleFunc("GET /assets/statistics.js", s.statisticsScript)
 	mux.HandleFunc("GET /", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
@@ -63,10 +68,36 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /totp/enroll/cancel", s.cancelTOTPEnrollment)
 	mux.HandleFunc("POST /totp/disable", s.disableTOTP)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
+	mux.HandleFunc("GET /statistics", s.statisticsPage)
+	mux.HandleFunc("GET /statistics/events", s.statisticsEvents)
+	mux.HandleFunc("GET /statistics/history", s.statisticsHistory)
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
 	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
 	return s.securityHeaders(mux)
+}
+
+func (s *Server) stylesheet(w http.ResponseWriter, _ *http.Request) {
+	data, err := templateFiles.ReadFile("templates/admin.css")
+	if err != nil {
+		http.Error(w, "Stylesheet unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (s *Server) statisticsScript(w http.ResponseWriter, _ *http.Request) {
+	data, err := templateFiles.ReadFile("templates/statistics.js")
+	if err != nil {
+		http.Error(w, "Statistics script unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -107,6 +138,15 @@ func (s *Server) ConfigureBuildInfo(version, buildNumber string) {
 	if buildNumber != "" {
 		s.buildNumber = buildNumber
 	}
+}
+
+// ConfigureStatistics attaches the private metrics feed to authenticated admin pages.
+func (s *Server) ConfigureStatistics(feed *monitoring.Feed) error {
+	if feed == nil {
+		return errors.New("statistics feed is unavailable")
+	}
+	s.statistics = feed
+	return nil
 }
 
 func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
@@ -306,6 +346,139 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "dashboard.html", data)
+}
+
+func (s *Server) statisticsPage(w http.ResponseWriter, r *http.Request) {
+	_, authenticated := s.session(r)
+	if !authenticated {
+		if _, recovery := s.enrollmentOnlySession(r); recovery {
+			http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	status := "Waiting for live metrics"
+	if s.statistics != nil {
+		switch s.statistics.Current().Status {
+		case "live":
+			status = "Live"
+		case "partial":
+			status = "Partially available"
+		case "disconnected":
+			status = "Reconnecting"
+		}
+	}
+	data := map[string]any{
+		"Version": s.version, "BuildNumber": s.buildNumber,
+		"MonitoringStatus": status,
+		"WhitelistEnabled": s.whitelist != nil,
+		"WireGuardEnabled": s.wireguardClientConfig != "",
+		"TOTPConfigured":   s.totpStore != nil,
+	}
+	if s.totpStore != nil {
+		data["TOTPStatus"] = s.totpStore.Status()
+	}
+	s.render(w, "statistics.html", data)
+}
+
+func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return
+	}
+	if s.statistics == nil {
+		http.Error(w, "Statistics are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := w.(http.Flusher); !ok {
+		http.Error(w, "Live statistics are unavailable", http.StatusInternalServerError)
+		return
+	}
+	subscription, events, err := s.statistics.Subscribe()
+	if err != nil {
+		http.Error(w, "Live statistics are at capacity", http.StatusServiceUnavailable)
+		return
+	}
+	defer s.statistics.Unsubscribe(subscription)
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		s.logger.Debug("clear admin response deadline for statistics stream", "error", err)
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher := w.(http.Flusher)
+	_, _ = io.WriteString(w, "retry: 2000\n\n")
+	flusher.Flush()
+
+	write := func(current monitoring.LiveData) bool {
+		payload, err := json.Marshal(current)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: metrics\ndata: %s\n\n", payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	writeAuthenticationRequired := func() {
+		_, _ = io.WriteString(w, "event: auth-required\ndata: {}\n\n")
+		flusher.Flush()
+	}
+	if !write(s.statistics.Current()) {
+		return
+	}
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case current, ok := <-events:
+			_, stillAuthenticated, sessionValid := s.sessions.State(id)
+			if !sessionValid || !stillAuthenticated {
+				writeAuthenticationRequired()
+				return
+			}
+			if !ok || !write(current) {
+				return
+			}
+		case <-keepalive.C:
+			_, stillAuthenticated, sessionValid := s.sessions.State(id)
+			if !sessionValid || !stillAuthenticated {
+				writeAuthenticationRequired()
+				return
+			}
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) statisticsHistory(w http.ResponseWriter, r *http.Request) {
+	if _, authenticated := s.session(r); !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return
+	}
+	if s.statistics == nil {
+		http.Error(w, "Statistics are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	points, ok := s.statistics.HistoryRange(r.URL.Query().Get("range"), s.now().UTC())
+	if !ok {
+		http.Error(w, "Unsupported statistics range", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(points); err != nil {
+		s.logger.Error("encode statistics history response", "error", err)
+	}
 }
 
 func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) {

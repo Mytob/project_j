@@ -15,6 +15,7 @@ $subnetOctet = 1 + ($PID % 250)
 $subnetPrefix = "172.29.$subnetOctet"
 $trustedIP = "$subnetPrefix.10"
 $untrustedIP = "$subnetPrefix.20"
+$browserIP = "$subnetPrefix.30"
 
 function Invoke-Compose {
     & docker compose --project-name $projectName --file $composeFile @args
@@ -151,6 +152,7 @@ try {
     $env:TEST_SUBNET = "$subnetPrefix.0/24"
     $env:TRUSTED_CLIENT_IP = $trustedIP
     $env:UNTRUSTED_CLIENT_IP = $untrustedIP
+    $env:BROWSER_TEST_IP = $browserIP
     Set-WhitelistPolicy -Entries @()
     $script:adminTempDir = Join-Path $env:TEMP "jellyfin-proxy-admin-test-$PID"
     New-Item -ItemType Directory -Path $adminTempDir -Force | Out-Null
@@ -346,6 +348,9 @@ try {
     $removeIPv6 = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeIPv6Csrf -Entry '2001:db8::/64'
     Assert-Equal '303' ([string][int]$removeIPv6.StatusCode) 'Admin could not remove the IPv6 CIDR entry.'
 
+    Set-WhitelistPolicy -Entries @("$browserIP/32")
+    Invoke-Compose exec --no-TTY caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+
     $composeRows = Invoke-Compose ps --format json
     $mockRows = @($composeRows | ForEach-Object { $_ | ConvertFrom-Json })
     $mock = $mockRows | Where-Object { $_.Service -eq 'home-jellyfin' } | Select-Object -First 1
@@ -368,16 +373,29 @@ try {
     Assert-Equal '600 0:0' ([string]$serverConfigMode).Trim() 'WireGuard server private config is not root-only.'
     & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin sh -c 'test ! -e /opt/jellyfin-proxy/config/wireguard/server.conf && test ! -e /etc/wireguard/wg0.conf' 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Admin container unexpectedly has access to the WireGuard server private key file.' }
+    $hostMetricsContainer = $mockRows | Where-Object { $_.Service -eq 'hostmetrics' } | Select-Object -First 1
+    $hostMetricsInspection = (& docker inspect $hostMetricsContainer.ID | ConvertFrom-Json)[0]
+    if ($hostMetricsInspection.Config.User -ne '65532:65532') { throw 'Host metrics collector is not running as its unprivileged UID.' }
+    if (-not $hostMetricsInspection.HostConfig.ReadonlyRootfs) { throw 'Host metrics collector root filesystem is writable.' }
+    if ($hostMetricsInspection.HostConfig.CapDrop -notcontains 'ALL') { throw 'Host metrics collector retains Linux capabilities.' }
+    if ($hostMetricsInspection.HostConfig.PidMode -or $hostMetricsInspection.HostConfig.NetworkMode -eq 'host') { throw 'Host metrics collector shares a host namespace.' }
+    if ($hostMetricsInspection.NetworkSettings.Ports.'8181/tcp') { throw 'Host metrics endpoint unexpectedly has a published port.' }
+    foreach ($target in @('/host/proc', '/host/sys', '/host/root')) {
+        $mount = $hostMetricsInspection.Mounts | Where-Object { $_.Destination -eq $target } | Select-Object -First 1
+        if (-not $mount -or $mount.RW) { throw "Host metrics mount $target is missing or writable." }
+    }
     $caddyContainer = $mockRows | Where-Object { $_.Service -eq 'caddy' } | Select-Object -First 1
     $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
+    Invoke-Compose restart hostmetrics
+    Start-Sleep -Seconds 2
     Invoke-Compose --profile browser-tests run --rm browser-tests
     Invoke-Compose restart admin
     $postEnrollmentAdmin = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'admin.domain.test'
     Assert-Equal '200' ([string][int]$postEnrollmentAdmin.StatusCode) 'Admin service did not recover with active TOTP after restart.'
 
-    Write-Host 'M6 and TOTP admin browser integration checks passed: real Chromium navigation, dashboard build information, password reauthentication, QR setup, rejected and accepted codes, cancellation, authenticator disable with password and TOTP, session revocation, password-only login, retained WireGuard config, encrypted tunnel reachability, outage and recovery, and isolated test resources.'
+    Write-Host 'M6 and v1.1/v1.2 browser integration checks passed: Chromium auth workflows, responsive statistics UI, authenticated live/history metrics, host collector, Caddy range/stream/WebSocket instrumentation, retained WireGuard config, encrypted tunnel reachability, outage and recovery, and isolated test resources.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1
@@ -400,6 +418,7 @@ finally {
         Remove-Item Env:TEST_SUBNET -ErrorAction SilentlyContinue
         Remove-Item Env:TRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
         Remove-Item Env:UNTRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:BROWSER_TEST_IP -ErrorAction SilentlyContinue
         Pop-Location
     }
 }

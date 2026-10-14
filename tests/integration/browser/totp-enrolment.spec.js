@@ -39,6 +39,10 @@ async function waitForStep(page, step) {
 
 test('administrator can reauthenticate, cancel and complete rendered TOTP enrollment', async ({ page }) => {
   test.setTimeout(90000);
+  const anonymousHistory = await page.request.get('/statistics/history?range=24h');
+  expect(anonymousHistory.status()).toBe(401);
+  const anonymousEvents = await page.request.get('/statistics/events');
+  expect(anonymousEvents.status()).toBe(401);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Jellyfin Proxy' })).toBeVisible();
   await page.getByLabel('Password').fill('integration-test-admin-password');
@@ -136,4 +140,78 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await expect(page).toHaveURL(/\?totp=disabled$/);
   await expect(page.getByText('Authenticator disabled. Sign in with your administrator password.')).toBeVisible();
   await expect(page.getByLabel('Authenticator code')).toHaveCount(0);
+
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('link', { name: 'Statistics' }).click();
+  await expect(page).toHaveURL(/\/statistics$/);
+  await expect(page.getByRole('heading', { name: 'VPS statistics' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Proxy statistics' })).toBeVisible();
+  await expect(page.getByText('Blocked requests', { exact: true })).toBeVisible();
+  await expect(page.getByText('HTTP allowlist denials')).toBeVisible();
+  await expect(page.getByText('Active requests are not playback sessions.')).toBeVisible();
+  await expect(page.locator('#host-memory')).not.toHaveText('—', { timeout: 15000 });
+  await expect(page.locator('#proxy-active')).not.toHaveText('—', { timeout: 15000 });
+  await expect(page.locator('#proxy-allowed')).not.toHaveText('0');
+  await expect(page.locator('#proxy-blocked')).not.toHaveText('0');
+
+  for (const range of ['24h', '7d', '30d', '90d']) {
+    const response = await page.request.get(`/statistics/history?range=${range}`);
+    expect(response.status()).toBe(200);
+    expect(Array.isArray(await response.json())).toBeTruthy();
+    await page.getByLabel('VPS statistics time range').selectOption(range);
+    await page.getByLabel('Proxy statistics time range').selectOption(range);
+  }
+  await expect(page.locator('.history-chart').first()).toBeVisible();
+
+  const accessOrigin = 'https://access.domain.test';
+  const ranged = await page.request.get(`${accessOrigin}/__stream?bytes=128`, { headers: { Range: 'bytes=2-5' } });
+  expect(ranged.status()).toBe(206);
+  expect(ranged.headers()['content-range']).toBe('bytes 2-5/128');
+  expect(Array.from(await ranged.body())).toEqual([2, 3, 4, 5]);
+
+  const concurrent = [0, 1].map(() => page.request.get(`${accessOrigin}/__stream?bytes=1048576&slow=1`));
+  await expect.poll(async () => Number((await page.locator('#proxy-active').textContent()).replaceAll(',', '')), { timeout: 10000 }).toBeGreaterThan(0);
+  const streamed = await Promise.all(concurrent);
+  for (const response of streamed) {
+    expect(response.status()).toBe(200);
+    expect((await response.body()).length).toBe(1048576);
+  }
+  await expect.poll(async () => Number((await page.locator('#proxy-active').textContent()).replaceAll(',', '')), { timeout: 10000 }).toBe(0);
+
+  const websocketEcho = await page.evaluate((url) => new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const timeout = setTimeout(() => { socket.close(); reject(new Error('WebSocket echo timed out')); }, 10000);
+    socket.onopen = () => socket.send('streaming-proxy-check');
+    socket.onmessage = (event) => { clearTimeout(timeout); socket.close(); resolve(event.data); };
+    socket.onerror = () => { clearTimeout(timeout); reject(new Error('WebSocket proxy connection failed')); };
+  }), 'wss://access.domain.test/__ws');
+  expect(websocketEcho).toBe('streaming-proxy-check');
+
+  await page.evaluate((url) => new Promise((resolve) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 300);
+    fetch(url, { mode: 'no-cors', signal: controller.signal }).catch(() => {}).finally(() => { clearTimeout(timer); resolve(); });
+  }), `${accessOrigin}/__stream?bytes=1048576&slow=1`);
+  await expect.poll(async () => Number((await page.locator('#proxy-active').textContent()).replaceAll(',', '')), { timeout: 10000 }).toBe(0);
+
+  let abortedConnections = 0;
+  await page.route('**/statistics/events', (route) => {
+    if (abortedConnections++ === 0) return route.abort();
+    return route.continue();
+  });
+  await page.reload();
+  await expect(page.locator('#connection-label')).toHaveText('Reconnecting');
+  await expect(page.locator('#connection-label')).toHaveText('Live', { timeout: 15000 });
+  await page.unroute('**/statistics/events');
+
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused();
+
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    expect(pageWidth, `page must not overflow at ${width}px`).toBeLessThanOrEqual(width);
+  }
 });

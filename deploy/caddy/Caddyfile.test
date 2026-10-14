@@ -15,5 +15,8 @@ admin.domain.test {
 
 access.domain.test {
 	tls internal
-	import /etc/caddy/whitelist.caddy
+	route {
+		jp_proxy_metrics
+		import /etc/caddy/whitelist.caddy
+	}
 }

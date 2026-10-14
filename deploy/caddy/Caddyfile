@@ -12,5 +12,8 @@ admin.{$BASE_DOMAIN} {
 }
 
 access.{$BASE_DOMAIN} {
-	import /etc/caddy/whitelist.caddy
+	route {
+		jp_proxy_metrics
+		import /etc/caddy/whitelist.caddy
+	}
 }

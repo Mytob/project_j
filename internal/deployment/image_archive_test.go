@@ -13,7 +13,7 @@ import (
 )
 
 func fakeReleaseImages(version string) ([]release.Image, map[string][]byte) {
-	refs := []string{"jellyfin-proxy/admin:" + version, "jellyfin-proxy/wireguard:" + version, "caddy:2.10.2-alpine", "alpine:3.22"}
+	refs := []string{"jellyfin-proxy/admin:" + version, "jellyfin-proxy/hostmetrics:" + version, "jellyfin-proxy/wireguard:" + version, "jellyfin-proxy/caddy:" + version, "alpine:3.22"}
 	images := make([]release.Image, 0, len(refs))
 	configs := make(map[string][]byte, len(refs))
 	for _, reference := range refs {

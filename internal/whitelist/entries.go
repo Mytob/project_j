@@ -87,19 +87,19 @@ func Contains(entries []netip.Prefix, addr netip.Addr) bool {
 // only a 403 handler, preserving default-deny behaviour.
 func RenderCaddyPolicy(entries []netip.Prefix) string {
 	if len(entries) == 0 {
-		return "handle {\n\trespond \"Forbidden\" 403\n}\n"
+		return "handle {\n\tjp_metrics_deny\n}\n"
 	}
 
 	values := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsValid() || entry != entry.Masked() {
-			return "handle {\n\trespond \"Forbidden\" 403\n}\n"
+			return "handle {\n\tjp_metrics_deny\n}\n"
 		}
 		values = append(values, entry.String())
 	}
 	return "@whitelisted remote_ip " + strings.Join(values, " ") + "\n" +
 		"handle @whitelisted {\n\treverse_proxy 10.66.66.2:8096\n}\n" +
-		"handle {\n\trespond \"Forbidden\" 403\n}\n"
+		"handle {\n\tjp_metrics_deny\n}\n"
 }
 
 // Strings converts a validated prefix list into its canonical text format.

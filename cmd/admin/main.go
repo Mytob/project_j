@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Mytob/project_j/internal/admin"
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/whitelist"
 )
 
@@ -24,6 +26,9 @@ func main() {
 	caddySocket := flag.String("caddy-socket", "/run/caddy-admin/admin.sock", "private Caddy admin Unix socket")
 	caddyfile := flag.String("caddyfile", "/etc/caddy/Caddyfile", "Caddyfile template containing the whitelist import")
 	wireguardConfig := flag.String("wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf", "retained Windows WireGuard peer configuration")
+	hostMetricsURL := flag.String("host-metrics-url", "http://hostmetrics:8181", "private host metrics collector origin")
+	proxyMetricsPath := flag.String("proxy-metrics", "/run/proxy-metrics/current.json", "read-only current Caddy metrics snapshot")
+	statisticsPath := flag.String("statistics-history", "/opt/jellyfin-proxy/data/statistics", "persistent 90-day statistics directory")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -70,6 +75,18 @@ func main() {
 	if err := application.ConfigureWireGuardConfig(*wireguardConfig); err != nil {
 		logger.Error("configure Windows WireGuard download", "error", err)
 		os.Exit(1)
+	}
+	history, historyErr := monitoring.OpenHistory(*statisticsPath)
+	if historyErr != nil {
+		logger.Warn("statistics history is unavailable", "error", historyErr)
+	} else if feed, feedErr := monitoring.NewFeed(*hostMetricsURL, *proxyMetricsPath, history, logger); feedErr != nil {
+		logger.Warn("live statistics are unavailable", "error", feedErr)
+	} else {
+		if err := application.ConfigureStatistics(feed); err != nil {
+			logger.Warn("statistics page is unavailable", "error", err)
+		} else {
+			go feed.Start(context.Background())
+		}
 	}
 	server := &http.Server{Addr: *listen, Handler: application.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	logger.Info("admin server listening", "address", *listen)
