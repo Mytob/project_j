@@ -20,12 +20,31 @@ before promoting a stable release.
 | Stage | Status | Evidence / blocker |
 | --- | --- | --- |
 | 1 — Requirements and architecture record | **Complete** | `docs/V1.2.md`, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` record scope and boundaries. |
-| 2 — Shared responsive admin shell | **Complete (local gate)** | Chromium exercised the existing admin journeys, Statistics navigation, keyboard access, and 1440/768/390px layouts. |
+| 2 — Shared responsive admin shell | **Complete (local gate)** | Chromium exercised existing journeys, separate Overview/Access control/Security/WireGuard/Statistics pages, keyboard access, and responsive layouts. Overview reports live status for each service and metrics component. |
 | 3 — Host metrics collector | **Complete (local and VPS checks)** | Local integration verified isolation/recovery; the VPS collector returned live host memory, disk, network, load, and uptime values from read-only mounts. |
 | 4 — Caddy in-flight proxy instrumentation | **Complete (local gate)** | Integration covered concurrent and interrupted transfers, ranges, WebSockets, allowed/blocked requests, and byte accounting against the local Caddy module. |
 | 5 — Historical storage and authenticated SSE | **Complete (local and VPS checks)** | Local checks covered authentication, reconnect/expiry, aggregation, retention, update, rollback, and corrupt recovery; populated history remained present after a VPS admin restart. |
 | 6 — Statistics UI and browser checks | **Complete (local gate)** | Chromium exercised live/history views and all four ranges, chart bounds, disconnect/reconnect, and responsive/keyboard behavior. |
-| 7 — Installer/package integration and release gate | **Local gate and VPS deployment passed; Windows confirmation pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev` passed and the package updated the VPS. See [TESTING.md](TESTING.md); do not promote a dirty build to stable. |
+| 7 — Installer/package integration and release gate | **Local gate passed; host checks pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed Go, browser/monitoring, package install/update/rollback checks. This follow-up has not yet been deployed to the VPS. See [TESTING.md](TESTING.md). |
+
+### Authorized administrator UI follow-up — 2026-10-14
+
+- **Status:** Implemented and local gates passed; PR pending.
+- **Changes:** Removed the signed-in pill, administrator-session footer,
+  duplicate version/build footer, redundant login caption, Statistics privacy
+  note, and bottom return/sign-out link. Version and build remain in Overview's
+  Software panel. Access control, Security, and WireGuard now have distinct
+  authenticated pages. Overview reports checks for admin, access control,
+  Caddy, the WireGuard interface, host metrics, and proxy metrics.
+- **Health signals:** Caddy uses its private Unix-socket API; WireGuard writes a
+  short-lived interface heartbeat to a named volume mounted read-only by admin;
+  collector and proxy status use fresh metrics samples. No Docker socket or
+  published health endpoint was added.
+- **Validation:** `pwsh -NoProfile -File .\build.ps1 test` and
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed; the
+  release report is `dist/release-validation-1.2.1-dev.json`. Host-specific
+  checks remain blocked because this local gate does not simulate VPS and
+  native Windows operation. Full command evidence is in [TESTING.md](TESTING.md).
 
 ### v1.2 local gate evidence — 2026-10-14
 

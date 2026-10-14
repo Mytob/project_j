@@ -12,7 +12,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +42,8 @@ type Server struct {
 	version               string
 	buildNumber           string
 	statistics            *monitoring.Feed
+	caddyHealth           interface{ CheckHealth() error }
+	wireguardHealthPath   string
 }
 
 const totpReauthenticationLifetime = 5 * time.Minute
@@ -68,6 +72,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /totp/enroll/cancel", s.cancelTOTPEnrollment)
 	mux.HandleFunc("POST /totp/disable", s.disableTOTP)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
+	mux.HandleFunc("GET /access-control", s.accessControlPage)
+	mux.HandleFunc("GET /security", s.securityPage)
+	mux.HandleFunc("GET /wireguard", s.wireGuardPage)
 	mux.HandleFunc("GET /statistics", s.statisticsPage)
 	mux.HandleFunc("GET /statistics/events", s.statisticsEvents)
 	mux.HandleFunc("GET /statistics/history", s.statisticsHistory)
@@ -147,6 +154,14 @@ func (s *Server) ConfigureStatistics(feed *monitoring.Feed) error {
 	}
 	s.statistics = feed
 	return nil
+}
+
+// ConfigureComponentHealth connects private service checks to the Overview.
+// The WireGuard heartbeat is written by its existing container entrypoint and
+// mounted read-only into admin; no Docker socket or public health endpoint is used.
+func (s *Server) ConfigureComponentHealth(caddy interface{ CheckHealth() error }, wireguardHeartbeatPath string) {
+	s.caddyHealth = caddy
+	s.wireguardHealthPath = wireguardHeartbeatPath
 }
 
 func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
@@ -301,10 +316,30 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	s.adminPage(w, r, "overview")
+}
+
+func (s *Server) accessControlPage(w http.ResponseWriter, r *http.Request) {
+	s.adminPage(w, r, "access-control")
+}
+
+func (s *Server) securityPage(w http.ResponseWriter, r *http.Request) {
+	s.adminPage(w, r, "security")
+}
+
+func (s *Server) wireGuardPage(w http.ResponseWriter, r *http.Request) {
+	s.adminPage(w, r, "wireguard")
+}
+
+func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) {
 	id, authenticated := s.session(r)
 	if !authenticated {
 		if enrollmentID, ok := s.enrollmentOnlySession(r); ok {
-			s.recoveryEnrollmentPage(w, enrollmentID)
+			if page == "overview" {
+				s.recoveryEnrollmentPage(w, enrollmentID)
+			} else {
+				http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+			}
 			return
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -320,7 +355,19 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data := map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil, "WireGuardEnabled": s.wireguardClientConfig != "", "Version": s.version, "BuildNumber": s.buildNumber}
+	titles := map[string][3]string{
+		"overview":       {"Overview", "JELLYFIN PROXY", "Component health and deployment information."},
+		"access-control": {"Access control", "ACCESS", "Manage the addresses allowed to reach Jellyfin."},
+		"security":       {"Security", "ACCOUNT SECURITY", "Manage administrator two-factor authentication."},
+		"wireguard":      {"WireGuard", "TUNNEL", "Download the retained peer configuration for the official WireGuard client."},
+	}
+	pageDetails := titles[page]
+	data := map[string]any{
+		"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil,
+		"WireGuardEnabled": s.wireguardClientConfig != "", "TOTPConfigured": s.totpStore != nil,
+		"Version": s.version, "BuildNumber": s.buildNumber, "Page": page,
+		"Title": pageDetails[0], "Eyebrow": pageDetails[1], "Description": pageDetails[2],
+	}
 	if s.totpStore != nil {
 		status := s.totpStore.Status()
 		data["TOTPStatus"] = status
@@ -345,11 +392,71 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			data["TOTPSetupVisible"] = true
 		}
 	}
-	s.render(w, "dashboard.html", data)
+	if page == "overview" {
+		data["Components"] = s.componentHealth(entries)
+	}
+	templates := map[string]string{
+		"overview": "dashboard.html", "access-control": "access_control.html",
+		"security": "security.html", "wireguard": "wireguard.html",
+	}
+	s.render(w, templates[page], data)
+}
+
+type componentStatus struct {
+	Name   string
+	State  string
+	Class  string
+	Detail string
+}
+
+func (s *Server) componentHealth(entries []string) []componentStatus {
+	result := []componentStatus{{Name: "Administrator", State: "Healthy", Class: "healthy", Detail: "The authenticated admin page is responding."}}
+	if s.whitelist == nil {
+		result = append(result, componentStatus{Name: "Access control", State: "Unavailable", Class: "unavailable", Detail: "Whitelist management is not configured."})
+	} else {
+		result = append(result, componentStatus{Name: "Access control", State: "Healthy", Class: "healthy", Detail: fmt.Sprintf("The active allowlist is available (%d entries).", len(entries))})
+	}
+	if s.caddyHealth == nil || s.caddyHealth.CheckHealth() != nil {
+		result = append(result, componentStatus{Name: "Jellyfin proxy", State: "Unavailable", Class: "unavailable", Detail: "Caddy did not respond through its private admin socket."})
+	} else {
+		result = append(result, componentStatus{Name: "Jellyfin proxy", State: "Healthy", Class: "healthy", Detail: "Caddy responded through its private admin socket."})
+	}
+	if s.wireguardHeartbeatHealthy() {
+		result = append(result, componentStatus{Name: "WireGuard", State: "Healthy", Class: "healthy", Detail: "The WireGuard interface check reported healthy recently."})
+	} else {
+		result = append(result, componentStatus{Name: "WireGuard", State: "Unavailable", Class: "unavailable", Detail: "No recent healthy WireGuard interface check is available."})
+	}
+	if s.statistics == nil || s.statistics.Current().Host == nil {
+		result = append(result, componentStatus{Name: "Host metrics", State: "Unavailable", Class: "unavailable", Detail: "The host collector has not supplied a fresh sample."})
+	} else {
+		result = append(result, componentStatus{Name: "Host metrics", State: "Healthy", Class: "healthy", Detail: "A fresh host collector sample is available."})
+	}
+	if s.statistics == nil || s.statistics.Current().Proxy == nil {
+		result = append(result, componentStatus{Name: "Proxy metrics", State: "Unavailable", Class: "unavailable", Detail: "A fresh Caddy traffic metrics sample is not available."})
+	} else {
+		result = append(result, componentStatus{Name: "Proxy metrics", State: "Healthy", Class: "healthy", Detail: "A fresh Caddy traffic metrics sample is available."})
+	}
+	return result
+}
+
+func (s *Server) wireguardHeartbeatHealthy() bool {
+	if s.wireguardHealthPath == "" {
+		return false
+	}
+	data, err := os.ReadFile(s.wireguardHealthPath)
+	if err != nil {
+		return false
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return false
+	}
+	age := s.now().Sub(time.Unix(seconds, 0))
+	return age >= -5*time.Second && age <= 15*time.Second
 }
 
 func (s *Server) statisticsPage(w http.ResponseWriter, r *http.Request) {
-	_, authenticated := s.session(r)
+	id, authenticated := s.session(r)
 	if !authenticated {
 		if _, recovery := s.enrollmentOnlySession(r); recovery {
 			http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
@@ -359,6 +466,7 @@ func (s *Server) statisticsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := "Waiting for live metrics"
+	csrf, _, _ := s.sessions.State(id)
 	if s.statistics != nil {
 		switch s.statistics.Current().Status {
 		case "live":
@@ -370,7 +478,8 @@ func (s *Server) statisticsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := map[string]any{
-		"Version": s.version, "BuildNumber": s.buildNumber,
+		"CSRF": csrf,
+		"Page": "statistics", "Title": "Statistics", "Eyebrow": "MONITORING", "Description": "Live VPS and Jellyfin proxy measurements.",
 		"MonitoringStatus": status,
 		"WhitelistEnabled": s.whitelist != nil,
 		"WireGuardEnabled": s.wireguardClientConfig != "",
@@ -616,7 +725,7 @@ func (s *Server) startTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Session expired; sign in again", http.StatusUnauthorized)
 		return
 	}
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	http.Redirect(w, r, "/security", http.StatusSeeOther)
 }
 
 func (s *Server) confirmTOTPEnrollmentHandler(w http.ResponseWriter, r *http.Request) {
@@ -770,7 +879,7 @@ func (s *Server) changeWhitelist(w http.ResponseWriter, r *http.Request, add boo
 		http.Error(w, err.Error(), status)
 		return
 	}
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	http.Redirect(w, r, "/access-control", http.StatusSeeOther)
 }
 
 func (s *Server) session(r *http.Request) (string, bool) {

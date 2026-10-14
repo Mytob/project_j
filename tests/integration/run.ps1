@@ -246,7 +246,12 @@ try {
     Assert-Equal '303' ([string][int]$login.StatusCode) 'Valid administrator password did not sign in.'
     $dashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$dashboard.StatusCode) 'Authenticated administrator could not open dashboard.'
-    if ($dashboard.Body -notmatch '/wireguard/config') { throw 'Dashboard did not provide the Windows WireGuard download.' }
+    foreach ($component in @('Component health', 'Administrator', 'Jellyfin proxy', 'WireGuard', 'Host metrics', 'Proxy metrics')) {
+        if ($dashboard.Body -notmatch [regex]::Escape($component)) { throw "Overview did not report component '$component'." }
+    }
+    $wireguardPage = Invoke-AdminRequest -Path '/wireguard' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$wireguardPage.StatusCode) 'Authenticated administrator could not open the WireGuard page.'
+    if ($wireguardPage.Body -notmatch '/wireguard/config') { throw 'WireGuard page did not provide the Windows configuration download.' }
     $wireguardDownload = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$wireguardDownload.StatusCode) 'Authenticated administrator could not download the Windows WireGuard config.'
     if ($wireguardDownload.Headers -notmatch '(?i)Content-Disposition: attachment; filename="jellyfin-proxy.conf"') { throw 'WireGuard config response lacks an attachment filename.' }
@@ -306,18 +311,18 @@ try {
     $wireguardAfterRestart = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$wireguardAfterRestart.StatusCode) 'Windows WireGuard config was unavailable after admin restart.'
     Assert-Equal $wireguardDownload.Body $wireguardAfterRestart.Body 'Admin restart changed the retained Windows WireGuard config.'
-    $emptyDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    Assert-Equal '200' ([string][int]$emptyDashboard.StatusCode) 'Whitelist dashboard was unavailable.'
-    if ($emptyDashboard.Body -notmatch 'No allowed addresses') { throw 'Persistent whitelist unexpectedly contained entries before management tests.' }
-    $managementCsrf = [regex]::Match($emptyDashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $emptyAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$emptyAccessPage.StatusCode) 'Whitelist management page was unavailable.'
+    if ($emptyAccessPage.Body -notmatch 'No allowed addresses') { throw 'Persistent whitelist unexpectedly contained entries before management tests.' }
+    $managementCsrf = [regex]::Match($emptyAccessPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $invalidAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry 'bad.example'
     Assert-Equal '400' ([string][int]$invalidAdd.StatusCode) 'Admin accepted an invalid whitelist entry.'
     $addNetwork = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
     Assert-Equal '303' ([string][int]$addNetwork.StatusCode) 'Admin could not add a valid IPv4 CIDR entry.'
     $duplicateAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
     Assert-Equal '409' ([string][int]$duplicateAdd.StatusCode) 'Admin did not reject a duplicate entry.'
-    $managedDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($managedDashboard.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Added CIDR entry was not displayed canonically.' }
+    $managedAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    if ($managedAccessPage.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Added CIDR entry was not displayed canonically.' }
     $managedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '200' ([string][int]$managedAllowed.StatusCode) 'Caddy did not activate the admin-added CIDR entry.'
     Invoke-Compose restart admin
@@ -327,24 +332,24 @@ try {
     $reloginCsrf = [regex]::Match($reloginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $relogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $reloginCsrf -Password 'integration-test-admin-password'
     Assert-Equal '303' ([string][int]$relogin.StatusCode) 'Admin could not sign in after persistence restart check.'
-    $persistedDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($persistedDashboard.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Whitelist entry did not persist across admin restart.' }
+    $persistedAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    if ($persistedAccessPage.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Whitelist entry did not persist across admin restart.' }
     $persistedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '200' ([string][int]$persistedAllowed.StatusCode) 'Caddy did not restore the persisted whitelist after admin restart.'
-    $removeCsrf = [regex]::Match($persistedDashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $removeCsrf = [regex]::Match($persistedAccessPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $removeNetwork = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry $allowedNetwork
     Assert-Equal '303' ([string][int]$removeNetwork.StatusCode) 'Admin could not remove a whitelist entry.'
     $removedDenied = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '403' ([string][int]$removedDenied.StatusCode) 'Removing the whitelist entry did not immediately deny access.'
-    $emptyDashboardAgain = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($emptyDashboardAgain.Body -notmatch 'No allowed addresses') { throw 'Removed whitelist entry remains in the admin list.' }
+    $emptyAccessPageAgain = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    if ($emptyAccessPageAgain.Body -notmatch 'No allowed addresses') { throw 'Removed whitelist entry remains in the admin list.' }
     Assert-Equal '3' (Get-MockRequestCount) 'Denied post-removal request was unexpectedly forwarded to mock Jellyfin.'
 
     $addIPv6 = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry '2001:db8::/64'
     Assert-Equal '303' ([string][int]$addIPv6.StatusCode) 'Admin could not add an IPv6 CIDR entry.'
-    $ipv6Dashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($ipv6Dashboard.Body -notmatch '2001:db8::/64') { throw 'IPv6 entry was not displayed.' }
-    $removeIPv6Csrf = [regex]::Match($ipv6Dashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $ipv6AccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    if ($ipv6AccessPage.Body -notmatch '2001:db8::/64') { throw 'IPv6 entry was not displayed.' }
+    $removeIPv6Csrf = [regex]::Match($ipv6AccessPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $removeIPv6 = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeIPv6Csrf -Entry '2001:db8::/64'
     Assert-Equal '303' ([string][int]$removeIPv6.StatusCode) 'Admin could not remove the IPv6 CIDR entry.'
 

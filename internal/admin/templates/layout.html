@@ -1,0 +1,11 @@
+{{define "admin-head"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>{{.Title}} · Jellyfin Proxy</title><link rel="stylesheet" href="/assets/admin.css"></head>{{end}}
+
+{{define "admin-sidebar"}}<aside class="sidebar" aria-label="Main navigation"><a class="brand" href="/dashboard"><span class="brand-mark" aria-hidden="true">△</span><span><strong>Jellyfin Proxy</strong><small>Administration</small></span></a>
+<nav><a class="nav-link{{if eq .Page "overview"}} active{{end}}" href="/dashboard"{{if eq .Page "overview"}} aria-current="page"{{end}}><span aria-hidden="true">⌂</span>Overview</a>
+{{if .WhitelistEnabled}}<a class="nav-link{{if eq .Page "access-control"}} active{{end}}" href="/access-control"{{if eq .Page "access-control"}} aria-current="page"{{end}}><span aria-hidden="true">◉</span>Access control</a>{{end}}
+{{if .TOTPConfigured}}<a class="nav-link{{if eq .Page "security"}} active{{end}}" href="/security"{{if eq .Page "security"}} aria-current="page"{{end}}><span aria-hidden="true">◇</span>Security</a>{{end}}
+{{if .WireGuardEnabled}}<a class="nav-link{{if eq .Page "wireguard"}} active{{end}}" href="/wireguard"{{if eq .Page "wireguard"}} aria-current="page"{{end}}><span aria-hidden="true">⌁</span>WireGuard</a>{{end}}
+<a class="nav-link{{if eq .Page "statistics"}} active{{end}}" href="/statistics"{{if eq .Page "statistics"}} aria-current="page"{{end}}><span aria-hidden="true">▥</span>Statistics</a></nav></aside>{{end}}
+
+{{define "admin-header"}}<header class="page-header"><div><p class="eyebrow">{{.Eyebrow}}</p><h1>{{.Title}}</h1><p class="muted">{{.Description}}</p></div><div class="header-actions"><form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="button button-secondary" type="submit">Sign out</button></form></div></header>{{end}}

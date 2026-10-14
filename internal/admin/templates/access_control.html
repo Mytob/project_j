@@ -1,0 +1,7 @@
+{{template "admin-head" .}}
+<body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell">{{template "admin-sidebar" .}}
+<main id="main" class="main-content">{{template "admin-header" .}}
+{{if .WhitelistEnabled}}<section class="panel" aria-labelledby="access-heading"><div class="section-heading"><div><p class="eyebrow">ACCESS</p><h2 id="access-heading">Jellyfin access control</h2><p class="muted">Allow specific IPv4 or IPv6 addresses and CIDR networks. An empty list denies all access.</p></div><span class="section-icon" aria-hidden="true">◉</span></div>
+<form class="inline-form" method="post" action="/whitelist/add"><input type="hidden" name="csrf" value="{{.CSRF}}"><div class="form-field"><label for="entry">IP address or network</label><input id="entry" name="entry" required maxlength="64" placeholder="192.0.2.1 or 2001:db8::/32"></div><button class="button button-primary" type="submit">Add address</button></form>
+<ul class="entry-list" aria-label="Allowed addresses">{{range .Entries}}<li class="entry"><code>{{.}}</code><form method="post" action="/whitelist/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="entry" value="{{.}}"><button class="button button-danger" type="submit" aria-label="Remove {{.}}">Remove</button></form></li>{{else}}<li class="empty-state">No allowed addresses. All access is denied.</li>{{end}}</ul></section>{{else}}<section class="panel"><h2>Access control</h2><p class="muted">Whitelist management is unavailable.</p></section>{{end}}
+</main></div></body></html>

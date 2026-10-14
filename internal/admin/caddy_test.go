@@ -46,6 +46,32 @@ func TestCaddyAPIReplacesOnlyWhitelistImport(t *testing.T) {
 	}
 }
 
+func TestCaddyHealthCheckUsesPrivateConfigEndpoint(t *testing.T) {
+	called := false
+	api := &CaddyAPI{
+		client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			called = true
+			if request.Method != http.MethodGet || request.URL.Path != "/config/" {
+				t.Errorf("health request = %s %s", request.Method, request.URL.Path)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+		})},
+		healthURL: "http://caddy/config/",
+	}
+	if err := api.CheckHealth(); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("Caddy health endpoint was not called")
+	}
+	api.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable", Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})}
+	if err := api.CheckHealth(); err == nil {
+		t.Fatal("unhealthy Caddy response was accepted")
+	}
+}
+
 func TestCaddyAPIRejectsInvalidTemplateAndCaddyErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Caddyfile")
 	if err := os.WriteFile(path, []byte("no import here"), 0o600); err != nil {
