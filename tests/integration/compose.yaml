@@ -100,6 +100,9 @@ services:
     build:
       context: ../..
       dockerfile: tests/integration/Dockerfile.admin
+      args:
+        VERSION: integration-test
+        BUILD_NUMBER: browser-test
     command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro

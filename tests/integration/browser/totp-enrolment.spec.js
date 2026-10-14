@@ -33,13 +33,22 @@ function acceptedCodes(secret, step) {
   return new Set([step - 1, step, step + 1].filter((value) => value >= 0).map((value) => codeAt(secret, value)));
 }
 
+async function waitForStep(page, step) {
+  while (Math.floor(Date.now() / 1000 / 30) < step) await page.waitForTimeout(100);
+}
+
 test('administrator can reauthenticate, cancel and complete rendered TOTP enrollment', async ({ page }) => {
+  test.setTimeout(90000);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Jellyfin Proxy' })).toBeVisible();
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole('heading', { name: 'Administrator authenticator' })).toBeVisible();
+  const software = page.locator('section[aria-labelledby="software-heading"]');
+  await expect(software.getByRole('heading', { name: 'Software' })).toBeVisible();
+  await expect(software.getByText('Version: integration-test')).toBeVisible();
+  await expect(software.getByText('Build number: browser-test')).toBeVisible();
 
   await page.getByLabel('Administrator password').fill('incorrect-password');
   const badPassword = page.waitForResponse((response) => response.url().endsWith('/totp/enroll/start') && response.status() === 401);
@@ -110,4 +119,21 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByRole('button', { name: 'Sign in' }).click();
   await rejectedReplay;
   await expect(page.getByRole('alert')).toContainText('password or authenticator code was not accepted');
+
+  await waitForStep(page, loginStep + 2);
+  const disableLoginStep = Math.floor(Date.now() / 1000 / 30);
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  await page.getByLabel('Authenticator code').fill(codeAt(finalSecret, disableLoginStep));
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByText('Two-factor authentication is enabled for the administrator account.')).toBeVisible();
+  await page.getByText('Disable two-factor authentication').click();
+  await expect(page.getByLabel('Administrator password')).toBeVisible();
+  await page.getByLabel('Administrator password').fill('integration-test-admin-password');
+  const disableCodeStep = Math.max(Math.floor(Date.now() / 1000 / 30), disableLoginStep + 1);
+  await page.getByLabel('Current six-digit authenticator code').fill(codeAt(finalSecret, disableCodeStep));
+  await page.getByRole('button', { name: 'Disable authenticator' }).click();
+  await expect(page).toHaveURL(/\?totp=disabled$/);
+  await expect(page.getByText('Authenticator disabled. Sign in with your administrator password.')).toBeVisible();
+  await expect(page.getByLabel('Authenticator code')).toHaveCount(0);
 });

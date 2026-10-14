@@ -35,6 +35,8 @@ type Server struct {
 	logger                *slog.Logger
 	now                   func() time.Time
 	authTransitionMu      sync.Mutex
+	version               string
+	buildNumber           string
 }
 
 const totpReauthenticationLifetime = 5 * time.Minute
@@ -43,7 +45,7 @@ func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger, now: time.Now}
+	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger, now: time.Now, version: "development", buildNumber: "unknown"}
 	if len(whitelistManager) > 0 {
 		server.whitelist = whitelistManager[0]
 	}
@@ -59,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /totp/enroll/start", s.startTOTPEnrollment)
 	mux.HandleFunc("POST /totp/enroll/confirm", s.confirmTOTPEnrollmentHandler)
 	mux.HandleFunc("POST /totp/enroll/cancel", s.cancelTOTPEnrollment)
+	mux.HandleFunc("POST /totp/disable", s.disableTOTP)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
@@ -86,14 +89,24 @@ func (s *Server) ConfigureWireGuardConfig(path string) error {
 }
 
 // ConfigureTOTPStore connects validated persistent TOTP state to the admin
-// authentication boundary. The web configuration routes are added in the
-// following implementation stage.
+// authentication boundary.
 func (s *Server) ConfigureTOTPStore(store *auth.TOTPStore) error {
 	if store == nil {
 		return errors.New("TOTP state store is unavailable")
 	}
 	s.totpStore = store
 	return nil
+}
+
+// ConfigureBuildInfo sets the package version and source revision shown in the
+// authenticated administration dashboard.
+func (s *Server) ConfigureBuildInfo(version, buildNumber string) {
+	if version != "" {
+		s.version = version
+	}
+	if buildNumber != "" {
+		s.buildNumber = buildNumber
+	}
 }
 
 func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
@@ -140,6 +153,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setCookie(w, id, int(auth.DefaultSessionLifetime.Seconds()))
 	data := map[string]any{"CSRF": csrf}
+	data["TOTPDisabled"] = r.URL.Query().Get("totp") == "disabled" && s.totpStore != nil && s.totpStore.Status() == auth.TOTPUnconfigured
 	if s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled {
 		data["TOTPRequired"] = true
 	}
@@ -266,7 +280,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data := map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil, "WireGuardEnabled": s.wireguardClientConfig != ""}
+	data := map[string]any{"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil, "WireGuardEnabled": s.wireguardClientConfig != "", "Version": s.version, "BuildNumber": s.buildNumber}
 	if s.totpStore != nil {
 		status := s.totpStore.Status()
 		data["TOTPStatus"] = status
@@ -292,6 +306,66 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "dashboard.html", data)
+}
+
+func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.totpStore == nil {
+		http.Error(w, "Authenticator management is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if allowed, wait := s.limiter.Allow(); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds()+0.999)))
+		http.Error(w, "Too many verification attempts. Try again shortly.", http.StatusTooManyRequests)
+		return
+	}
+
+	s.authTransitionMu.Lock()
+	defer s.authTransitionMu.Unlock()
+	if _, stillAuthenticated := s.session(r); !stillAuthenticated || !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Session expired; sign in again", http.StatusForbidden)
+		return
+	}
+	if s.totpStore.Status() != auth.TOTPEnabled {
+		http.Error(w, "Authenticator is not enabled", http.StatusConflict)
+		return
+	}
+	if !s.credential.Verify(r.FormValue("password")) {
+		s.limiter.Failed()
+		http.Error(w, "The password or authenticator code was not accepted.", http.StatusUnauthorized)
+		return
+	}
+	accepted, err := s.totpStore.Verify(r.FormValue("code"), s.now())
+	if err != nil || !accepted {
+		s.limiter.Failed()
+		if err != nil {
+			s.logger.Error("verify administrator TOTP code before disabling", "error", err)
+		}
+		http.Error(w, "The password or authenticator code was not accepted.", http.StatusUnauthorized)
+		return
+	}
+	if err := s.totpStore.Disable(); err != nil {
+		s.limiter.Failed()
+		s.logger.Error("disable administrator TOTP", "error", err)
+		http.Error(w, "Authenticator could not be disabled", http.StatusServiceUnavailable)
+		return
+	}
+	s.limiter.Succeeded()
+	s.sessions.RevokeAll()
+	http.Redirect(w, r, "/?totp=disabled", http.StatusSeeOther)
 }
 
 func (s *Server) recoveryEnrollmentPage(w http.ResponseWriter, id string) {

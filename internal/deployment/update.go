@@ -26,12 +26,30 @@ type UpdateOptions struct {
 	WaitInterval time.Duration
 	WaitAttempts int
 	HTTPSCheck   func(context.Context, string) error
+	Progress     func(UpdateProgress)
+}
+
+// UpdateProgress reports completion of an updater milestone. Percentage is
+// derived from completed milestones; it is not a byte-level estimate for
+// Docker or network operations.
+type UpdateProgress struct {
+	Step    int
+	Total   int
+	Message string
+	Done    bool
 }
 
 // Update installs a verified release over an existing deployment while
 // preserving operator-owned data and restoring the previous release if the
 // new one fails its health or HTTPS checks.
 func Update(ctx context.Context, options UpdateOptions) (manifest release.Manifest, resultErr error) {
+	const updateSteps = 8
+	progress := func(step int, done bool, message string) {
+		if options.Progress != nil {
+			options.Progress(UpdateProgress{Step: step, Total: updateSteps, Message: message, Done: done})
+		}
+	}
+	progress(1, false, "Checking the current installation")
 	if err := ValidateHost(options.Host); err != nil {
 		return manifest, err
 	}
@@ -64,7 +82,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err != nil || !composeServicesHealthy(composeStatus) {
 		return manifest, errors.New("the existing Jellyfin Proxy deployment is not healthy; restore it before updating")
 	}
+	progress(1, true, "Current installation is healthy")
 
+	progress(2, false, "Verifying the release package and version")
 	stageRoot, err := os.MkdirTemp(filepath.Join(options.InstallRoot, "releases"), ".update-")
 	if err != nil {
 		return manifest, fmt.Errorf("create update staging directory: %w", err)
@@ -91,6 +111,8 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
 		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)
 	}
+	progress(2, true, "Release package and persistent TOTP storage verified")
+	progress(3, false, "Retaining the verified release files")
 	finalRelease := filepath.Join(options.InstallRoot, "releases", manifest.Version)
 	createdRelease := false
 	rollbackComplete := true
@@ -106,6 +128,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	} else {
 		createdRelease = true
 	}
+	progress(3, true, "Release files retained")
 	if createdRelease {
 		defer func() {
 			if resultErr != nil && rollbackComplete {
@@ -114,6 +137,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		}()
 	}
 
+	progress(4, false, "Loading the bundled Docker images; this can take a few minutes")
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "config", "--quiet")...); err != nil {
 		return manifest, fmt.Errorf("validate current Compose configuration: %w", err)
 	}
@@ -124,7 +148,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := verifyLoadedImages(ctx, options.Runner, manifest.Images); err != nil {
 		return manifest, fmt.Errorf("verify bundled update images (%s): %w", imageReferences(manifest.Images), err)
 	}
+	progress(4, true, "Bundled Docker images loaded")
 
+	progress(5, false, "Preparing configuration while preserving deployment data")
 	paths := []string{".env", "compose.yaml", filepath.Join("config", "Caddyfile")}
 	previous := make(map[string][]byte, len(paths))
 	for _, relative := range paths {
@@ -142,12 +168,15 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		return manifest, errors.New("active release metadata changed while update was being prepared")
 	}
 	newEnvironment := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\n", environment.Domain, manifest.Version, environment.WireGuardPort)
+	progress(5, true, "Existing configuration captured")
+	progress(6, false, "Activating the new release files")
 	changed := false
 	composeMayBeRunning := false
 	defer func() {
 		if resultErr == nil || !changed {
 			return
 		}
+		progress(7, false, "Restoring the previous release after update failure")
 		var restoreErrors []string
 		for _, relative := range paths {
 			mode := os.FileMode(0o644)
@@ -190,6 +219,8 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "config", "--quiet")...); err != nil {
 		return manifest, fmt.Errorf("validate updated Compose configuration: %w", err)
 	}
+	progress(6, true, "Updated configuration validated")
+	progress(7, false, "Restarting services and waiting for health checks")
 	composeMayBeRunning = true
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "up", "--detach", "--force-recreate", "--pull", "never")...); err != nil {
 		return manifest, fmt.Errorf("start updated Jellyfin Proxy services: %w", err)
@@ -197,6 +228,8 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := waitForReadiness(ctx, InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
 		return manifest, fmt.Errorf("updated services did not become healthy; the previous release was restored: %w", err)
 	}
+	progress(7, true, "Updated services are healthy")
+	progress(8, false, "Checking public HTTPS and retaining the active release")
 	if options.HTTPSCheck == nil {
 		options.HTTPSCheck = checkPublicHTTPS
 	}
@@ -207,6 +240,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		return manifest, fmt.Errorf("update succeeded, but release retention cleanup failed: %w", err)
 	}
 	changed = false
+	progress(8, true, "Update completed successfully")
 	return manifest, nil
 }
 

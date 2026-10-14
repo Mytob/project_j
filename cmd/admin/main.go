@@ -12,6 +12,9 @@ import (
 	"github.com/Mytob/project_j/internal/whitelist"
 )
 
+var version = "development"
+var buildNumber = "unknown"
+
 func main() {
 	listen := flag.String("listen", ":8080", "HTTP listen address")
 	config := flag.String("config", "/opt/jellyfin-proxy/config/admin.json", "administrator credential file")
@@ -59,6 +62,7 @@ func main() {
 		os.Exit(1)
 	}
 	application := admin.New(credential, logger, manager)
+	application.ConfigureBuildInfo(version, buildNumber)
 	if err := application.ConfigureTOTPStore(totpStore); err != nil {
 		logger.Error("configure administrator TOTP", "error", err)
 		os.Exit(1)

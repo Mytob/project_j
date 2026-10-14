@@ -144,6 +144,26 @@ archive was created on Windows.
   preserve the executable bit for `proxyctl`; the deterministic extractor fix
   and regression test passed in both the package and full release reruns.
 
+### Authorized operator follow-up — admin controls and update progress
+
+The follow-up adds a password-and-current-TOTP guarded web disable action,
+version/build information in the admin dashboard, and milestone progress in
+`proxyctl update`. The percentage represents completed milestones, while a
+spinner/elapsed indicator (or periodic log messages) keeps long Docker and
+readiness waits visibly active.
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.1-dev` — PASS on
+  2026-10-14, exit 0. Go tests, M1–M6 integration/browser, and the M7–M9
+  offline package checks passed. The package gate verified version and source
+  revision metadata on the admin image and loaded all bundled images into an
+  isolated daemon. `dist/release-validation-1.1.1-dev.json` records the local
+  gate as passed and actual-host checks as blocked.
+- Chromium verified dashboard version/build rendering, authenticator disable
+  with password and current code, global session revocation, and password-only
+  login. Unit tests also reject bad credentials/codes and missing CSRF.
+- The new v1.1.1-dev package has not been deployed to the VPS. Actual-host
+  checks for this build remain unverified.
+
 ## Local environment
 
 M1–M6 Windows checks use PowerShell 7, Go 1.24+, Docker Desktop's Linux engine,

@@ -63,6 +63,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 
 	runner := deployment.ExecRunner{}
+	if args[0] == "update" {
+		fmt.Fprintln(stdout, "Preparing update: checking the Ubuntu host and Docker installation...")
+	}
 	facts, err := deployment.DetectHostFacts(ctx, runner)
 	if err != nil {
 		return err
@@ -100,7 +103,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return errors.New("release package is not a readable regular file")
 	}
 	if args[0] == "update" {
-		manifest, err := deployment.Update(ctx, deployment.UpdateOptions{PackagePath: packagePath, InstallRoot: deployment.DefaultInstallRoot, Host: facts, Runner: runner})
+		progress, finishProgress := newUpdateProgressReporter(stdout)
+		manifest, err := deployment.Update(ctx, deployment.UpdateOptions{PackagePath: packagePath, InstallRoot: deployment.DefaultInstallRoot, Host: facts, Runner: runner, Progress: progress})
+		finishProgress(err == nil)
 		if err != nil {
 			return err
 		}
