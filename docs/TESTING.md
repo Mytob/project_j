@@ -595,3 +595,28 @@ these limits explicitly and use VPS preflight checks.
   update. The operator had previously confirmed the scoped TCP 8096 firewall
   rule and streaming on 1.1.2-dev; the post-update WireGuard handshake was
   observed, but the Windows client still needs a playback confirmation.
+
+### Administrator navigation and component health follow-up — 2026-10-14
+
+- **Focused command:** `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./cmd/admin` — PASS. Tests
+  cover authenticated separate page routes, removed UI fragments, Caddy's
+  private health request, and stale/future WireGuard heartbeat rejection.
+- **Full integration command:** `pwsh -NoProfile -File .\build.ps1 test` —
+  PASS, exit 0. Chromium verified each sidebar link opens a distinct page,
+  confirms all six health cards show Healthy in the functioning test stack,
+  and runs the existing password/TOTP, statistics, responsive UI, streaming,
+  collector and Caddy journeys. Integration also verified the WireGuard
+  health heartbeat is readable by the unprivileged admin container.
+- **Release command:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.2.1-dev` — PASS, exit 0. Go tests, M1–M6 plus v1.1/v1.2 browser and
+  container integration, and the offline package install/update/rollback,
+  retention, and reset checks passed. The report at
+  `dist/release-validation-1.2.1-dev.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- **Host limits:** This follow-up has not been deployed to the VPS. The release
+  report correctly leaves Ubuntu/provider-firewall and native Windows checks
+  blocked; no test result from the earlier 1.2.0-dev deployment is carried
+  forward to this package.
+- **Artifact:** `dist/jellyfin-proxy-1.2.1-dev-linux-amd64.tar.gz` was built
+  and validated locally; it is generated output and is not committed.

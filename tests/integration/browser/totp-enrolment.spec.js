@@ -48,11 +48,27 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Administrator authenticator' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Component health' })).toBeVisible();
+  for (const component of ['Administrator', 'Access control', 'Jellyfin proxy', 'WireGuard', 'Host metrics', 'Proxy metrics']) {
+    await expect(page.getByRole('heading', { name: component, exact: true })).toBeVisible();
+    const card = page.locator('.health-card').filter({ has: page.getByRole('heading', { name: component, exact: true }) });
+    await expect(card.locator('.health-state')).toHaveText('Healthy');
+  }
   const software = page.locator('section[aria-labelledby="software-heading"]');
   await expect(software.getByRole('heading', { name: 'Software' })).toBeVisible();
   await expect(software.getByText('Version: integration-test')).toBeVisible();
   await expect(software.getByText('Build number: browser-test')).toBeVisible();
+  await expect(page.getByText('Signed in', { exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Access control' }).click();
+  await expect(page).toHaveURL(/\/access-control$/);
+  await expect(page.getByRole('heading', { name: 'Jellyfin access control' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Component health' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'WireGuard' }).click();
+  await expect(page).toHaveURL(/\/wireguard$/);
+  await expect(page.getByRole('link', { name: 'Download WireGuard configuration' })).toBeVisible();
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page).toHaveURL(/\/security$/);
+  await expect(page.getByRole('heading', { name: 'Administrator authenticator' })).toBeVisible();
 
   await page.getByLabel('Administrator password').fill('incorrect-password');
   const badPassword = page.waitForResponse((response) => response.url().endsWith('/totp/enroll/start') && response.status() === 401);
@@ -60,10 +76,10 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await badPassword;
   await expect(page.getByText('The password was not accepted.')).toBeVisible();
 
-  await page.goto('/dashboard');
+  await page.goto('/security');
   await page.getByLabel('Administrator password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/security$/);
   const qr = page.getByRole('img', { name: 'Authenticator setup QR code' });
   await expect(qr).toBeVisible();
   expect(await qr.evaluate((image) => image.complete && image.naturalWidth === 256)).toBeTruthy();
@@ -80,7 +96,7 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await rejected;
   await expect(page.getByText('The authenticator code was not accepted.')).toBeVisible();
 
-  await page.goto('/dashboard');
+  await page.goto('/security');
   await expect(page.getByRole('img', { name: 'Authenticator setup QR code' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel setup' }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -89,6 +105,8 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page).toHaveURL(/\/security$/);
   await page.getByLabel('Administrator password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
   await expect(page.getByRole('img', { name: 'Authenticator setup QR code' })).toBeVisible();
@@ -130,6 +148,8 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByLabel('Authenticator code').fill(codeAt(finalSecret, disableLoginStep));
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page).toHaveURL(/\/security$/);
   await expect(page.getByText('Two-factor authentication is enabled for the administrator account.')).toBeVisible();
   await page.getByText('Disable two-factor authentication').click();
   await expect(page.getByLabel('Administrator password')).toBeVisible();
@@ -150,7 +170,7 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await expect(page.getByRole('heading', { name: 'Proxy statistics' })).toBeVisible();
   await expect(page.getByText('Blocked requests', { exact: true })).toBeVisible();
   await expect(page.getByText('HTTP allowlist denials')).toBeVisible();
-  await expect(page.getByText('Active requests are not playback sessions.')).toBeVisible();
+  await expect(page.getByText('Active requests are not playback sessions.')).toHaveCount(0);
   await expect(page.locator('#host-memory')).not.toHaveText('—', { timeout: 15000 });
   await expect(page.locator('#proxy-active')).not.toHaveText('—', { timeout: 15000 });
   await expect(page.locator('#proxy-allowed')).not.toHaveText('0');

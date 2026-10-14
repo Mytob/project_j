@@ -3,6 +3,7 @@ set -eu
 
 config="${WIREGUARD_CONFIG:-/etc/wireguard/wg0.conf}"
 interface="${WIREGUARD_INTERFACE:-wg0}"
+health_dir="${WIREGUARD_HEALTH_DIR:-/run/wireguard-health}"
 
 # Docker-published ports are DNATed before the host firewall's normal INPUT
 # rules. Filter ingress in this service's own network namespace instead, so
@@ -34,12 +35,24 @@ if [ "$interface" = "wg0" ]; then
 fi
 
 wg-quick up "$config"
+mkdir -p "$health_dir"
+update_health() {
+	if wg show "$interface" >/dev/null 2>&1 && ip link show "$interface" >/dev/null 2>&1; then
+		temporary="$health_dir/current.tmp"
+		date +%s > "$temporary"
+		mv "$temporary" "$health_dir/current"
+	else
+		rm -f "$health_dir/current" "$health_dir/current.tmp"
+	fi
+}
 down() {
 	wg-quick down "$config" || true
+	update_health
 }
 trap down EXIT INT TERM
 
 while :; do
-	sleep 3600 &
+	update_health
+	sleep 5 &
 	wait $!
 done

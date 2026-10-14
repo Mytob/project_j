@@ -27,13 +27,34 @@ type CaddyAPI struct {
 	client       httpDoer
 	templatePath string
 	endpoint     string
+	healthURL    string
 }
 
 func NewCaddyAPI(socketPath, templatePath string) *CaddyAPI {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
 	}}
-	return &CaddyAPI{client: &http.Client{Transport: transport, Timeout: 20 * time.Second}, templatePath: templatePath, endpoint: "http://caddy/load"}
+	return &CaddyAPI{client: &http.Client{Transport: transport, Timeout: 20 * time.Second}, templatePath: templatePath, endpoint: "http://caddy/load", healthURL: "http://caddy/config/"}
+}
+
+// CheckHealth verifies that Caddy's private Unix-socket admin API responds.
+// The endpoint is never exposed outside the admin container.
+func (c *CaddyAPI) CheckHealth() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.healthURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request private Caddy health: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("private Caddy health returned %s", resp.Status)
+	}
+	return nil
 }
 
 func (c *CaddyAPI) Apply(entries []string) error {

@@ -39,6 +39,7 @@ services:
       - "${WIREGUARD_PORT:-51820}:51820/udp"
     volumes:
       - ./config/wireguard/server.conf:/etc/wireguard/wg0.conf:ro
+      - wireguard_health:/run/wireguard-health
     restart: unless-stopped
 
   caddy:
@@ -102,6 +103,8 @@ services:
       - /etc/caddy/Caddyfile
       - --wireguard-client-config
       - /opt/jellyfin-proxy/config/wireguard/windows.conf
+      - --wireguard-health
+      - /run/wireguard-health/current
       - --host-metrics-url
       - http://hostmetrics:8181
       - --proxy-metrics
@@ -114,6 +117,7 @@ services:
       - ./data:/opt/jellyfin-proxy/data
       - caddy_admin_socket:/run/caddy-admin
       - proxy_metrics:/run/proxy-metrics:ro
+      - wireguard_health:/run/wireguard-health:ro
     group_add:
       - "65532"
     expose:
@@ -136,3 +140,4 @@ volumes:
   caddy_data:
   caddy_config:
   proxy_metrics:
+  wireguard_health:

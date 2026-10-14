@@ -52,6 +52,7 @@ services:
       - "127.0.0.1:${HTTPS_PORT:-18443}:443"
     volumes:
       - wireguard_server:/etc/wireguard:ro
+      - wireguard_health:/run/wireguard-health
     depends_on:
       wireguard-config-init:
         condition: service_completed_successfully
@@ -141,13 +142,14 @@ services:
       args:
         VERSION: integration-test
         BUILD_NUMBER: browser-test
-    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf", "--host-metrics-url", "http://hostmetrics:8181", "--proxy-metrics", "/run/proxy-metrics/current.json"]
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf", "--wireguard-health", "/run/wireguard-health/current", "--host-metrics-url", "http://hostmetrics:8181", "--proxy-metrics", "/run/proxy-metrics/current.json"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
       - totp_key:/opt/jellyfin-proxy/config/totp-key:ro
       - wireguard_client:/opt/jellyfin-proxy/config/wireguard:ro
       - caddy_admin_socket:/run/caddy-admin
       - proxy_metrics:/run/proxy-metrics:ro
+      - wireguard_health:/run/wireguard-health:ro
       - admin_data:/opt/jellyfin-proxy/data
       - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
     group_add:
@@ -226,6 +228,7 @@ volumes:
   admin_data:
   totp_key:
   proxy_metrics:
+  wireguard_health:
 
 networks:
   default:

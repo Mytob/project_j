@@ -1,0 +1,5 @@
+{{template "admin-head" .}}
+<body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell">{{template "admin-sidebar" .}}
+<main id="main" class="main-content">{{template "admin-header" .}}
+{{if .WireGuardEnabled}}<section class="panel" aria-labelledby="wireguard-heading"><div class="section-heading"><div><p class="eyebrow">TUNNEL</p><h2 id="wireguard-heading">Windows WireGuard</h2><p class="muted">Download the retained peer configuration for the official WireGuard client.</p></div><span class="section-icon" aria-hidden="true">⌁</span></div><a class="button button-primary" href="/wireguard/config" download="jellyfin-proxy.conf">Download WireGuard configuration</a></section>{{else}}<section class="panel"><h2>WireGuard</h2><p class="muted">Windows WireGuard configuration is unavailable.</p></section>{{end}}
+</main></div></body></html>

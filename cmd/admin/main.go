@@ -26,6 +26,7 @@ func main() {
 	caddySocket := flag.String("caddy-socket", "/run/caddy-admin/admin.sock", "private Caddy admin Unix socket")
 	caddyfile := flag.String("caddyfile", "/etc/caddy/Caddyfile", "Caddyfile template containing the whitelist import")
 	wireguardConfig := flag.String("wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf", "retained Windows WireGuard peer configuration")
+	wireguardHealth := flag.String("wireguard-health", "/run/wireguard-health/current", "read-only recent WireGuard interface health heartbeat")
 	hostMetricsURL := flag.String("host-metrics-url", "http://hostmetrics:8181", "private host metrics collector origin")
 	proxyMetricsPath := flag.String("proxy-metrics", "/run/proxy-metrics/current.json", "read-only current Caddy metrics snapshot")
 	statisticsPath := flag.String("statistics-history", "/opt/jellyfin-proxy/data/statistics", "persistent 90-day statistics directory")
@@ -53,7 +54,8 @@ func main() {
 		logger.Error("configure whitelist store", "error", err)
 		os.Exit(1)
 	}
-	manager := admin.NewWhitelistManager(store, admin.NewCaddyAPI(*caddySocket, *caddyfile))
+	caddyAPI := admin.NewCaddyAPI(*caddySocket, *caddyfile)
+	manager := admin.NewWhitelistManager(store, caddyAPI)
 	var initializeErr error
 	for attempt := 0; attempt < 60; attempt++ {
 		initializeErr = manager.Initialize()
@@ -67,6 +69,7 @@ func main() {
 		os.Exit(1)
 	}
 	application := admin.New(credential, logger, manager)
+	application.ConfigureComponentHealth(caddyAPI, *wireguardHealth)
 	application.ConfigureBuildInfo(version, buildNumber)
 	if err := application.ConfigureTOTPStore(totpStore); err != nil {
 		logger.Error("configure administrator TOTP", "error", err)

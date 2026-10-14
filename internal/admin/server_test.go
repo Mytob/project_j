@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -333,7 +334,7 @@ func TestConfirmTOTPEnrollmentRevokesAllSessionsAfterPersistence(t *testing.T) {
 func TestTOTPEnrollmentRenderedControlsRequireFreshPasswordAndVerifyCode(t *testing.T) {
 	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
-	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	dashboard := request(handler, http.MethodGet, "/security", nil, cookie)
 	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), `action="/totp/enroll/start"`) {
 		t.Fatalf("unconfigured dashboard did not render enrollment controls: %d %s", dashboard.Code, dashboard.Body.String())
 	}
@@ -343,10 +344,10 @@ func TestTOTPEnrollmentRenderedControlsRequireFreshPasswordAndVerifyCode(t *test
 		t.Fatalf("wrong reauthentication response: %d %s", wrongPassword.Code, wrongPassword.Body.String())
 	}
 	start := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}}, cookie)
-	if start.Code != http.StatusSeeOther || start.Header().Get("Location") != "/dashboard" {
+	if start.Code != http.StatusSeeOther || start.Header().Get("Location") != "/security" {
 		t.Fatalf("valid reauthentication did not return to dashboard: %d %q", start.Code, start.Header().Get("Location"))
 	}
-	dashboard = request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	dashboard = request(handler, http.MethodGet, "/security", nil, cookie)
 	body := dashboard.Body.String()
 	secretMatch := totpSecretPattern.FindStringSubmatch(body)
 	if dashboard.Code != http.StatusOK || len(secretMatch) != 2 || !strings.Contains(body, `alt="Authenticator setup QR code"`) || !strings.Contains(body, `action="/totp/enroll/confirm"`) {
@@ -408,7 +409,7 @@ func TestDashboardTOTPDisableRequiresPasswordAndFreshCodeThenRevokesSessions(t *
 	}
 	disableAt := enrolledAt.Add(30 * time.Second)
 	server.now = func() time.Time { return disableAt }
-	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	dashboard := request(handler, http.MethodGet, "/security", nil, cookie)
 	body := dashboard.Body.String()
 	if dashboard.Code != http.StatusOK || !strings.Contains(body, `action="/totp/disable"`) || !strings.Contains(body, `id="totp-disable-password"`) || !strings.Contains(body, `id="totp-disable-code"`) {
 		t.Fatalf("enabled dashboard is missing disable controls: %d %s", dashboard.Code, body)
@@ -449,7 +450,7 @@ func TestDashboardTOTPDisableRequiresPasswordAndFreshCodeThenRevokesSessions(t *
 func TestTOTPEnrollmentRequiresCSRFAndCancellationIsPersistent(t *testing.T) {
 	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
-	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	dashboard := request(handler, http.MethodGet, "/security", nil, cookie)
 	csrf := csrfPattern.FindStringSubmatch(dashboard.Body.String())[1]
 	if response := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"password": {"correct test administrator password"}}, cookie); response.Code != http.StatusForbidden {
 		t.Fatalf("enrollment accepted missing CSRF: %d", response.Code)
@@ -457,7 +458,7 @@ func TestTOTPEnrollmentRequiresCSRFAndCancellationIsPersistent(t *testing.T) {
 	if response := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}}, cookie); response.Code != http.StatusSeeOther {
 		t.Fatalf("enrollment start status = %d", response.Code)
 	}
-	view := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	view := request(handler, http.MethodGet, "/security", nil, cookie)
 	secret := totpSecretPattern.FindStringSubmatch(view.Body.String())
 	if len(secret) != 2 {
 		t.Fatal("pending setup secret was not visible after fresh password verification")
@@ -768,7 +769,7 @@ func TestTOTPEnrollmentSecretAndConfirmationRequirePasswordReauthentication(t *t
 	if _, err := store.BeginEnrollment(); err != nil {
 		t.Fatal(err)
 	}
-	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	dashboard := request(handler, http.MethodGet, "/security", nil, cookie)
 	if strings.Contains(dashboard.Body.String(), "Manual setup secret") {
 		t.Fatal("pending setup secret was visible without password reauthentication")
 	}
@@ -816,9 +817,9 @@ func TestWireGuardDownloadRequiresAuthenticationAndIsNonCacheable(t *testing.T) 
 		t.Fatal(err)
 	}
 	cookie := &http.Cookie{Name: "admin_session", Value: id}
-	dashboard := request(handler, "GET", "/dashboard", nil, cookie)
+	dashboard := request(handler, "GET", "/wireguard", nil, cookie)
 	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), "/wireguard/config") {
-		t.Fatalf("dashboard did not expose config download: %d %s", dashboard.Code, dashboard.Body.String())
+		t.Fatalf("WireGuard page did not expose config download: %d %s", dashboard.Code, dashboard.Body.String())
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		response := request(handler, "GET", "/wireguard/config", nil, cookie)
@@ -930,10 +931,102 @@ func TestStatisticsPageRequiresAdministratorSession(t *testing.T) {
 			t.Fatalf("unauthenticated statistics endpoint %s returned %d", path, response.Code)
 		}
 	}
+	for _, path := range []string{"/dashboard", "/access-control", "/security", "/wireguard"} {
+		response := request(handler, http.MethodGet, path, nil, nil)
+		if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/" {
+			t.Fatalf("unauthenticated admin page %s = %d, %q", path, response.Code, response.Header().Get("Location"))
+		}
+	}
 	adminCookie := loginTestAdmin(t, server)
 	page := request(handler, http.MethodGet, "/statistics", nil, adminCookie)
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "VPS statistics") || !strings.Contains(page.Body.String(), "Proxy statistics") || !strings.Contains(page.Body.String(), "Waiting for live metrics") {
 		t.Fatalf("authenticated statistics page = %d %s", page.Code, page.Body.String())
+	}
+}
+
+type fixedCaddyHealth struct{ err error }
+
+func (check fixedCaddyHealth) CheckHealth() error { return check.err }
+
+func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) {
+	server, handler, _, _ := newTOTPTestServer(t)
+	server.whitelist = newManager(&memoryWhitelistStore{entries: []string{"192.0.2.1"}}, &recordingPolicy{})
+	server.wireguardClientConfig = "configured"
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	heartbeat := filepath.Join(t.TempDir(), "wireguard-health")
+	if err := os.WriteFile(heartbeat, []byte(strconv.FormatInt(now.Add(-5*time.Second).Unix(), 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server.ConfigureComponentHealth(fixedCaddyHealth{}, heartbeat)
+	cookie := loginTestAdmin(t, server)
+
+	page := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	body := page.Body.String()
+	if page.Code != http.StatusOK || !strings.Contains(body, `href="/access-control"`) || !strings.Contains(body, `href="/security"`) || !strings.Contains(body, `href="/wireguard"`) {
+		t.Fatalf("overview did not render real page navigation: %d %s", page.Code, body)
+	}
+	for _, removed := range []string{"Signed in", "Administrator session", "Return to overview and sign out", `href="/dashboard#`, "id=\"access-control\"", "id=\"authenticator\"", "id=\"wireguard\""} {
+		if strings.Contains(body, removed) {
+			t.Errorf("overview still contains removed or in-page content %q", removed)
+		}
+	}
+	for _, name := range []string{"Administrator", "Access control", "Jellyfin proxy", "WireGuard", "Host metrics", "Proxy metrics"} {
+		if !strings.Contains(body, name) {
+			t.Errorf("overview is missing component %q", name)
+		}
+	}
+	if !strings.Contains(body, "Caddy responded through its private admin socket") || !strings.Contains(body, "WireGuard interface check reported healthy recently") || !strings.Contains(body, "The host collector has not supplied a fresh sample") {
+		t.Errorf("overview health did not reflect its checks: %s", body)
+	}
+
+	for _, pageCase := range []struct {
+		path, heading, mustNotContain string
+	}{
+		{"/access-control", "Jellyfin access control", "Administrator authenticator"},
+		{"/security", "Administrator authenticator", "Jellyfin access control"},
+		{"/wireguard", "Windows WireGuard", "Jellyfin access control"},
+	} {
+		response := request(handler, http.MethodGet, pageCase.path, nil, cookie)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), pageCase.heading) || strings.Contains(response.Body.String(), pageCase.mustNotContain) {
+			t.Errorf("page %s was not its own view: %d %s", pageCase.path, response.Code, response.Body.String())
+		}
+	}
+	statistics := request(handler, http.MethodGet, "/statistics", nil, cookie)
+	if statistics.Code != http.StatusOK {
+		t.Fatalf("statistics page status = %d", statistics.Code)
+	}
+	for _, removed := range []string{"Administrator session", "Return to overview and sign out", "Version development · Build unknown", "Blocked requests count HTTP requests denied", "/dashboard#"} {
+		if strings.Contains(statistics.Body.String(), removed) {
+			t.Errorf("statistics still contains removed content %q", removed)
+		}
+	}
+}
+
+func TestWireGuardHealthHeartbeatMustBeRecent(t *testing.T) {
+	server, _, _, _ := newTOTPTestServer(t)
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	path := filepath.Join(t.TempDir(), "wireguard-health")
+	server.wireguardHealthPath = path
+	for _, testCase := range []struct {
+		name string
+		age  time.Duration
+		want bool
+	}{
+		{name: "recent", age: 10 * time.Second, want: true},
+		{name: "stale", age: 16 * time.Second},
+		{name: "future", age: -6 * time.Second},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			data := strconv.FormatInt(now.Add(-testCase.age).Unix(), 10)
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := server.wireguardHeartbeatHealthy(); got != testCase.want {
+				t.Fatalf("heartbeat health = %t, want %t", got, testCase.want)
+			}
+		})
 	}
 }
 
