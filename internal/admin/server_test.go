@@ -1,10 +1,14 @@
 package admin
 
 import (
+	"bufio"
+	"context"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -14,10 +18,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/totp"
 	"github.com/Mytob/project_j/internal/wireguard"
 )
@@ -900,5 +906,131 @@ func TestWhitelistChangesRequireAuthenticatedSessionAndCSRF(t *testing.T) {
 	valid := request(handler, "POST", "/whitelist/add", url.Values{"csrf": {csrf}, "entry": {"192.0.2.1"}}, cookie)
 	if valid.Code != http.StatusSeeOther {
 		t.Fatalf("valid change status %d, body %s", valid.Code, valid.Body.String())
+	}
+}
+
+func TestStatisticsPageRequiresAdministratorSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin.json")
+	if err := auth.SaveCredential(path, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(credential, nil)
+	handler := server.Handler()
+	unauthorized := request(handler, http.MethodGet, "/statistics", nil, nil)
+	if unauthorized.Code != http.StatusSeeOther || unauthorized.Header().Get("Location") != "/" {
+		t.Fatalf("unauthenticated statistics request = %d, %q", unauthorized.Code, unauthorized.Header().Get("Location"))
+	}
+	for _, path := range []string{"/statistics/events", "/statistics/history?range=24h"} {
+		response := request(handler, http.MethodGet, path, nil, nil)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated statistics endpoint %s returned %d", path, response.Code)
+		}
+	}
+	adminCookie := loginTestAdmin(t, server)
+	page := request(handler, http.MethodGet, "/statistics", nil, adminCookie)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "VPS statistics") || !strings.Contains(page.Body.String(), "Proxy statistics") || !strings.Contains(page.Body.String(), "Waiting for live metrics") {
+		t.Fatalf("authenticated statistics page = %d %s", page.Code, page.Body.String())
+	}
+}
+
+func TestStatisticsSSEEndsWhenAdministratorSessionIsRevoked(t *testing.T) {
+	root := t.TempDir()
+	credentialPath := filepath.Join(root, "admin.json")
+	if err := auth.SaveCredential(credentialPath, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := auth.LoadCredential(credentialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	memoryTotal := uint64(10)
+	var hostTimestamp atomic.Int64
+	hostTimestamp.Store(now.UnixNano())
+	hostServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		captured := time.Unix(0, hostTimestamp.Load()).UTC()
+		_ = json.NewEncoder(w).Encode(monitoring.HostMetrics{CapturedAt: captured, MemoryTotalBytes: &memoryTotal})
+	}))
+	defer hostServer.Close()
+	proxyPath := filepath.Join(root, "proxy.json")
+	proxyData, err := json.Marshal(monitoring.ProxyMetrics{CapturedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(proxyPath, proxyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	history, err := monitoring.OpenHistory(filepath.Join(root, "history"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed, err := monitoring.NewFeed(hostServer.URL, proxyPath, history, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamContext, stopFeed := context.WithCancel(t.Context())
+	defer stopFeed()
+	go feed.Start(streamContext)
+	server := New(credential, nil)
+	if err := server.ConfigureStatistics(feed); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginTestAdmin(t, server)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	request, err := http.NewRequest(http.MethodGet, httpServer.URL+"/statistics/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(cookie)
+	response, err := httpServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream; charset=utf-8" {
+		t.Fatalf("SSE response = %d %q", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	reader := bufio.NewReader(response.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil || line != "retry: 2000\n" {
+		t.Fatalf("SSE did not begin with reconnect interval: %q, %v", line, err)
+	}
+	if line, err = reader.ReadString('\n'); err != nil || line != "\n" {
+		t.Fatalf("SSE reconnect interval was not terminated: %q, %v", line, err)
+	}
+	var initial strings.Builder
+	for {
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("SSE did not send initial metrics: %v", err)
+		}
+		initial.WriteString(line)
+		if line == "\n" {
+			break
+		}
+	}
+	if !strings.Contains(initial.String(), "event: metrics") {
+		t.Fatalf("initial SSE event = %q", initial.String())
+	}
+	server.sessions.RevokeAll()
+	hostTimestamp.Store(time.Now().UTC().UnixNano())
+	remaining, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(remaining), "event: auth-required") {
+		t.Fatalf("revoked session stream did not terminate with auth-required: %q", remaining)
+	}
+}
+
+func TestAdminStylesheetIsServedAsCSS(t *testing.T) {
+	response := request(newTestServer(t), http.MethodGet, "/assets/admin.css", nil, nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "text/css") || !strings.Contains(response.Body.String(), "prefers-reduced-motion") {
+		t.Fatalf("admin stylesheet response = %d %q %s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
 	}
 }

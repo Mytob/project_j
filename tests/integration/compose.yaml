@@ -1,4 +1,30 @@
 services:
+  hostmetrics:
+    build:
+      context: ../..
+      dockerfile: deploy/hostmetrics/Dockerfile
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: /proc
+        target: /host/proc
+        read_only: true
+      - type: bind
+        source: /sys
+        target: /host/sys
+        read_only: true
+      - type: bind
+        source: /
+        target: /host/root
+        read_only: true
+    expose:
+      - "8181"
+
   totp-key-init:
     image: alpine:3.22
     user: "0:0"
@@ -74,7 +100,9 @@ services:
         condition: service_started
 
   caddy:
-    image: caddy:2.10.2-alpine
+    build:
+      context: ../..
+      dockerfile: deploy/caddy/Dockerfile
     network_mode: service:wireguard
     volumes:
       - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
@@ -83,10 +111,13 @@ services:
       - ../../deploy/site:/srv/site:ro
       - caddy_data:/data
       - caddy_config:/config
+      - proxy_metrics:/run/proxy-metrics
     depends_on:
       wireguard:
         condition: service_healthy
       caddy-socket-init:
+        condition: service_completed_successfully
+      proxy-metrics-init:
         condition: service_completed_successfully
 
   caddy-socket-init:
@@ -96,6 +127,13 @@ services:
       - caddy_admin_socket:/run/caddy-admin
     command: ["sh", "-c", "chown 0:65532 /run/caddy-admin && chmod 2750 /run/caddy-admin"]
 
+  proxy-metrics-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - proxy_metrics:/run/proxy-metrics
+    command: ["sh", "-c", "mkdir -p /run/proxy-metrics && chown 1000:1000 /run/proxy-metrics && chmod 0755 /run/proxy-metrics"]
+
   admin:
     build:
       context: ../..
@@ -103,12 +141,13 @@ services:
       args:
         VERSION: integration-test
         BUILD_NUMBER: browser-test
-    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf"]
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf", "--host-metrics-url", "http://hostmetrics:8181", "--proxy-metrics", "/run/proxy-metrics/current.json"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
       - totp_key:/opt/jellyfin-proxy/config/totp-key:ro
       - wireguard_client:/opt/jellyfin-proxy/config/wireguard:ro
       - caddy_admin_socket:/run/caddy-admin
+      - proxy_metrics:/run/proxy-metrics:ro
       - admin_data:/opt/jellyfin-proxy/data
       - ../../deploy/caddy/Caddyfile.test:/etc/caddy/Caddyfile:ro
     group_add:
@@ -117,6 +156,8 @@ services:
       - "8080"
     depends_on:
       caddy:
+        condition: service_started
+      hostmetrics:
         condition: service_started
       admin-data-init:
         condition: service_completed_successfully
@@ -139,6 +180,9 @@ services:
     depends_on:
       admin:
         condition: service_started
+    networks:
+      default:
+        ipv4_address: ${BROWSER_TEST_IP:-172.29.254.30}
 
   admin-data-init:
     image: alpine:3.22
@@ -181,6 +225,7 @@ volumes:
   caddy_admin_socket:
   admin_data:
   totp_key:
+  proxy_metrics:
 
 networks:
   default:

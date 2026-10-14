@@ -97,7 +97,7 @@ func TestContainsFailsClosedForInvalidOrUnspecifiedPeer(t *testing.T) {
 
 func TestRenderCaddyPolicyDefaultsToDeny(t *testing.T) {
 	empty := RenderCaddyPolicy(nil)
-	if !strings.Contains(empty, `respond "Forbidden" 403`) {
+	if !strings.Contains(empty, "jp_metrics_deny") {
 		t.Fatalf("empty policy does not deny: %q", empty)
 	}
 	if strings.Contains(empty, "remote_ip") || strings.Contains(empty, "reverse_proxy") {
@@ -112,11 +112,11 @@ func TestRenderCaddyPolicyDefaultsToDeny(t *testing.T) {
 	if !strings.Contains(policy, "@whitelisted remote_ip 192.0.2.0/24 2001:db8::/64") {
 		t.Fatalf("policy has unexpected matcher: %q", policy)
 	}
-	if !strings.Contains(policy, "reverse_proxy 10.66.66.2:8096") || !strings.Contains(policy, `respond "Forbidden" 403`) {
+	if !strings.Contains(policy, "reverse_proxy 10.66.66.2:8096") || !strings.Contains(policy, "jp_metrics_deny") {
 		t.Fatalf("policy is missing proxy or deny handler: %q", policy)
 	}
 	invalid := RenderCaddyPolicy([]netip.Prefix{{}})
-	if strings.Contains(invalid, "reverse_proxy") || !strings.Contains(invalid, `respond "Forbidden" 403`) {
+	if strings.Contains(invalid, "reverse_proxy") || !strings.Contains(invalid, "jp_metrics_deny") {
 		t.Fatalf("invalid policy did not fail closed: %q", invalid)
 	}
 }

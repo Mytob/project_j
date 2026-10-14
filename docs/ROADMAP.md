@@ -3,6 +3,41 @@
 Status is based on behaviour and recorded test evidence, not file presence.
 No milestone is marked complete until its mandatory tests pass.
 
+## v1.2 — Admin redesign and statistics
+
+The authorized scope is recorded in [V1.2.md](V1.2.md). It adds a responsive
+server-rendered admin redesign, containerized host metrics, in-process Caddy
+stream instrumentation, authenticated SSE, and bounded 90-day file history.
+The local release gate passed on 2026-10-14. The generated report records
+`local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+Actual Ubuntu VPS/provider-firewall and native Windows client checks remain
+separate host gates; no v1.2 deployment has been performed.
+
+| Stage | Status | Evidence / blocker |
+| --- | --- | --- |
+| 1 — Requirements and architecture record | **Complete** | `docs/V1.2.md`, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` record scope and boundaries. |
+| 2 — Shared responsive admin shell | **Complete (local gate)** | Chromium exercised the existing admin journeys, Statistics navigation, keyboard access, and 1440/768/390px layouts. |
+| 3 — Host metrics collector | **Complete (local gate)** | Container integration verified live host measurements, read-only mounts, non-root isolation, restart recovery, and no published port/socket/capabilities/host namespaces. |
+| 4 — Caddy in-flight proxy instrumentation | **Complete (local gate)** | Integration covered concurrent and interrupted transfers, ranges, WebSockets, allowed/blocked requests, and byte accounting against the local Caddy module. |
+| 5 — Historical storage and authenticated SSE | **Complete (local gate)** | Go, browser, and package checks covered authenticated updates, reconnect/expiry, aggregation, retention, restart, update, rollback, and corrupt data. |
+| 6 — Statistics UI and browser checks | **Complete (local gate)** | Chromium exercised live/history views and all four ranges, chart bounds, disconnect/reconnect, and responsive/keyboard behavior. |
+| 7 — Installer/package integration and release gate | **Complete (local gate); host checks pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev` passed. See [TESTING.md](TESTING.md); actual-host checks remain required for release readiness. |
+
+### v1.2 local gate evidence — 2026-10-14
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev`.
+- Result: PASS (exit 0). The report at
+  `dist/release-validation-1.2.0-dev.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Covered: all Go packages; M1–M6 and v1.1 browser/integration regressions;
+  Chromium admin and Statistics workflows; collector container and recovery;
+  Caddy live streaming/range/WebSocket metrics; authenticated SSE and
+  persistent history; offline package build/load/install, firewall, update,
+  preservation, rollback, retention, and password reset.
+- Host gates still pending: Ubuntu 26.04 VPS/kernel/WireGuard, public DNS/ACME
+  and provider firewall, and native Windows WireGuard/Firewall. The local run
+  used Docker Desktop and did not deploy to a VPS.
+
 ## Current status
 
 ### v1.1 — TOTP administrator authentication

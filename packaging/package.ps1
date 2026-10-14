@@ -26,8 +26,9 @@ $archivePath = Join-Path $outputRoot "jellyfin-proxy-$Version-linux-amd64.tar.gz
 $daemonName = "jellyfin-proxy-package-check-$PID"
 $imageReferences = @(
     "jellyfin-proxy/admin:$Version",
+    "jellyfin-proxy/hostmetrics:$Version",
     "jellyfin-proxy/wireguard:$Version",
-    'caddy:2.10.2-alpine',
+    "jellyfin-proxy/caddy:$Version",
     'alpine:3.22'
 )
 
@@ -65,15 +66,18 @@ try {
     Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${workMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/installcheck-linux-amd64', './tests/deployment/installcheck')
 
     $adminImage = $imageReferences[0]
-    $wireguardImage = $imageReferences[1]
+    $hostMetricsImage = $imageReferences[1]
+    $wireguardImage = $imageReferences[2]
+    $caddyImage = $imageReferences[3]
     Invoke-Checked 'docker' @('build', '--file', 'deploy/admin/Dockerfile', '--build-arg', "VERSION=$Version", '--build-arg', "BUILD_NUMBER=$buildNumber", '--tag', $adminImage, '.')
+    Invoke-Checked 'docker' @('build', '--file', 'deploy/hostmetrics/Dockerfile', '--tag', $hostMetricsImage, '.')
     $builtVersion = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' $adminImage
     if ($LASTEXITCODE -ne 0 -or [string]$builtVersion -ne $Version) { throw 'Packaged admin image does not contain the requested version metadata.' }
     $builtRevision = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' $adminImage
     if ($LASTEXITCODE -ne 0 -or [string]$builtRevision -ne $buildNumber) { throw 'Packaged admin image does not contain the expected source build number.' }
     Invoke-Checked 'docker' @('build', '--file', 'deploy/wireguard/Dockerfile', '--tag', $wireguardImage, '.')
-    Invoke-Checked 'docker' @('pull', $imageReferences[2])
-    Invoke-Checked 'docker' @('pull', $imageReferences[3])
+    Invoke-Checked 'docker' @('build', '--file', 'deploy/caddy/Dockerfile', '--tag', $caddyImage, '.')
+    Invoke-Checked 'docker' @('pull', $imageReferences[4])
 
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/compose.yaml') -Destination (Join-Path $packageDirectory 'compose.yaml')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/PACKAGE-ENV.example') -Destination (Join-Path $packageDirectory '.env.example')

@@ -7,6 +7,7 @@ COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
 COPY internal/totp ./internal/totp
 COPY internal/admin ./internal/admin
+COPY internal/monitoring ./internal/monitoring
 COPY internal/whitelist ./internal/whitelist
 COPY internal/wireguard ./internal/wireguard
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildNumber=${BUILD_NUMBER}" -o /out/admin ./cmd/admin

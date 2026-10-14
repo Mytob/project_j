@@ -527,3 +527,32 @@ these limits explicitly and use VPS preflight checks.
   post-merge full-gate attempt had a transient curl connection reset in M1–M6;
   the subsequent full release command completed successfully with all checks
   passed.
+
+### Verified v1.2.0-dev local release gate — 2026-10-14
+
+- **Command:** `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev`.
+- **Result:** PASS (exit 0) for all mandatory local checks. The report at
+  `dist/release-validation-1.2.0-dev.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- **Go:** All packages passed, including admin, auth/TOTP, Caddy telemetry,
+  monitoring/history, deployment, release packaging, WireGuard, and installer
+  checks.
+- **Browser and container integration:** Existing M1–M6 and v1.1 journeys
+  passed. Chromium covered Statistics navigation, live and historical ranges,
+  responsive layouts at 1440/768/390px, keyboard navigation, and authenticated
+  SSE reconnect/session expiry. Container checks covered live host metrics,
+  read-only metric mounts, unprivileged isolation, restart recovery, and the
+  absence of published collector ports, Docker sockets, extra capabilities,
+  or host namespaces. The real Caddy module was exercised with concurrent,
+  interrupted, range, and WebSocket streams plus allow/deny and byte counters.
+- **Package/update:** The 1.2.0-dev archive loaded offline into an isolated
+  Docker-in-Docker daemon. Install, namespace firewall rules, monitoring image,
+  history persistence, update, forced-failure rollback, retention, and
+  password reset passed. The port collision in the forced-failure scenario
+  was expected and verified rollback to the working deployment.
+- **Host limits:** This run used Windows 11/Docker Desktop's Linux engine. It
+  did not deploy to a VPS or exercise Ubuntu 26.04's native host metrics,
+  provider firewall/public DNS/ACME, or a native Windows WireGuard client and
+  Firewall. Those checks remain pending before release readiness.
+- **Artifact:** `dist/jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz` was built
+  and validated locally. It is a generated artifact and is not committed.

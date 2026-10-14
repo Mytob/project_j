@@ -1,5 +1,11 @@
 # Frozen 1.0 decisions
 
+## Authorized v1.2 addition
+
+The separate [v1.2 scope and design](V1.2.md) records the later authorized
+admin redesign and statistics requirements. It does not change the historical
+v1.0 decisions below or authorize unrelated product expansion.
+
 The pasted implementation brief refers to 41 previously confirmed decisions,
 but it does not contain a separate numbered list of those 41 decisions. This
 record captures requirements that are explicitly stated in the brief and does

@@ -1,5 +1,9 @@
 # Architecture
 
+The authorized v1.2 statistics architecture and constraints are specified in
+[`V1.2.md`](V1.2.md). Until its stages and mandatory gates pass, this document's
+current v1.0/v1.1 component description remains the implemented architecture.
+
 This document distinguishes the frozen 1.0 target, the M1–M6 local test
 environment, and the M8 Ubuntu installer implementation.
 
