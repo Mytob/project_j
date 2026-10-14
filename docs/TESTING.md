@@ -161,8 +161,26 @@ readiness waits visibly active.
 - Chromium verified dashboard version/build rendering, authenticator disable
   with password and current code, global session revocation, and password-only
   login. Unit tests also reject bad credentials/codes and missing CSRF.
-- The new v1.1.1-dev package has not been deployed to the VPS. Actual-host
-  checks for this build remain unverified.
+- The operator subsequently reported deploying v1.1.1-dev and that it worked
+  as expected; the follow-up screenshot identified the disable-form layout
+  issue corrected by PR #31. The updated 1.1.2-dev package has not been
+  deployed, so its version-matched actual-host checks remain unverified.
+
+### Authorized operator follow-up — responsive authenticator-disable form
+
+PR #31 fixes the password and current-code fields wrapping into their labels by
+placing each field in a responsive grid. Wider screens show two columns; narrow
+screens stack the fields.
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2-dev` — PASS on
+  2026-10-14, exit 0. Go tests, M1–M6 integration/browser checks, and M7–M9
+  offline package/install/update/rollback checks passed.
+- The generated package is
+  `dist/jellyfin-proxy-1.1.2-dev-linux-amd64.tar.gz`. The validation report
+  `dist/release-validation-1.1.2-dev.json` records the local gate as passed and
+  host-specific readiness as blocked pending version-matched Ubuntu VPS,
+  provider-firewall/public ACME, and native Windows checks. The package has not
+  been published.
 
 ## Local environment
 
