@@ -248,12 +248,20 @@ successful local gate does not mean the release is ready to publish.
 - Host evidence: `docs/release-host-checks-v1.1.2.json` records the operator's
   current 1.1.2-dev build/streaming confirmation and the previously verified
   public DNS, ACME, and provider ingress results for the same VPS.
-- Limits: This local-gate run used Docker Desktop's Linux engine. External DNS
-  lookups from this runner were unavailable, so the public host results are
-  carried forward from the documented 2026-10-13 verification. The
-  evidence-backed run passed with `release_readiness: ready`, but this run's
-  docs working tree was dirty, so rebuild from the clean merged `dev` commit
-  before publishing the stable package.
+- Final clean run: After PR #33 merged the evidence into `dev`, the command
+  above passed on clean commit `ce3f4e5890e3`. The report recorded
+  `local_gate: passed` and `release_readiness: ready`; its admin build number
+  is `ce3f4e5890e3`.
+- Host evidence: `docs/release-host-checks-v1.1.2.json` records the operator's
+  current 1.1.2-dev build and streaming confirmation, plus the same VPS public
+  DNS, ACME, provider ingress, and Windows firewall results previously
+  verified. Direct DNS lookups from this runner were unavailable, so those
+  public-host results carry forward from the documented 2026-10-13 check.
+- Package: `dist/jellyfin-proxy-1.1.2-linux-amd64.tar.gz`, SHA-256
+  `c8c8d0dcddebd11be02ee90b44319e935ef1f74326a63b8ad6933ea1ce4417ae`.
+- Publication: PR #34 promoted the tested `dev` state to `main` at `86bf9c2`;
+  tag `v1.1.2` and [GitHub Release v1.1.2](https://github.com/Mytob/project_j/releases/tag/v1.1.2)
+  are published with the package, updater, checksums, and validation report.
 | TOTP recovery and backup | Packaged reset/disable/replace commands, encrypted key+state restore, consumed-code replay checkpoint, admin restart | PASS 2026-10-14; no live v1.1 deployment |
 | Password reset | Hashed credential replacement, admin-only recreation, existing sessions invalidated by process restart | PASS 2026-10-13; Ubuntu host checks remain |
 | Full release | Go tests, M1–M6 integration, M7–M9 package/install/update; JSON report records host-only checks | PASS 2026-10-14; production host checks blocked |
