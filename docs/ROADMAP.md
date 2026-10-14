@@ -29,6 +29,8 @@ separate host gates; no v1.2 deployment has been performed.
 - Result: PASS (exit 0). The report at
   `dist/release-validation-1.2.0-dev.json` records `local_gate: passed` and
   `release_readiness: blocked_host_checks_pending`.
+- Source control: feature commit `eaa14f9` was merged into `dev` by PR #37
+  (`2cb0d8a`).
 - Covered: all Go packages; M1–M6 and v1.1 browser/integration regressions;
   Chromium admin and Statistics workflows; collector container and recovery;
   Caddy live streaming/range/WebSocket metrics; authenticated SSE and
