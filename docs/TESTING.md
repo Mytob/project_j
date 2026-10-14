@@ -556,3 +556,42 @@ these limits explicitly and use VPS preflight checks.
   Firewall. Those checks remain pending before release readiness.
 - **Artifact:** `dist/jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz` was built
   and validated locally. It is a generated artifact and is not committed.
+
+### Verified v1.2.0-dev test VPS update — 2026-10-14
+
+- **Target:** User-authorized Ubuntu 26.04.1 LTS x86_64 VPS serving
+  `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com`. The active
+  1.1.2-dev services were healthy before update; the root filesystem had
+  4.9 GB free.
+- **Command:** `./proxyctl-linux-amd64 update
+  ./jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz`.
+- **Result:** PASS. Package and persistent TOTP storage validation passed;
+  bundled images loaded offline; the updater reported services healthy and
+  completed its public HTTPS checks. Admin, Caddy, hostmetrics, and WireGuard
+  were healthy after deployment. The package SHA-256 matched the workstation
+  copy.
+- **Actual host metrics:** The private collector endpoint returned live VPS
+  memory (873,529,344 bytes total), root filesystem capacity (9,181,077,504
+  bytes), receive/transmit totals, load averages, and uptime. It was not a
+  published host port. Docker inspection reported user `65532:65532`, no added
+  capabilities, no privileged mode, no host PID/network namespace, and
+  read-only `/proc`, `/sys`, and root filesystem mounts.
+- **Public routes and authorization:** With normal TLS verification,
+  `darkcry.com` returned 200, `admin.darkcry.com` returned 200, and
+  `access.darkcry.com` returned 403; TLS verify result was 0 for all three.
+  Anonymous `/statistics` redirected to login, and `/statistics/history` and
+  `/statistics/events` returned 401. The public collector endpoint remained
+  unpublished.
+- **Persistence and WireGuard:** Existing TOTP key/state, whitelist files, and
+  site content remained present. A populated `data/statistics/2026-10-14.json.gz`
+  remained present through an admin-only restart, after which admin was
+  healthy. The WireGuard container showed a recent peer handshake following
+  the update restart.
+- **Build identity:** The deployed image reports version `1.2.0-dev` and build
+  `62acf66c2182-dirty`. The package was built from the tested v1.2 working tree
+  before commit `eaa14f9`; rebuild from the merged, clean `dev` revision before
+  stable promotion.
+- **Remaining check:** Native Windows playback was not repeated after this
+  update. The operator had previously confirmed the scoped TCP 8096 firewall
+  rule and streaming on 1.1.2-dev; the post-update WireGuard handshake was
+  observed, but the Windows client still needs a playback confirmation.

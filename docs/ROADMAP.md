@@ -10,18 +10,22 @@ server-rendered admin redesign, containerized host metrics, in-process Caddy
 stream instrumentation, authenticated SSE, and bounded 90-day file history.
 The local release gate passed on 2026-10-14. The generated report records
 `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
-Actual Ubuntu VPS/provider-firewall and native Windows client checks remain
-separate host gates; no v1.2 deployment has been performed.
+The `1.2.0-dev` package was deployed to the user-authorized test VPS and the
+Ubuntu, live host metrics, TLS/routes, isolation, and service-restart checks
+passed. Native Windows streaming after this update still needs operator
+confirmation. The deployed admin image identifies itself as build
+`62acf66c2182-dirty`; build a clean candidate from the merged `dev` revision
+before promoting a stable release.
 
 | Stage | Status | Evidence / blocker |
 | --- | --- | --- |
 | 1 — Requirements and architecture record | **Complete** | `docs/V1.2.md`, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` record scope and boundaries. |
 | 2 — Shared responsive admin shell | **Complete (local gate)** | Chromium exercised the existing admin journeys, Statistics navigation, keyboard access, and 1440/768/390px layouts. |
-| 3 — Host metrics collector | **Complete (local gate)** | Container integration verified live host measurements, read-only mounts, non-root isolation, restart recovery, and no published port/socket/capabilities/host namespaces. |
+| 3 — Host metrics collector | **Complete (local and VPS checks)** | Local integration verified isolation/recovery; the VPS collector returned live host memory, disk, network, load, and uptime values from read-only mounts. |
 | 4 — Caddy in-flight proxy instrumentation | **Complete (local gate)** | Integration covered concurrent and interrupted transfers, ranges, WebSockets, allowed/blocked requests, and byte accounting against the local Caddy module. |
-| 5 — Historical storage and authenticated SSE | **Complete (local gate)** | Go, browser, and package checks covered authenticated updates, reconnect/expiry, aggregation, retention, restart, update, rollback, and corrupt data. |
+| 5 — Historical storage and authenticated SSE | **Complete (local and VPS checks)** | Local checks covered authentication, reconnect/expiry, aggregation, retention, update, rollback, and corrupt recovery; populated history remained present after a VPS admin restart. |
 | 6 — Statistics UI and browser checks | **Complete (local gate)** | Chromium exercised live/history views and all four ranges, chart bounds, disconnect/reconnect, and responsive/keyboard behavior. |
-| 7 — Installer/package integration and release gate | **Complete (local gate); host checks pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev` passed. See [TESTING.md](TESTING.md); actual-host checks remain required for release readiness. |
+| 7 — Installer/package integration and release gate | **Local gate and VPS deployment passed; Windows confirmation pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev` passed and the package updated the VPS. See [TESTING.md](TESTING.md); do not promote a dirty build to stable. |
 
 ### v1.2 local gate evidence — 2026-10-14
 
@@ -36,9 +40,42 @@ separate host gates; no v1.2 deployment has been performed.
   Caddy live streaming/range/WebSocket metrics; authenticated SSE and
   persistent history; offline package build/load/install, firewall, update,
   preservation, rollback, retention, and password reset.
-- Host gates still pending: Ubuntu 26.04 VPS/kernel/WireGuard, public DNS/ACME
-  and provider firewall, and native Windows WireGuard/Firewall. The local run
-  used Docker Desktop and did not deploy to a VPS.
+- At report generation the host checks were blocked because the local run used
+  Docker Desktop. Subsequent test-VPS results are recorded below; post-update
+  native Windows playback confirmation remains pending.
+
+### v1.2 test VPS deployment — 2026-10-14
+
+- Target: user-authorized Ubuntu 26.04.1 LTS x86_64 VPS serving the configured
+  `darkcry.com` hostnames. The existing 1.1.2-dev services were healthy before
+  the update and 4.9 GB was available on `/`.
+- Command: `./proxyctl-linux-amd64 update
+  ./jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz`.
+- Result: PASS. The updater verified the package and existing TOTP storage,
+  loaded bundled images without pulls, restarted the Jellyfin Proxy services,
+  and reported successful service health and public HTTPS checks. Admin,
+  Caddy, hostmetrics, and WireGuard were all healthy afterward.
+- Package identity: the archive SHA-256 matched the workstation copy. The
+  running admin image reports version `1.2.0-dev`, build
+  `62acf66c2182-dirty`. This was built from the tested v1.2 working tree before
+  its source commit; create a clean build from merged `dev` before a stable
+  release.
+- Host metrics: private `GET /metrics` returned live VPS memory, root disk,
+  network totals, load averages, and uptime. Docker inspection showed UID
+  65532, no added capabilities, no privileged/host PID/network mode, no
+  published port, and read-only `/proc`, `/sys`, and root filesystem mounts.
+- Public routes with certificate verification enabled: `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403 with TLS verify result
+  0 for each. Anonymous `/statistics` redirected to login; history and SSE
+  endpoints returned 401. The access host remained default-deny.
+- Persistence and tunnel: TOTP key/state, whitelist files, and site content
+  were present after update. A populated daily history file remained present
+  across an admin-only restart, and admin returned healthy. The WireGuard
+  container reported a recent peer handshake after the full update restart.
+- Remaining operator check: confirm Jellyfin streaming from the native
+  Windows client after the v1.2 update. The scoped Windows firewall rule and
+  streaming were previously operator-confirmed on 1.1.2-dev; the new update's
+  peer handshake is observed, but post-update playback was not tested here.
 
 ## Current status
 
