@@ -377,7 +377,7 @@ try {
     $postEnrollmentAdmin = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'admin.domain.test'
     Assert-Equal '200' ([string][int]$postEnrollmentAdmin.StatusCode) 'Admin service did not recover with active TOTP after restart.'
 
-    Write-Host 'M6 and TOTP enrolment browser integration checks passed: real Chromium admin navigation and rendered controls, password reauthentication, QR display, rejected code, cancellation, successful activation, retained WireGuard config, encrypted tunnel reachability, outage and recovery, Jellyfin forwarding only through the tunnel, prior M1–M5 gates, and isolated test resources.'
+    Write-Host 'M6 and TOTP admin browser integration checks passed: real Chromium navigation, dashboard build information, password reauthentication, QR setup, rejected and accepted codes, cancellation, authenticator disable with password and TOTP, session revocation, password-only login, retained WireGuard config, encrypted tunnel reachability, outage and recovery, and isolated test resources.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1

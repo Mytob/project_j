@@ -296,7 +296,7 @@ func (s *TOTPStore) RequireFreshEnrollment() error {
 }
 
 // Disable clears any TOTP credential and returns to the optional, unconfigured
-// state. Only the privileged local CLI calls this operation.
+// state. Callers must authorize this transition before invoking it.
 func (s *TOTPStore) Disable() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

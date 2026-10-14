@@ -18,12 +18,22 @@ later stages must not begin before the current stage's automated gate passes.
 | 3 — Web enrolment | **Complete** | Server-rendered setup requires fresh password verification before secret/QR display, generates a local PNG QR, confirms a six-digit code, supports cancellation, and revokes sessions after activation. Real Chromium tests exercise rendered controls and the full enrolment journey through the HTTPS test route. `./build.ps1 test` passed; [PR #25](https://github.com/Mytob/project_j/pull/25) merged to `dev` as `9de712c`. |
 | 4 — Login enforcement | **Complete** | Enabled TOTP is required with the password for every new admin session. Persistent replay checks, shared login throttling, fail-closed storage errors, and concurrent login tests pass. Browser and full regression gate passed on 2026-10-13; PR #26 merged to `dev` as `298224d`. |
 | 5 — Privileged VPS CLI recovery | **Complete** | Root-only `reset-totp`, `disable-totp`, and `replace-totp`; replacement is enabled-only and requires a verified new enrollment before normal access returns. Recovery sessions are limited to setup/logout. Focused Go tests and `pwsh -NoProfile -File .\build.ps1 test` passed on 2026-10-13; [PR #27](https://github.com/Mytob/project_j/pull/27) merged to `dev` as `06805d1`. |
-| 6 — Full integration and release testing | **Complete (local gate)** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` passed on 2026-10-14, including Go, M1–M6 browser/integration, and offline package install/update/rollback. Tests verify TOTP key/state preservation and backup/restore, packaged CLI recovery, downgrade rejection, and package binary permissions. Actual-host v1.1 checks are not part of this stage; no live VPS deployment was made. |
+| 6 — Full integration and release testing | **Complete (local gate)** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` passed on 2026-10-14, including Go, M1–M6 browser/integration, and offline package install/update/rollback. Tests verify TOTP key/state preservation and backup/restore, packaged CLI recovery, downgrade rejection, and package binary permissions. Actual-host v1.1 checks were separate from this local stage. The operator later reported updating the test VPS to 1.1.0-dev and confirmed streaming worked. |
 
 The execution plan follows the supplied implementation brief in order:
 standalone engine; auth state/persistence; web enrolment; login enforcement;
 root-only VPS CLI recovery; full local integration and release validation.
-No live VPS deployment is part of v1.1 testing.
+The Stage 6 host checks were separate from the local gate. The operator later
+reported updating the test VPS to v1.1.0-dev and confirmed streaming worked;
+the follow-up changes below require their own package validation.
+
+### Authorized operator follow-up — v1.1.1-dev
+
+| Change | Status | Evidence / blocker |
+| --- | --- | --- |
+| Password-and-TOTP protected admin control to disable TOTP, with global session revocation | **Complete (local release gate)** | Handler tests cover CSRF, wrong password, invalid code, and session revocation; Chromium verifies the end-to-end disable and password-only login in `build.ps1 release -Version 1.1.1-dev`. |
+| Show packaged version and source commit build number in the admin dashboard | **Complete (local release gate)** | Browser integration verifies linker-injected metadata; package validation checks image version/revision labels in `build.ps1 release -Version 1.1.1-dev`. |
+| Show updater milestone percentage and live activity while long operations run | **Complete (local release gate)** | Focused tests cover progress events and output; `build.ps1 release -Version 1.1.1-dev` passed. Percentage is based on completed milestones; activity continues during wait phases. |
 
 #### Stage 5 evidence — 2026-10-13
 

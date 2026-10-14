@@ -298,15 +298,26 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 		t.Fatal(err)
 	}
 	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
+	progressEvents := []UpdateProgress{}
 	manifest, err := Update(context.Background(), UpdateOptions{
 		PackagePath: packagePath, InstallRoot: root, Host: validHost(), Runner: runner,
 		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
+		Progress: func(progress UpdateProgress) { progressEvents = append(progressEvents, progress) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if manifest.Version != "1.0.1-dev" {
 		t.Fatalf("updated version = %s", manifest.Version)
+	}
+	if len(progressEvents) != 16 {
+		t.Fatalf("update progress events = %d, want start/completion for 8 milestones", len(progressEvents))
+	}
+	for step := 1; step <= 8; step++ {
+		started, completed := progressEvents[(step-1)*2], progressEvents[(step-1)*2+1]
+		if started.Step != step || started.Total != 8 || started.Done || completed.Step != step || !completed.Done {
+			t.Fatalf("update milestone %d events = %#v / %#v", step, started, completed)
+		}
 	}
 	for relative, expected := range preserved {
 		actual, err := os.ReadFile(filepath.Join(root, relative))

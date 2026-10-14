@@ -69,6 +69,9 @@ than treating TOTP as unconfigured. For backup and restore, preserve
 prevent the admin service from starting. Neither file is included in release
 packages.
 
+Release images include the package version and source commit build number;
+both are shown in the authenticated admin dashboard.
+
 ## VPS firewall and ports
 
 Docker publishes TCP 80/443 and the selected host UDP port from the WireGuard
@@ -96,9 +99,13 @@ run:
 sudo ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.0.1.tar.gz
 ```
 
-The updater verifies the release manifest and bundled image digests, refuses
-version downgrades, loads images without registry pulls, and recreates only the
-`jellyfin-proxy` services. It preserves the administrator credential,
+The updater reports its completed milestones as a percentage. A live spinner
+and elapsed time remain visible while Docker loads images or the health checks
+wait; non-interactive output emits periodic wait messages. The percentage
+tracks completed stages, not Docker's byte-level work. The updater verifies the
+release manifest and bundled image digests, refuses version downgrades, loads
+images without registry pulls, and recreates only the `jellyfin-proxy` services.
+It preserves the administrator credential,
 whitelist, WireGuard keys, TOTP key and encrypted state, and all site files.
 After healthy services and public HTTPS are verified,
 it retains the new active release and the immediately previous release and
@@ -137,8 +144,13 @@ does the same when an authenticator is currently enabled. The new factor is not
 active until its six-digit code verifies successfully. `disable-totp` clears
 authenticator state and returns to password-only administrator login. Each
 command validates the installed state, and a failed state update or admin
-restart restores the prior state and restarts the prior admin service. These
-commands require root and are not available through the web interface.
+restart restores the prior state and restarts the prior admin service. The
+local recovery commands require root. To disable an authenticator during
+normal operation, open the administrator dashboard, expand **Disable
+two-factor authentication**, and submit the administrator password plus a
+current unused authenticator code. This clears the factor and signs out every
+admin session. The dashboard also shows the running release version and source
+commit build number.
 
 ## First login and Windows WireGuard
 

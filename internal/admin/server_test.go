@@ -380,6 +380,66 @@ func TestTOTPEnrollmentRenderedControlsRequireFreshPasswordAndVerifyCode(t *test
 	}
 }
 
+func TestDashboardShowsConfiguredBuildInformation(t *testing.T) {
+	server, handler, _, _ := newTOTPTestServer(t)
+	server.ConfigureBuildInfo("1.1.1", "abc123def456")
+	cookie := loginTestAdmin(t, server)
+	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), "Version: <code>1.1.1</code>") || !strings.Contains(dashboard.Body.String(), "Build number: <code>abc123def456</code>") {
+		t.Fatalf("dashboard did not show build information: %d %s", dashboard.Code, dashboard.Body.String())
+	}
+}
+
+func TestDashboardTOTPDisableRequiresPasswordAndFreshCodeThenRevokesSessions(t *testing.T) {
+	server, handler, store, _ := newTOTPTestServer(t)
+	cookie := loginTestAdmin(t, server)
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	secret := activateTestTOTP(t, store, enrolledAt)
+	defer clear(secret)
+	otherSession, _, err := server.sessions.Create(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disableAt := enrolledAt.Add(30 * time.Second)
+	server.now = func() time.Time { return disableAt }
+	dashboard := request(handler, http.MethodGet, "/dashboard", nil, cookie)
+	body := dashboard.Body.String()
+	if dashboard.Code != http.StatusOK || !strings.Contains(body, `action="/totp/disable"`) || !strings.Contains(body, `id="totp-disable-password"`) || !strings.Contains(body, `id="totp-disable-code"`) {
+		t.Fatalf("enabled dashboard is missing disable controls: %d %s", dashboard.Code, body)
+	}
+	csrf := csrfPattern.FindStringSubmatch(body)[1]
+	if response := request(handler, http.MethodPost, "/totp/disable", url.Values{"password": {"correct test administrator password"}, "code": {"123456"}}, cookie); response.Code != http.StatusForbidden {
+		t.Fatalf("disable accepted missing CSRF: %d", response.Code)
+	}
+	validCode, err := totp.Code(secret, disableAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongPassword := request(handler, http.MethodPost, "/totp/disable", url.Values{"csrf": {csrf}, "password": {"wrong password"}, "code": {validCode}}, cookie)
+	if wrongPassword.Code != http.StatusUnauthorized || store.Status() != auth.TOTPEnabled {
+		t.Fatalf("disable with a wrong password changed TOTP state: status=%d state=%s", wrongPassword.Code, store.Status())
+	}
+	wrongCode := codeOutsideWindow(secret, disableAt)
+	invalidCode := request(handler, http.MethodPost, "/totp/disable", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}, "code": {wrongCode}}, cookie)
+	if invalidCode.Code != http.StatusUnauthorized || store.Status() != auth.TOTPEnabled {
+		t.Fatalf("disable with an invalid code changed TOTP state: status=%d state=%s", invalidCode.Code, store.Status())
+	}
+	disabled := request(handler, http.MethodPost, "/totp/disable", url.Values{"csrf": {csrf}, "password": {"correct test administrator password"}, "code": {validCode}}, cookie)
+	if disabled.Code != http.StatusSeeOther || disabled.Header().Get("Location") != "/?totp=disabled" || store.Status() != auth.TOTPUnconfigured {
+		t.Fatalf("valid disable response/state: status=%d location=%q state=%s", disabled.Code, disabled.Header().Get("Location"), store.Status())
+	}
+	if after := request(handler, http.MethodGet, "/dashboard", nil, cookie); after.Code != http.StatusSeeOther {
+		t.Fatalf("disable left the previous session authenticated: %d", after.Code)
+	}
+	if _, _, ok := server.sessions.State(otherSession); ok {
+		t.Fatal("disable did not revoke every administrator session")
+	}
+	login := request(handler, http.MethodGet, "/?totp=disabled", nil, nil)
+	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), "Authenticator disabled. Sign in with your administrator password.") || strings.Contains(login.Body.String(), `id="code"`) {
+		t.Fatalf("disabled login page did not confirm password-only sign-in: %d %s", login.Code, login.Body.String())
+	}
+}
+
 func TestTOTPEnrollmentRequiresCSRFAndCancellationIsPersistent(t *testing.T) {
 	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
