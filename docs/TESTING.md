@@ -620,3 +620,5 @@ these limits explicitly and use VPS preflight checks.
   forward to this package.
 - **Artifact:** `dist/jellyfin-proxy-1.2.1-dev-linux-amd64.tar.gz` was built
   and validated locally; it is generated output and is not committed.
+- **Source control:** Commit `5c0fb42` was merged into `dev` by [PR #40](https://github.com/Mytob/project_j/pull/40),
+  merge commit `4bc5c41`.

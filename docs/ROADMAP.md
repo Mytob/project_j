@@ -29,7 +29,8 @@ before promoting a stable release.
 
 ### Authorized administrator UI follow-up — 2026-10-14
 
-- **Status:** Implemented and local gates passed; PR pending.
+- **Status:** Implemented and local gates passed; [PR #40](https://github.com/Mytob/project_j/pull/40)
+  merged into `dev` as `4bc5c41`.
 - **Changes:** Removed the signed-in pill, administrator-session footer,
   duplicate version/build footer, redundant login caption, Statistics privacy
   note, and bottom return/sign-out link. Version and build remain in Overview's
