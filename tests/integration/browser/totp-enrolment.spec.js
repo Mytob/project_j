@@ -80,6 +80,43 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(page).toHaveScreenshot('security-mobile.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015 });
   await page.setViewportSize({ width: 1440, height: 1000 });
 
+  const visualPages = [
+    ['/dashboard', 'overview', 'Overview'],
+    ['/statistics', 'statistics', 'Statistics'],
+    ['/health', 'health', 'Health'],
+    ['/access-control', 'access-control', 'Access control'],
+    ['/wireguard', 'wireguard', 'WireGuard'],
+  ];
+  const dynamicVisualRegions = [
+    page.locator('.build-tag'),
+    page.locator('.top-status .live-indicator'),
+    page.locator('.page-footer span:last-child'),
+    page.locator('.stat-card > strong'),
+    page.locator('.stat-card > small'),
+    page.locator('.component-card small'),
+    page.locator('.component-card .state-pill'),
+    page.locator('.chart polyline'),
+    page.locator('.chart-crosshair'),
+    page.locator('.chart-selected'),
+    page.locator('.chart-range'),
+    page.locator('.chart-output'),
+    page.locator('.health-events time'),
+  ];
+  for (const [path, name, heading] of visualPages) {
+    await page.goto(path);
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    if (name === 'health') await page.addStyleTag({ content: '.health-events { display: none !important; }' });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(page).toHaveScreenshot(`admin-${name}-desktop.png`, { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.02, mask: dynamicVisualRegions, maskColor: '#102238' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page).toHaveScreenshot(`admin-${name}-mobile.png`, { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.02, mask: dynamicVisualRegions, maskColor: '#102238' });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBeTruthy();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+  await page.goto('/security');
   await page.getByLabel('Administrator password').fill('incorrect-password');
   const badPassword = page.waitForResponse((response) => response.url().endsWith('/totp/enroll/start') && response.status() === 401);
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
@@ -283,8 +320,8 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await mobilePage.getByLabel('Password').fill('new-integration-admin-password');
   await mobilePage.getByRole('button', { name: 'Sign in' }).tap();
   await expect(mobilePage).toHaveURL(/\/dashboard$/);
-  const menu = await mobilePage.getByRole('button', { name: 'Toggle navigation' }).boundingBox();
-  await mobilePage.touchscreen.tap(menu.x + menu.width / 2, menu.y + menu.height / 2);
+  const mobileMenu = mobilePage.getByRole('button', { name: 'Toggle navigation' });
+  await mobileMenu.tap();
   const healthLink = mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Health' });
   await expect(healthLink).toBeVisible();
   await healthLink.tap();
@@ -292,5 +329,31 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   expect(await mobilePage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await mobilePage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   expect(await mobilePage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await mobilePage.evaluate(() => { document.documentElement.style.fontSize = ''; });
+
+  await mobileMenu.tap();
+  await mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Security' }).tap();
+  await mobilePage.getByLabel('Current password').fill('new-integration-admin-password');
+  await mobilePage.getByLabel('New password', { exact: true }).fill('final-mobile-admin-password');
+  await mobilePage.getByLabel('Confirm new password').fill('final-mobile-admin-password');
+  await mobilePage.getByRole('button', { name: 'Change password' }).tap();
+  await expect(mobilePage).toHaveURL(/\?password=changed$/);
+  await mobilePage.getByLabel('Password').fill('final-mobile-admin-password');
+  await mobilePage.getByRole('button', { name: 'Sign in' }).tap();
+  await expect(mobilePage).toHaveURL(/\/dashboard$/);
+
+  await mobileMenu.tap();
+  await mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'WireGuard' }).tap();
+  mobilePage.once('dialog', (dialog) => dialog.accept());
+  await mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' }).tap();
+  await expect(mobilePage).toHaveURL(/\/wireguard\?rotated=1$/);
+  await expect(mobilePage.getByRole('status')).toContainText('previous Windows credentials have been revoked');
+  const mobileDownload = mobilePage.waitForEvent('download');
+  await mobilePage.getByRole('link', { name: 'Download and delete configuration' }).tap();
+  expect((await mobileDownload).suggestedFilename()).toBe('jellyfin-proxy.conf');
+  await expect.poll(async () => {
+    const response = await mobilePage.request.get('/api/initial');
+    return (await response.json()).wireguard_config_available;
+  }, { timeout: 10000 }).toBe(false);
   await mobileContext.close();
 });

@@ -23,3 +23,12 @@ export function chartPoints(values: readonly (number | undefined)[]) {
   const max = Math.max(...finite) || 1;
   return finite.map((value, i) => ({ x: finite.length < 2 ? 300 : i * 600 / (finite.length - 1), y: 150 - value / max * 132, value }));
 }
+
+export function nearestChartPoint(points: readonly { x: number }[], x: number) {
+  if (points.length === 0) return -1;
+  let nearest = 0;
+  for (let index = 1; index < points.length; index++) {
+    if (Math.abs(points[index].x - x) < Math.abs(points[nearest].x - x)) nearest = index;
+  }
+  return nearest;
+}

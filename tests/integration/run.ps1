@@ -454,7 +454,7 @@ try {
     $postEnrollmentAdmin = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'admin.domain.test'
     Assert-Equal '200' ([string][int]$postEnrollmentAdmin.StatusCode) 'Admin service did not recover with active TOTP after restart.'
 
-    Write-Host 'M6 and v1.1-v1.3 integration checks passed: Chromium auth workflows, responsive admin UI, health diagnostics, authenticated metrics/history, host collector, Caddy stream/WebSocket instrumentation, one-time WireGuard config download, peer rotation/revocation, encrypted tunnel recovery, and isolated test resources.'
+    Write-Host 'M6 and v1.1-v1.3 integration checks passed: Chromium auth workflows, Chromium/Firefox/WebKit admin navigation and chart controls, responsive admin UI, health diagnostics, authenticated metrics/history, host collector, Caddy stream/WebSocket instrumentation, one-time WireGuard config download, peer rotation/revocation, encrypted tunnel recovery, and isolated test resources.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1

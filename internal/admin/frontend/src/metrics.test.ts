@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chartPoints, formatBytes, formatNumber, formatPercent, formatRate } from "./metrics";
+import { chartPoints, formatBytes, formatNumber, formatPercent, formatRate, nearestChartPoint } from "./metrics";
 
 describe("metric formatting", () => {
   it("keeps unavailable measurements distinct from zero", () => {
@@ -32,5 +32,12 @@ describe("chart point mapping", () => {
   it("returns no points for empty or non-finite samples", () => {
     expect(chartPoints([])).toEqual([]);
     expect(chartPoints([Number.NaN, Number.POSITIVE_INFINITY])).toEqual([]);
+  });
+
+  it("selects the nearest visible sample and handles empty charts", () => {
+    const points = chartPoints([2, 4, 8]);
+    expect(nearestChartPoint(points, 520)).toBe(2);
+    expect(nearestChartPoint(points, 151)).toBe(1);
+    expect(nearestChartPoint([], 100)).toBe(-1);
   });
 });

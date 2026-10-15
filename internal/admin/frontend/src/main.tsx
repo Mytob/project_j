@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
-import { chartPoints, formatBytes as bytes, formatNumber as number, formatPercent as pct, formatRate as rate } from "./metrics";
+import { chartPoints, formatBytes as bytes, formatNumber as number, formatPercent as pct, formatRate as rate, nearestChartPoint } from "./metrics";
 
 type Component = { name: string; state: string; class: string; detail: string; checked_at?: string; last_success_at?: string; last_failure_at?: string };
 type HealthEvent = { at: string; name: string; from?: string; to: string; detail: string };
@@ -123,11 +123,30 @@ function Statistics({ metrics }: { metrics: Metrics }) {
   </>;
 }
 function Chart({ title, rows, read }: { title: string; rows: HistoryPoint[]; read: (row: HistoryPoint) => number | undefined }) {
-  const values = rows.map(read).filter((value): value is number => value != null && Number.isFinite(value));
+  const validRows = rows.map((row) => ({ row, value: read(row) })).filter((sample): sample is { row: HistoryPoint; value: number } => sample.value != null && Number.isFinite(sample.value));
+  const values = validRows.map((sample) => sample.value);
   const samples = chartPoints(values);
   const points = samples.map(({x,y}) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  const latest = samples.at(-1);
-  return <article className="panel chart-panel"><div className="panel-title"><div><p className="eyebrow">HISTORY</p><h2>{title}</h2></div><span className="muted">{values.length} samples</span></div><svg className="chart" viewBox="0 0 600 160" role="img" aria-label={`${title} historical chart`} preserveAspectRatio="none"><path className="chart-gridline" d="M0 20H600M0 60H600M0 100H600M0 150H600"/><polyline points={points}/>{latest && <circle cx={latest.x} cy={latest.y} r="5" tabIndex={0}><title>Latest value: {number(latest.value)}</title></circle>}</svg>{values.length === 0 && <p className="empty-chart">No measurements recorded for this range.</p>}</article>;
+  const [requestedIndex, setRequestedIndex] = useState(-1);
+  const activeIndex = samples.length ? Math.min(requestedIndex < 0 ? samples.length - 1 : requestedIndex, samples.length - 1) : -1;
+  const selected = activeIndex >= 0 ? samples[activeIndex] : undefined;
+  const selectedRow = activeIndex >= 0 ? validRows[activeIndex]?.row : undefined;
+  const displayedValue = selected ? title === "Proxy traffic" ? rate(selected.value) : title === "Memory usage" ? bytes(selected.value) : title === "CPU usage" ? number(selected.value, "%") : number(selected.value) : "No samples";
+  const chooseNearest = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (samples.length < 2) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0) return;
+    const chartX = Math.max(0, Math.min(600, (event.clientX - bounds.left) * 600 / bounds.width));
+    setRequestedIndex(nearestChartPoint(samples, chartX));
+  };
+  const crosshair = selected ? `M${selected.x.toFixed(1)} 10V150` : "";
+  return <article className="panel chart-panel"><div className="panel-title"><div><p className="eyebrow">HISTORY</p><h2>{title}</h2></div><span className="muted">{values.length} samples</span></div>
+    <svg className="chart" viewBox="0 0 600 160" role="group" aria-label={`${title} historical chart`} preserveAspectRatio="none" onPointerMove={chooseNearest} onPointerDown={chooseNearest} onPointerLeave={() => setRequestedIndex(-1)}>
+      <path className="chart-gridline" d="M0 20H600M0 60H600M0 100H600M0 150H600"/><polyline points={points}/>
+      {selected && <><path className="chart-crosshair" d={crosshair}/><circle className="chart-selected" cx={selected.x} cy={selected.y} r="5"/></>}
+    </svg>
+    <label className="chart-scrubber">Explore samples<input aria-label={`${title} chart sample`} className="chart-range" type="range" min="0" max={Math.max(values.length - 1, 0)} value={Math.max(activeIndex, 0)} disabled={values.length < 2} onChange={(event) => setRequestedIndex(Number(event.target.value))}/><output className="chart-output">{selectedRow?.captured_at ? new Date(selectedRow.captured_at).toLocaleString() : "No measurements recorded for this range"} · {displayedValue}</output></label>
+  </article>;
 }
 
 function Health({ data, refresh }: { data: Initial; refresh: () => void }) { return <><div className="health-summary"><span className="health-dot"/><div><b>{worst(data.components)}</b><p>Each state is based on its latest check. Unknown means the service cannot be observed through the private admin boundary.</p></div><button className="button secondary" onClick={refresh}>Run diagnostics</button></div><article className="panel"><div className="panel-title"><div><p className="eyebrow">SERVICE PATH</p><h2>Caddy → WireGuard → Windows PC → Jellyfin</h2></div></div><PathDiagram/><p className="muted">Peer handshakes and Jellyfin reachability are checked from the WireGuard network namespace. Container liveness stays Unknown because the admin service has no Docker socket.</p></article><section className="panel"><div className="panel-title"><div><p className="eyebrow">COMPONENTS</p><h2>Detailed status</h2></div></div><ComponentCards components={data.components}/></section><section className="panel"><div className="panel-title"><div><p className="eyebrow">RECENT CHANGES</p><h2>Health history</h2></div><span className="muted">Last 90 days · up to 500 changes</span></div>{data.health_events.length ? <ol className="health-events">{[...data.health_events].reverse().map((event, index) => <li key={`${event.at}-${event.name}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.name}</b><span>{event.from ?? "First check"} → {event.to}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No health status changes have been recorded.</p>}</section></>; }

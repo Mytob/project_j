@@ -1,7 +1,7 @@
 FROM node:24.22.0-alpine3.24@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS frontend
 WORKDIR /frontend
 COPY internal/admin/frontend/package.json internal/admin/frontend/package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.0 && npm ci --ignore-scripts --no-audit --no-fund
 COPY internal/admin/frontend ./
 RUN npm run typecheck && npm test && npm run build
 

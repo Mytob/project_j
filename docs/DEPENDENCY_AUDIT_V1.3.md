@@ -9,10 +9,13 @@ v1.3 implementation.
 `internal/admin/frontend/package.json` pins React and React DOM 19.3.1,
 TypeScript 7.0.2, Vite 8.3.4, Vitest 5.0.5, `@vitejs/plugin-react` 6.1.2,
 and React type packages 19.3.0. `package-lock.json` locks the complete tree.
-The build and browser-test toolchain uses Node 24.22.0 on Alpine 3.24. The
-Node release was published on 2026-10-14 as an LTS update ([official release
-notes](https://nodejs.org/en/blog/release/v24.22.0)). Node is not part of the
-production runtime image.
+The exact latest npm registry versions observed on 2026-10-15 matched those
+pins. The build and browser-test toolchain uses Node 24.22.0 on Alpine 3.24
+with npm 12.2.0 pinned by the Docker build/test commands. The Node image
+bundled npm 11.19.1; `npm view npm version` returned 12.2.0, whose declared
+engine range includes Node 24.22.0. The Node release was published on
+2026-10-14 as an LTS update ([official release notes](https://nodejs.org/en/blog/release/v24.22.0)).
+Node and npm are not part of the production runtime image.
 
 `npm audit` was run for the frontend and for the separately locked browser
 integration package. Both reported zero vulnerabilities.
@@ -24,6 +27,14 @@ integration package. Both reported zero vulnerabilities.
   pinned to 2.11.7. Go 1.27.2's release is recorded in the [official Go
   release history](https://go.dev/doc/devel/release); Caddy 2.11.7 is recorded
   in the [official Caddy releases](https://github.com/caddyserver/caddy/releases).
+- The pinned Caddy builder image contains xcaddy 0.4.7, verified by running
+  `xcaddy version` in the image. This matches the latest version in the
+  [official xcaddy releases](https://github.com/caddyserver/xcaddy/releases).
+- The browser suite pins `@playwright/test` 1.64.1, the latest official release
+  observed on 2026-10-15 ([Playwright v1.64.1](https://github.com/microsoft/playwright/releases/tag/v1.64.1)).
+  Its browser image is pinned to
+  `mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf`.
+  It is test-only. The browser smoke suite covers Chromium, Firefox, and WebKit.
 - Node 24.22.0 Alpine 3.24 image digest:
   `sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f`.
 - Go 1.27.2 Alpine 3.24 image digest:
@@ -63,7 +74,8 @@ third-party container image vulnerability database scan.
 ## Sources
 
 Version references above are pinned in `go.mod`, `go.sum`, the frontend npm
-lockfiles, and the four production Dockerfiles. Upstream version context:
+lockfiles, and the production Dockerfiles; the Playwright test image is pinned
+separately by digest. Upstream version context:
 [Node.js release notes](https://nodejs.org/en/blog/release/v24.22.0),
 [Go release history](https://go.dev/doc/devel/release), [Caddy releases](https://github.com/caddyserver/caddy/releases),
 and [Alpine downloads](https://www.alpinelinux.org/downloads/).
