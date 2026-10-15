@@ -637,8 +637,9 @@ these limits explicitly and use VPS preflight checks.
 
 ### v1.3.0-dev local release gate — 2026-10-15
 
-- **Command:** `pwsh -NoProfile -File .\build.ps1 release -Version
-  1.3.0-dev` — PASS, exit 0. The runner reported Go, browser/monitoring
+- **Command:** On clean commit `f14737f2db83`, `pwsh -NoProfile -File
+  .\build.ps1 release -Version 1.3.0-dev` — PASS, exit 0 at 2026-10-15
+  20:18 UTC. The runner reported Go, browser/monitoring
   integration, and offline package/install/update/rollback gates passed.
 - **Go and frontend:** All Go packages passed. Frontend typecheck, five Vitest
   tests, and the Vite production build passed.
