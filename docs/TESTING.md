@@ -702,3 +702,5 @@ these limits explicitly and use VPS preflight checks.
 - **Host checks:** No v1.3 deployment, VPS/kernel/provider-firewall/ACME check,
   native Windows client/firewall test, or playback check was performed. These
   remain blocked; v1.2 host evidence does not satisfy them.
+- **Source control:** [PR #45](https://github.com/Mytob/project_j/pull/45)
+  merged to `dev` at `658e8da` after the clean local gate passed.
