@@ -29,7 +29,7 @@ $imageReferences = @(
     "jellyfin-proxy/hostmetrics:$Version",
     "jellyfin-proxy/wireguard:$Version",
     "jellyfin-proxy/caddy:$Version",
-    'alpine:3.22'
+    'alpine:3.24.2'
 )
 
 function Invoke-Checked([string]$Command, [string[]]$Arguments) {
@@ -58,12 +58,14 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $packageDirectory 'site') -Force | Out-Null
 
     $repoMount = $repoRoot.Replace('\', '/')
+    $frontendMount = (Join-Path $repoRoot 'internal/admin/frontend').Replace('\', '/')
     $binDirectory = Join-Path $packageDirectory 'bin'
     $binMount = $binDirectory.Replace('\', '/')
     $workMount = $workDirectory.Replace('\', '/')
-    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/admin-linux-amd64', './cmd/admin')
-    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/proxyctl-linux-amd64', './cmd/proxyctl')
-    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${workMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.25.2-alpine3.22', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/installcheck-linux-amd64', './tests/deployment/installcheck')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${frontendMount}:/frontend", '-w', '/frontend', 'node:24.22.0-alpine3.24@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f', 'sh', '-c', 'npm ci --ignore-scripts --no-audit --no-fund && npm run typecheck && npm test && npm run build')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/admin-linux-amd64', './cmd/admin')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/proxyctl-linux-amd64', './cmd/proxyctl')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${workMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/installcheck-linux-amd64', './tests/deployment/installcheck')
 
     $adminImage = $imageReferences[0]
     $hostMetricsImage = $imageReferences[1]
@@ -77,9 +79,21 @@ try {
     if ($LASTEXITCODE -ne 0 -or [string]$builtRevision -ne $buildNumber) { throw 'Packaged admin image does not contain the expected source build number.' }
     Invoke-Checked 'docker' @('build', '--file', 'deploy/wireguard/Dockerfile', '--tag', $wireguardImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/caddy/Dockerfile', '--tag', $caddyImage, '.')
-    Invoke-Checked 'docker' @('pull', $imageReferences[4])
+    Invoke-Checked 'docker' @('pull', 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6')
+    # Pulling by digest keeps the selected bits immutable, but Docker does not
+    # create the human-readable tag used by Compose and the package manifest.
+    Invoke-Checked 'docker' @('image', 'tag', 'alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6', 'alpine:3.24.2')
 
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/compose.yaml') -Destination (Join-Path $packageDirectory 'compose.yaml')
+    $packageComposePath = Join-Path $packageDirectory 'compose.yaml'
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/compose.yaml') -Destination $packageComposePath
+    # Offline Docker image archives preserve tags, not the upstream manifest
+    # digest aliases. The packaged Compose file uses the tag that is bound to
+    # the exact pinned digest above and recorded by the package image manifest.
+    $composeText = Get-Content -LiteralPath $packageComposePath -Raw
+    $pinnedAlpine = 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6'
+    $alpineReferences = ([regex]::Matches($composeText, [regex]::Escape($pinnedAlpine))).Count
+    if ($alpineReferences -ne 2) { throw "Expected two pinned Alpine utility image references in Compose; found $alpineReferences." }
+    $composeText.Replace($pinnedAlpine, 'alpine:3.24.2') | Set-Content -LiteralPath $packageComposePath -Encoding utf8NoBOM
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/PACKAGE-ENV.example') -Destination (Join-Path $packageDirectory '.env.example')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/caddy/Caddyfile') -Destination (Join-Path $packageDirectory 'config/Caddyfile')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/caddy/whitelist.default.caddy') -Destination (Join-Path $packageDirectory 'config/whitelist.caddy')

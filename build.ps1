@@ -85,7 +85,7 @@ if ($Target -eq 'release') {
                 throw 'Go 1.24+ or Docker is required to run Go tests.'
             }
             $repoPath = (Resolve-Path $PSScriptRoot).Path.Replace('\', '/')
-            Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoPath}:/src", '-w', '/src', 'golang:1.25.2-alpine3.22', 'go', 'test', './...')
+            Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoPath}:/src", '-w', '/src', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'test', './...')
         }
         $checks[0].status = 'passed'
 
@@ -139,7 +139,7 @@ else {
         throw 'Go 1.24+ or Docker is required to run Go tests.'
     }
     $repoPath = (Resolve-Path $PSScriptRoot).Path.Replace('\', '/')
-    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoPath}:/src", '-w', '/src', 'golang:1.25.2-alpine3.22', 'go', 'test', './...')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoPath}:/src", '-w', '/src', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'test', './...')
 }
 
 if ($Target -eq 'test') {

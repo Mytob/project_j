@@ -260,7 +260,10 @@ func ResetPassword(ctx context.Context, installRoot, password string, runner Com
 	if err := validateInstalledLayout(installRoot); err != nil {
 		return err
 	}
-	credentialPath := filepath.Join(installRoot, "config", "admin.json")
+	credentialPath, err := activeCredentialPath(installRoot)
+	if err != nil {
+		return err
+	}
 	old, err := os.ReadFile(credentialPath)
 	if err != nil {
 		return fmt.Errorf("read current administrator credential: %w", err)
@@ -460,6 +463,13 @@ func validateInstalledLayout(root string) error {
 			return fmt.Errorf("installation file %s is missing or unsafe", relative)
 		}
 	}
+	credentialPath, err := activeCredentialPath(root)
+	if err != nil {
+		return err
+	}
+	if _, err := auth.LoadCredential(credentialPath); err != nil {
+		return fmt.Errorf("validate active administrator credential: %w", err)
+	}
 	return nil
 }
 
@@ -598,4 +608,22 @@ func rollbackCredential(path string, old []byte) {
 	if atomicReplace(path, old, 0o640) == nil {
 		_ = os.Chown(path, 0, adminContainerUID)
 	}
+}
+
+// activeCredentialPath prefers the mutable admin-data credential created by
+// the web password-change flow, and otherwise keeps the original config file
+// as the source for older installations.
+func activeCredentialPath(installRoot string) (string, error) {
+	override := filepath.Join(installRoot, "data", "admin-credential.json")
+	info, err := os.Lstat(override)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", errors.New("administrator credential override is unsafe")
+		}
+		return override, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect administrator credential override: %w", err)
+	}
+	return filepath.Join(installRoot, "config", "admin.json"), nil
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const credentialVersion = 1
@@ -18,6 +19,7 @@ type credentialFile struct {
 
 // Credential holds only the serialized password hash.
 type Credential struct {
+	mu           sync.RWMutex
 	passwordHash string
 }
 
@@ -68,7 +70,37 @@ func LoadCredential(path string) (*Credential, error) {
 
 // Verify reports whether password matches the stored hash.
 func (c *Credential) Verify(password string) bool {
-	return c != nil && VerifyPassword(c.passwordHash, password)
+	if c == nil {
+		return false
+	}
+	c.mu.RLock()
+	hash := c.passwordHash
+	c.mu.RUnlock()
+	return VerifyPassword(hash, password)
+}
+
+// ReplacePassword validates and persists a replacement before making it
+// active in memory. A failed write leaves the current password usable.
+func (c *Credential) ReplacePassword(path, password string) error {
+	if c == nil {
+		return errors.New("administrator credential is unavailable")
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(credentialFile{Version: credentialVersion, PasswordHash: hash}, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := atomicCredentialWrite(path, data); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.passwordHash = hash
+	c.mu.Unlock()
+	return nil
 }
 
 func atomicCredentialWrite(path string, data []byte) error {

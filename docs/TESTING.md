@@ -634,3 +634,35 @@ these limits explicitly and use VPS preflight checks.
   named test project active. The next run exposed its reserved-port collision.
   The project was removed with its own Compose file and scoped project name;
   the subsequent complete release gate passed.
+
+### v1.3.0-dev local release gate — 2026-10-15
+
+- **Command:** On clean commit `f14737f2db83`, `pwsh -NoProfile -File
+  .\build.ps1 release -Version 1.3.0-dev` — PASS, exit 0 at 2026-10-15
+  20:18 UTC. The runner reported Go, browser/monitoring
+  integration, and offline package/install/update/rollback gates passed.
+- **Go and frontend:** All Go packages passed. Frontend typecheck, five Vitest
+  tests, and the Vite production build passed.
+- **Browser and container integration:** Chromium covered authentication,
+  responsive admin pages, health diagnostics, authenticated statistics,
+  history/SSE, password change, WireGuard peer lifecycle and config delivery.
+  Container checks covered collector isolation and real Caddy streaming,
+  range, WebSocket and byte-accounting behavior.
+- **Package/update:** Five images loaded into the isolated daemon without
+  registry access. Fresh install/readiness, IPv4/IPv6 ingress rules, offline
+  update, rollback, retention, credential reset/TOTP recovery, and preservation
+  of an unrelated container passed. The intentional port-conflict case also
+  verified rollback and left the unrelated container running.
+- **Report:** `dist/release-validation-1.3.0-dev.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  The archive is `dist/jellyfin-proxy-1.3.0-dev-linux-amd64.tar.gz` and is
+  generated output, not committed.
+- **Host limits:** No v1.3 deployment to a VPS or native Windows WireGuard,
+  firewall, and playback verification was performed. Those checks remain
+  blocked and the v1.2 evidence does not satisfy them.
+- **Dependency audit:** `npm audit` reported zero vulnerabilities for both
+  frontend lockfiles. `govulncheck` found no vulnerable reachable symbols;
+  one no-fix, module-only advisory applies to unused `golang.org/x/crypto/openpgp`.
+  Docker Scout was not run after the automatic approval reviewer rejected
+  external transfer of private-image SBOM/package metadata. Full evidence is in
+  `docs/DEPENDENCY_AUDIT_V1.3.md`.

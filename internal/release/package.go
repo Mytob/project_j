@@ -223,7 +223,7 @@ func validateImages(manifest Manifest) error {
 		"jellyfin-proxy/hostmetrics:" + manifest.Version: false,
 		"jellyfin-proxy/wireguard:" + manifest.Version:   false,
 		"jellyfin-proxy/caddy:" + manifest.Version:       false,
-		"alpine:3.22": false,
+		"alpine:3.24.2": false,
 	}
 	if len(manifest.Images) != len(want) {
 		return errors.New("package must contain exactly the five supported deployment images")

@@ -289,11 +289,11 @@ func (w *trackedResponseWriter) Flush() {
 }
 
 func (w *trackedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("underlying response writer does not support hijacking")
-	}
-	conn, rw, err := hijacker.Hijack()
+	// Caddy wraps the server writer in a response recorder that exposes
+	// optional interfaces through Unwrap rather than implementing Hijacker
+	// itself. ResponseController follows that chain while preserving the
+	// standard optional-interface behaviour for other servers.
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
 	if err != nil {
 		return nil, nil, err
 	}

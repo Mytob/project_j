@@ -106,7 +106,7 @@ func run() error {
 		return fmt.Errorf("enable test TOTP before package update: %w", err)
 	}
 	preserved := map[string][]byte{}
-	for _, relative := range []string{"config/admin.json", "config/wireguard/server.conf", "config/wireguard/windows.conf", "config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html"} {
+	for _, relative := range []string{"config/admin.json", "config/wireguard/server.conf", "data/wireguard-client/windows.conf", "config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html"} {
 		path := filepath.Join(options.InstallRoot, relative)
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -253,7 +253,7 @@ func run() error {
 	// The installer must remove its own partial deployment while leaving this
 	// unrelated container alone.
 	conflictName := "jellyfin-proxy-installcheck-port-conflict"
-	if _, err := runner.Run(ctx, "docker", "run", "--detach", "--name", conflictName, "--publish", "80:80", "alpine:3.22", "sleep", "240"); err != nil {
+	if _, err := runner.Run(ctx, "docker", "run", "--detach", "--name", conflictName, "--publish", "80:80", "alpine:3.24.2", "sleep", "240"); err != nil {
 		return fmt.Errorf("create scoped port-conflict fixture: %w", err)
 	}
 	defer func() { _, _ = runner.Run(context.Background(), "docker", "rm", "--force", conflictName) }()
@@ -282,6 +282,19 @@ func (installcheckRunner) Run(ctx context.Context, executable string, args ...st
 		fmt.Printf("Install-check command started: %s\n", command)
 	}
 	output, err := (deployment.ExecRunner{}).Run(ctx, executable, args...)
+	if err != nil && executable == "docker" {
+		for index, argument := range args {
+			if argument != "up" || index+1 >= len(args) || args[index+1] != "--detach" {
+				continue
+			}
+			logArgs := append(append([]string(nil), args[:index]...), "logs", "--no-color", "--tail", "80")
+			logs, logErr := (deployment.ExecRunner{}).Run(ctx, executable, logArgs...)
+			if logErr == nil && strings.TrimSpace(logs) != "" {
+				err = fmt.Errorf("%w; deployment service logs:\n%s", err, logs)
+			}
+			break
+		}
+	}
 	if trace {
 		if err != nil {
 			fmt.Printf("Install-check command failed: %s: %v\n", command, err)
@@ -554,7 +567,7 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 		"jellyfin-proxy/hostmetrics:" + version,
 		"jellyfin-proxy/wireguard:" + version,
 		"jellyfin-proxy/caddy:" + version,
-		"alpine:3.22",
+		"alpine:3.24.2",
 	}
 	imagesPath := filepath.Join(packageDirectory, "images-update.tar")
 	if _, err := runner.Run(ctx, "docker", append([]string{"image", "save", "--output", imagesPath}, newImages...)...); err != nil {

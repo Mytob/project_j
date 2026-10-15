@@ -26,20 +26,20 @@ services:
       - "8181"
 
   totp-key-init:
-    image: alpine:3.22
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     user: "0:0"
     volumes:
       - totp_key:/key
     command: ["sh", "-c", "if [ ! -f /key/totp.key ]; then dd if=/dev/urandom of=/key/totp.key bs=32 count=1 2>/dev/null && chown 0:65532 /key/totp.key && chmod 440 /key/totp.key; fi"]
 
   wireguard-config-init:
-    image: alpine:3.22
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     user: "0:0"
     volumes:
       - ./wireguard.generated:/source:ro
       - wireguard_server:/server
       - wireguard_client:/client
-    command: ["sh", "-c", "cp /source/server.conf /server/wg0.conf && chown 0:0 /server/wg0.conf && chmod 600 /server/wg0.conf && chmod 700 /server && cp /source/windows.conf /client/windows.conf && chown 0:65532 /client/windows.conf && chmod 640 /client/windows.conf && chown 0:65532 /client && chmod 750 /client"]
+    command: ["sh", "-c", "mkdir -p /server /client && if [ ! -e /server/wg0.conf ]; then cp /source/server.conf /server/wg0.conf && chown 0:0 /server/wg0.conf && chmod 600 /server/wg0.conf; fi && chmod 700 /server && if [ ! -e /client/.initialized ]; then cp /source/windows.conf /client/windows.conf && chown 0:65532 /client/windows.conf && chmod 640 /client/windows.conf && touch /client/.initialized && chmod 600 /client/.initialized; fi && chown 0:65532 /client && chmod 2770 /client"]
 
   wireguard:
     build:
@@ -50,8 +50,14 @@ services:
     ports:
       - "127.0.0.1:${HTTP_PORT:-18080}:80"
       - "127.0.0.1:${HTTPS_PORT:-18443}:443"
+    environment:
+      WIREGUARD_CONFIG: /etc/wireguard/wg0.conf
+      WIREGUARD_CLIENT_CONFIG: /var/lib/wireguard-client/windows.conf
+      WIREGUARD_CONTROL_SOCKET: /run/wireguard-control/control.sock
     volumes:
-      - wireguard_server:/etc/wireguard:ro
+      - wireguard_server:/etc/wireguard:rw
+      - wireguard_client:/var/lib/wireguard-client:rw
+      - wireguard_control:/run/wireguard-control
       - wireguard_health:/run/wireguard-health
     depends_on:
       wireguard-config-init:
@@ -90,7 +96,7 @@ services:
         condition: service_healthy
 
   wireguard-check:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     network_mode: service:wireguard
     entrypoint: ["/bin/sh", "-c"]
     command: ["sleep 600"]
@@ -122,14 +128,14 @@ services:
         condition: service_completed_successfully
 
   caddy-socket-init:
-    image: alpine:3.22
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     user: "0:0"
     volumes:
       - caddy_admin_socket:/run/caddy-admin
     command: ["sh", "-c", "chown 0:65532 /run/caddy-admin && chmod 2750 /run/caddy-admin"]
 
   proxy-metrics-init:
-    image: alpine:3.22
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     user: "0:0"
     volumes:
       - proxy_metrics:/run/proxy-metrics
@@ -142,11 +148,12 @@ services:
       args:
         VERSION: integration-test
         BUILD_NUMBER: browser-test
-    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/config/wireguard/windows.conf", "--wireguard-health", "/run/wireguard-health/current", "--host-metrics-url", "http://hostmetrics:8181", "--proxy-metrics", "/run/proxy-metrics/current.json"]
+    command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/data/wireguard-client/windows.conf", "--wireguard-control-socket", "/run/wireguard-control/control.sock", "--wireguard-endpoint", "wireguard:51820", "--wireguard-health", "/run/wireguard-health/current", "--host-metrics-url", "http://hostmetrics:8181", "--proxy-metrics", "/run/proxy-metrics/current.json"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
       - totp_key:/opt/jellyfin-proxy/config/totp-key:ro
-      - wireguard_client:/opt/jellyfin-proxy/config/wireguard:ro
+      - wireguard_client:/opt/jellyfin-proxy/data/wireguard-client:rw
+      - wireguard_control:/run/wireguard-control
       - caddy_admin_socket:/run/caddy-admin
       - proxy_metrics:/run/proxy-metrics:ro
       - wireguard_health:/run/wireguard-health:ro
@@ -171,14 +178,14 @@ services:
         condition: service_completed_successfully
 
   browser-tests:
-    image: mcr.microsoft.com/playwright:v1.64.0-noble
+    image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf
     profiles: [browser-tests]
     working_dir: /tmp
     volumes:
-      - ./browser:/tests:ro
+      - ./browser:/tests:rw
     environment:
       BASE_URL: https://admin.domain.test
-    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm ci && npx playwright test --reporter=line"]
+    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm ci && npx playwright test --reporter=line --update-snapshots=missing; status=$$?; cp -a /tmp/totp-browser/*-snapshots /tests/ 2>/dev/null || true; exit $$status"]
     depends_on:
       admin:
         condition: service_started
@@ -187,14 +194,14 @@ services:
         ipv4_address: ${BROWSER_TEST_IP:-172.29.254.30}
 
   admin-data-init:
-    image: alpine:3.22
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     user: "0:0"
     volumes:
       - admin_data:/data
     command: ["sh", "-c", "chown 65532:65532 /data && chmod 700 /data"]
 
   totp-state-init:
-    image: alpine:3.22
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     user: "0:0"
     volumes:
       - admin_data:/data
@@ -204,7 +211,7 @@ services:
     command: ["sh", "-c", "if [ ! -f /data/totp-state.json ]; then printf '{\"version\":1,\"status\":\"unconfigured\"}\\n' > /data/totp-state.json && chown 65532:65532 /data/totp-state.json && chmod 600 /data/totp-state.json; fi"]
 
   trusted-client:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
     entrypoint: ["/bin/sh", "-c"]
     command: ["sleep 600"]
     networks:
@@ -212,7 +219,7 @@ services:
         ipv4_address: ${TRUSTED_CLIENT_IP:-172.29.254.10}
 
   untrusted-client:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
     entrypoint: ["/bin/sh", "-c"]
     command: ["sleep 600"]
     networks:
@@ -222,6 +229,7 @@ services:
 volumes:
   wireguard_server:
   wireguard_client:
+  wireguard_control:
   caddy_data:
   caddy_config:
   caddy_admin_socket:

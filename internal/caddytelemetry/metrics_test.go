@@ -66,7 +66,7 @@ func TestAllowlistDenyCountsOnlyExplicitHTTPDenials(t *testing.T) {
 func TestHijackedConnectionCountsWebSocketBytesBothDirections(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
-	base := &hijackWriter{conn: server}
+	base := &unwrapHijackWriter{hijackWriter: &hijackWriter{conn: server}}
 	incoming := &atomic.Uint64{}
 	outgoing := &atomic.Uint64{}
 	tracked := &trackedResponseWriter{ResponseWriter: base, incoming: incoming, count: outgoing}
@@ -144,6 +144,10 @@ type hijackWriter struct {
 	conn    net.Conn
 	headers http.Header
 }
+
+type unwrapHijackWriter struct{ *hijackWriter }
+
+func (w *unwrapHijackWriter) Unwrap() http.ResponseWriter { return w.hijackWriter }
 
 func (w *hijackWriter) Header() http.Header {
 	if w.headers == nil {
