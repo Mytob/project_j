@@ -22,7 +22,7 @@ if ($Target -eq 'release') {
     $reportPath = Join-Path $outputDirectory "release-validation-$Version.json"
     $checks = @(
         [ordered]@{ id = 'go-tests'; status = 'not_run'; evidence = 'Go unit tests and compilation.' }
-        [ordered]@{ id = 'integration-browser-monitoring'; status = 'not_run'; evidence = 'M1–M6 regressions plus Chromium admin, host collector, authenticated live/history statistics, and real Caddy streaming/range/WebSocket checks.' }
+        [ordered]@{ id = 'integration-browser-monitoring'; status = 'not_run'; evidence = 'M1–M6 regressions plus Chromium/Firefox/WebKit admin, host collector, authenticated live/history statistics, and real Caddy streaming/range/WebSocket checks.' }
         [ordered]@{ id = 'package-install-update-rollback'; status = 'not_run'; evidence = 'Release archive, offline image loading, install, firewall, monitoring image, statistics history preservation, update, rollback, retention, and password reset.' }
     )
     $hostChecks = [ordered]@{

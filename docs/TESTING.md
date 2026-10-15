@@ -669,3 +669,36 @@ these limits explicitly and use VPS preflight checks.
 - **Source control:** [PR #43](https://github.com/Mytob/project_j/pull/43) was
   merged into `dev` at `98012d6`. This is an integration merge only; the v1.3
   host-specific release checks remain pending.
+
+### v1.3 chart and browser-gate follow-up — 2026-10-15
+
+- **Changes:** Commit `693c65d363f477b750b5423990e547bfc2ac8af5` adds
+  pointer and keyboard chart selection, keeps the chart control area stable
+  when a series has fewer than two samples, and records desktop/mobile
+  screenshot baselines for Overview, Statistics, Health, Access Control,
+  WireGuard, and Security. Browser smoke checks exercise Chromium, Firefox,
+  and WebKit. The dependency audit now records the pinned npm 12.2.0, xcaddy
+  0.4.7, and Playwright 1.64.1 toolchain.
+- **Focused integration:** `pwsh -NoProfile -File
+  .\tests\integration\run.ps1` — PASS on 2026-10-15; all 4 Playwright tests
+  passed across the three engines, alongside M1–M6, WireGuard, Caddy stream,
+  collector, history/SSE, password/TOTP, peer rotation, and config download
+  checks. Vitest ran 6 tests and the production frontend build passed.
+- **Clean-tree release:** On `693c65d363f477b750b5423990e547bfc2ac8af5`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.0-dev` — PASS,
+  exit 0 at 2026-10-15 21:14 UTC. Go, three-engine browser/container
+  integration, and offline package install/update/rollback all passed.
+  `dist/release-validation-1.3.0-dev.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`; the Linux amd64 package is
+  generated under `dist/` and is not committed.
+- **Failures and fixes:** Initial follow-up runs exposed an incorrect chart
+  target/selection expectation, a missing Security-route navigation in the
+  TOTP test, and unstable screenshot heights from conditionally rendered chart
+  controls and changing health-event history. The chart test now selects an
+  explicit point, the test navigates to Security before its authenticator
+  check, and the screenshots use fixed chart controls and omit volatile health
+  history rows. The final isolated integration and clean-tree release runs
+  passed.
+- **Host checks:** No v1.3 deployment, VPS/kernel/provider-firewall/ACME check,
+  native Windows client/firewall test, or playback check was performed. These
+  remain blocked; v1.2 host evidence does not satisfy them.
