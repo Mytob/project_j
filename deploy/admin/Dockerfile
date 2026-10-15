@@ -1,4 +1,11 @@
-FROM golang:1.25.2-alpine3.22 AS build
+FROM node:24.22.0-alpine3.24@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS frontend
+WORKDIR /frontend
+COPY internal/admin/frontend/package.json internal/admin/frontend/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY internal/admin/frontend ./
+RUN npm run typecheck && npm test && npm run build
+
+FROM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 WORKDIR /src
 ARG VERSION=development
 ARG BUILD_NUMBER=unknown
@@ -7,12 +14,13 @@ COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
 COPY internal/totp ./internal/totp
 COPY internal/admin ./internal/admin
+COPY --from=frontend /frontend/dist ./internal/admin/frontend/dist
 COPY internal/monitoring ./internal/monitoring
 COPY internal/whitelist ./internal/whitelist
 COPY internal/wireguard ./internal/wireguard
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildNumber=${BUILD_NUMBER}" -o /out/admin ./cmd/admin
 
-FROM alpine:3.22
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 ARG VERSION=development
 ARG BUILD_NUMBER=unknown
 LABEL org.opencontainers.image.version="${VERSION}" \

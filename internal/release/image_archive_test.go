@@ -39,7 +39,7 @@ func TestVerifyImageArchiveRejectsWrongPlatform(t *testing.T) {
 
 func makeDockerArchiveFixture(t *testing.T) ([]Image, string) {
 	t.Helper()
-	refs := []string{"jellyfin-proxy/admin:1.0.0-dev", "jellyfin-proxy/hostmetrics:1.0.0-dev", "jellyfin-proxy/wireguard:1.0.0-dev", "jellyfin-proxy/caddy:1.0.0-dev", "alpine:3.22"}
+	refs := []string{"jellyfin-proxy/admin:1.0.0-dev", "jellyfin-proxy/hostmetrics:1.0.0-dev", "jellyfin-proxy/wireguard:1.0.0-dev", "jellyfin-proxy/caddy:1.0.0-dev", "alpine:3.24.2"}
 	configs := make(map[string][]byte, len(refs))
 	expected := make([]Image, 0, len(refs))
 	for _, reference := range refs {

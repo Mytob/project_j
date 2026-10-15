@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"embed"
 	"encoding/base32"
 	"encoding/base64"
@@ -9,7 +10,9 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,7 +28,7 @@ import (
 	"github.com/skip2/go-qrcode"
 )
 
-//go:embed templates/*
+//go:embed templates/* frontend/dist
 var templateFiles embed.FS
 
 type Server struct {
@@ -33,8 +36,17 @@ type Server struct {
 	sessions              *auth.Sessions
 	totpStore             *auth.TOTPStore
 	limiter               *auth.LoginLimiter
+	passwordLimiter       *auth.LoginLimiter
+	credentialPath        string
+	healthStatePath       string
+	healthMu              sync.Mutex
+	healthRecords         map[string]healthRecord
+	healthEvents          []healthEvent
 	whitelist             *WhitelistManager
 	wireguardClientConfig string
+	wireguardControl      wireguard.ControlClient
+	wireguardEndpoint     string
+	wireguardKeepalive    uint16
 	templates             *template.Template
 	logger                *slog.Logger
 	now                   func() time.Time
@@ -52,7 +64,7 @@ func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger, now: time.Now, version: "development", buildNumber: "unknown"}
+	server := &Server{credential: credential, sessions: auth.NewSessions(auth.DefaultSessionLifetime), limiter: auth.NewLoginLimiter(0, 0), passwordLimiter: auth.NewLoginLimiter(0, 0), templates: template.Must(template.ParseFS(templateFiles, "templates/*.html")), logger: logger, now: time.Now, version: "development", buildNumber: "unknown"}
 	if len(whitelistManager) > 0 {
 		server.whitelist = whitelistManager[0]
 	}
@@ -61,9 +73,15 @@ func New(credential *auth.Credential, logger *slog.Logger, whitelistManager ...*
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	frontend, err := fs.Sub(templateFiles, "frontend/dist")
+	if err != nil {
+		panic(err)
+	}
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /assets/admin.css", s.stylesheet)
 	mux.HandleFunc("GET /assets/statistics.js", s.statisticsScript)
+	mux.Handle("GET /app-assets/", http.StripPrefix("/app-assets/", http.FileServer(http.FS(frontend))))
+	mux.HandleFunc("GET /api/initial", s.apiInitial)
 	mux.HandleFunc("GET /", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
@@ -71,7 +89,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /totp/enroll/confirm", s.confirmTOTPEnrollmentHandler)
 	mux.HandleFunc("POST /totp/enroll/cancel", s.cancelTOTPEnrollment)
 	mux.HandleFunc("POST /totp/disable", s.disableTOTP)
+	mux.HandleFunc("POST /password/change", s.changePassword)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
+	mux.HandleFunc("GET /health", s.healthPage)
 	mux.HandleFunc("GET /access-control", s.accessControlPage)
 	mux.HandleFunc("GET /security", s.securityPage)
 	mux.HandleFunc("GET /wireguard", s.wireGuardPage)
@@ -81,7 +101,31 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
 	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
+	mux.HandleFunc("POST /wireguard/config/delete", s.deleteWireGuardConfig)
+	mux.HandleFunc("POST /wireguard/rotate", s.rotateWireGuardConfig)
 	return s.securityHeaders(mux)
+}
+
+// ConfigureCredentialPath sets the persistent override path used when an
+// administrator changes their password in the web interface.
+func (s *Server) ConfigureCredentialPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("administrator credential path is empty")
+	}
+	s.credentialPath = path
+	return nil
+}
+
+// ConfigureHealthState enables private persistent health transition history.
+func (s *Server) ConfigureHealthState(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("health state path is empty")
+	}
+	if err := s.loadHealthState(path); err != nil {
+		return err
+	}
+	s.healthStatePath = path
+	return nil
 }
 
 func (s *Server) stylesheet(w http.ResponseWriter, _ *http.Request) {
@@ -107,6 +151,18 @@ func (s *Server) statisticsScript(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(data)
 }
 
+func (s *Server) adminAppIndex(w http.ResponseWriter) bool {
+	data, err := templateFiles.ReadFile("frontend/dist/index.html")
+	if err != nil {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+	return true
+}
+
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -119,10 +175,26 @@ func (s *Server) ConfigureWireGuardConfig(path string) error {
 	if path == "" {
 		return errors.New("Windows WireGuard configuration path is empty")
 	}
-	if _, err := wireguard.LoadRetainedClientConfig(path); err != nil {
+	if _, err := wireguard.LoadRetainedClientConfig(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	s.wireguardClientConfig = path
+	return nil
+}
+
+// ConfigureWireGuardControl attaches the private local control socket used for
+// peer rotation. The socket is mounted only into the isolated admin and
+// WireGuard services; it is never published over TCP.
+func (s *Server) ConfigureWireGuardControl(socketPath, endpoint string, keepalive uint16) error {
+	if socketPath == "" || strings.TrimSpace(endpoint) == "" || keepalive == 0 {
+		return errors.New("WireGuard control socket, endpoint and keepalive are required")
+	}
+	if _, _, err := net.SplitHostPort(endpoint); err != nil {
+		return errors.New("WireGuard client endpoint is invalid")
+	}
+	s.wireguardControl = wireguard.ControlClient{SocketPath: socketPath}
+	s.wireguardEndpoint = endpoint
+	s.wireguardKeepalive = keepalive
 	return nil
 }
 
@@ -184,6 +256,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -207,7 +280,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setCookie(w, id, int(auth.DefaultSessionLifetime.Seconds()))
-	data := map[string]any{"CSRF": csrf}
+	data := map[string]any{"CSRF": csrf, "PasswordChanged": r.URL.Query().Get("password") == "changed"}
 	data["TOTPDisabled"] = r.URL.Query().Get("totp") == "disabled" && s.totpStore != nil && s.totpStore.Status() == auth.TOTPUnconfigured
 	if s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled {
 		data["TOTPRequired"] = true
@@ -315,6 +388,64 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.credentialPath == "" {
+		http.Error(w, "Password changes are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if allowed, wait := s.passwordLimiter.Allow(); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds()+0.999)))
+		http.Error(w, "Too many password change attempts. Try again shortly.", http.StatusTooManyRequests)
+		return
+	}
+	current, replacement, confirmation := r.FormValue("current_password"), r.FormValue("new_password"), r.FormValue("confirm_password")
+	if !s.credential.Verify(current) {
+		s.passwordLimiter.Failed()
+		http.Error(w, "The current password was not accepted.", http.StatusUnauthorized)
+		return
+	}
+	if replacement != confirmation {
+		s.passwordLimiter.Failed()
+		http.Error(w, "The new password confirmation does not match.", http.StatusBadRequest)
+		return
+	}
+	if s.credential.Verify(replacement) {
+		s.passwordLimiter.Failed()
+		http.Error(w, "Choose a password different from the current password.", http.StatusBadRequest)
+		return
+	}
+	s.authTransitionMu.Lock()
+	defer s.authTransitionMu.Unlock()
+	if !s.credential.Verify(current) {
+		s.passwordLimiter.Failed()
+		http.Error(w, "The current password was not accepted.", http.StatusUnauthorized)
+		return
+	}
+	if err := s.credential.ReplacePassword(s.credentialPath, replacement); err != nil {
+		s.passwordLimiter.Failed()
+		http.Error(w, "The new password could not be saved. Check that it meets the password policy.", http.StatusBadRequest)
+		return
+	}
+	s.passwordLimiter.Succeeded()
+	s.sessions.RevokeAll()
+	s.setCookie(w, "", -1)
+	http.Redirect(w, r, "/?password=changed", http.StatusSeeOther)
+}
+
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	s.adminPage(w, r, "overview")
 }
@@ -345,6 +476,9 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	if s.adminAppIndex(w) {
+		return
+	}
 	csrf, _, _ := s.sessions.State(id)
 	entries := []string{}
 	if s.whitelist != nil {
@@ -353,6 +487,9 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) 
 		if err != nil {
 			http.Error(w, "Whitelist is unavailable", http.StatusServiceUnavailable)
 			return
+		}
+		if entries == nil {
+			entries = []string{}
 		}
 	}
 	titles := map[string][3]string{
@@ -365,7 +502,8 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) 
 	data := map[string]any{
 		"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil,
 		"WireGuardEnabled": s.wireguardClientConfig != "", "TOTPConfigured": s.totpStore != nil,
-		"Version": s.version, "BuildNumber": s.buildNumber, "Page": page,
+		"CredentialChangeEnabled": s.credentialPath != "",
+		"Version":                 s.version, "BuildNumber": s.buildNumber, "Page": page,
 		"Title": pageDetails[0], "Eyebrow": pageDetails[1], "Description": pageDetails[2],
 	}
 	if s.totpStore != nil {
@@ -403,40 +541,195 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) 
 }
 
 type componentStatus struct {
-	Name   string
-	State  string
-	Class  string
-	Detail string
+	Name          string     `json:"name"`
+	State         string     `json:"state"`
+	Class         string     `json:"class"`
+	Detail        string     `json:"detail"`
+	CheckedAt     time.Time  `json:"checked_at"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
+}
+
+func (s *Server) healthPage(w http.ResponseWriter, r *http.Request) {
+	s.adminPage(w, r, "health")
+}
+
+func (s *Server) apiInitial(w http.ResponseWriter, r *http.Request) {
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return
+	}
+	csrf, _, ok := s.sessions.State(id)
+	if !ok {
+		http.Error(w, "Administrator session expired", http.StatusUnauthorized)
+		return
+	}
+	entries := []string{}
+	if s.whitelist != nil {
+		var err error
+		entries, err = s.whitelist.List()
+		if err != nil {
+			http.Error(w, "Whitelist is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if entries == nil {
+			entries = []string{}
+		}
+	}
+	status := auth.TOTPUnconfigured
+	if s.totpStore != nil {
+		status = s.totpStore.Status()
+	}
+	var wireguardStatus *wireguard.PeerStatus
+	if s.wireguardControl.SocketPath != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		status, err := s.wireguardControl.Status(ctx)
+		cancel()
+		if err == nil {
+			wireguardStatus = &status
+		}
+	}
+	configAvailable := s.wireguardConfigAvailable()
+	if wireguardStatus != nil {
+		configAvailable = wireguardStatus.ConfigAvailable
+	}
+	result := map[string]any{
+		"csrf": csrf, "version": s.version, "build_number": s.buildNumber,
+		"whitelist_enabled": s.whitelist != nil, "whitelist": entries,
+		"wireguard_enabled": s.wireguardClientConfig != "", "wireguard_config_available": configAvailable, "totp_status": string(status),
+		"components": s.componentHealthObserved(entries, wireguardStatus), "health_events": s.recentHealthEvents(),
+		"current": monitoring.LiveData{Status: "disconnected"},
+	}
+	if wireguardStatus != nil {
+		result["wireguard_status"] = wireguardStatus
+	}
+	if s.statistics != nil {
+		result["current"] = s.statistics.Current()
+	}
+	if status == auth.TOTPPending && s.sessions.HasRecentPasswordVerification(id) {
+		secret, err := s.totpStore.PendingSecret()
+		if err != nil {
+			s.logger.Error("read pending administrator TOTP setup", "error", err)
+			http.Error(w, "Authenticator setup is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		uri := totpProvisioningURI(secret)
+		qr, err := qrcode.Encode(uri, qrcode.Medium, 256)
+		clear(secret)
+		if err != nil {
+			http.Error(w, "Authenticator setup is unavailable", http.StatusInternalServerError)
+			return
+		}
+		secret, err = s.totpStore.PendingSecret()
+		if err != nil {
+			http.Error(w, "Authenticator setup is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		result["totp_setup_visible"] = true
+		result["totp_secret"] = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+		result["totp_qr_code"] = "data:image/png;base64," + base64.StdEncoding.EncodeToString(qr)
+		clear(secret)
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		s.logger.Debug("write admin app bootstrap", "error", err)
+	}
+}
+
+func (s *Server) wireguardConfigAvailable() bool {
+	if s.wireguardClientConfig == "" {
+		return false
+	}
+	_, err := wireguard.LoadRetainedClientConfig(s.wireguardClientConfig)
+	return err == nil
 }
 
 func (s *Server) componentHealth(entries []string) []componentStatus {
-	result := []componentStatus{{Name: "Administrator", State: "Healthy", Class: "healthy", Detail: "The authenticated admin page is responding."}}
-	if s.whitelist == nil {
-		result = append(result, componentStatus{Name: "Access control", State: "Unavailable", Class: "unavailable", Detail: "Whitelist management is not configured."})
-	} else {
-		result = append(result, componentStatus{Name: "Access control", State: "Healthy", Class: "healthy", Detail: fmt.Sprintf("The active allowlist is available (%d entries).", len(entries))})
+	var status *wireguard.PeerStatus
+	if s.wireguardControl.SocketPath != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		observed, err := s.wireguardControl.Status(ctx)
+		cancel()
+		if err == nil {
+			status = &observed
+		}
 	}
-	if s.caddyHealth == nil || s.caddyHealth.CheckHealth() != nil {
-		result = append(result, componentStatus{Name: "Jellyfin proxy", State: "Unavailable", Class: "unavailable", Detail: "Caddy did not respond through its private admin socket."})
+	return s.componentHealthObserved(entries, status)
+}
+
+func (s *Server) componentHealthObserved(entries []string, wireguardStatus *wireguard.PeerStatus) []componentStatus {
+	now := s.now().UTC()
+	result := []componentStatus{}
+	add := func(name, state, detail string) {
+		item := componentStatus{Name: name, State: state, Class: strings.ToLower(state), Detail: detail, CheckedAt: now}
+		result = append(result, item)
+	}
+	add("Admin backend", "Healthy", "This authenticated request reached the admin handler.")
+	if s.whitelist == nil {
+		add("Access control", "Unknown", "Whitelist management is not configured, so its active policy cannot be inspected.")
 	} else {
-		result = append(result, componentStatus{Name: "Jellyfin proxy", State: "Healthy", Class: "healthy", Detail: "Caddy responded through its private admin socket."})
+		add("Access control", "Healthy", fmt.Sprintf("The active allowlist is available (%d entries).", len(entries)))
+	}
+	if s.caddyHealth == nil {
+		add("Caddy / proxy", "Unknown", "The private Caddy health check is not configured.")
+	} else if err := s.caddyHealth.CheckHealth(); err != nil {
+		add("Caddy / proxy", "Down", "The private Caddy health check failed: "+err.Error())
+	} else {
+		add("Caddy / proxy", "Healthy", "Caddy responded through its private admin socket.")
 	}
 	if s.wireguardHeartbeatHealthy() {
-		result = append(result, componentStatus{Name: "WireGuard", State: "Healthy", Class: "healthy", Detail: "The WireGuard interface check reported healthy recently."})
+		add("WireGuard interface", "Healthy", "A recent heartbeat confirms that the interface is up. This does not prove peer reachability.")
 	} else {
-		result = append(result, componentStatus{Name: "WireGuard", State: "Unavailable", Class: "unavailable", Detail: "No recent healthy WireGuard interface check is available."})
+		add("WireGuard interface", "Unknown", "No fresh interface heartbeat is available; the cause cannot be distinguished from this read-only check.")
 	}
-	if s.statistics == nil || s.statistics.Current().Host == nil {
-		result = append(result, componentStatus{Name: "Host metrics", State: "Unavailable", Class: "unavailable", Detail: "The host collector has not supplied a fresh sample."})
+	if s.wireguardControl.SocketPath == "" {
+		add("Windows peer", "Unknown", "The private WireGuard status socket is not configured.")
+		add("Jellyfin endpoint", "Unknown", "The private WireGuard status socket is not configured.")
+	} else if wireguardStatus == nil {
+		add("Windows peer", "Unknown", "The private WireGuard status check is unavailable.")
+		add("Jellyfin endpoint", "Unknown", "The private Jellyfin reachability check is unavailable.")
 	} else {
-		result = append(result, componentStatus{Name: "Host metrics", State: "Healthy", Class: "healthy", Detail: "A fresh host collector sample is available."})
+		peerState := wireguardStatus.PeerState
+		if peerState != "Healthy" && peerState != "Degraded" && peerState != "Down" {
+			peerState = "Unknown"
+		}
+		jellyfinState := wireguardStatus.JellyfinState
+		if jellyfinState != "Healthy" && jellyfinState != "Down" {
+			jellyfinState = "Unknown"
+		}
+		add("Windows peer", peerState, wireguardStatus.PeerDetail)
+		add("Jellyfin endpoint", jellyfinState, wireguardStatus.JellyfinDetail)
 	}
-	if s.statistics == nil || s.statistics.Current().Proxy == nil {
-		result = append(result, componentStatus{Name: "Proxy metrics", State: "Unavailable", Class: "unavailable", Detail: "A fresh Caddy traffic metrics sample is not available."})
+	current := monitoring.LiveData{}
+	if s.statistics != nil {
+		current = s.statistics.Current()
+	}
+	if current.Host == nil {
+		add("Host metrics", "Unknown", "The host collector has not supplied a fresh sample.")
 	} else {
-		result = append(result, componentStatus{Name: "Proxy metrics", State: "Healthy", Class: "healthy", Detail: "A fresh Caddy traffic metrics sample is available."})
+		state, detail := "Healthy", "A fresh host collector sample is available."
+		if current.Host.DiskUsedBytes != nil && current.Host.DiskTotalBytes != nil && *current.Host.DiskTotalBytes > 0 && float64(*current.Host.DiskUsedBytes)/float64(*current.Host.DiskTotalBytes) >= 0.9 {
+			state, detail = "Degraded", "Disk usage is at least 90% of measured capacity."
+		} else if current.Host.MemoryUsedBytes != nil && current.Host.MemoryTotalBytes != nil && *current.Host.MemoryTotalBytes > 0 && float64(*current.Host.MemoryUsedBytes)/float64(*current.Host.MemoryTotalBytes) >= 0.9 {
+			state, detail = "Degraded", "Memory usage is at least 90% of measured capacity."
+		} else if current.Host.CPUPercent != nil && *current.Host.CPUPercent >= 95 {
+			state, detail = "Degraded", "CPU usage is at least 95% in the latest host sample."
+		}
+		add("Host metrics", state, detail)
 	}
-	return result
+	if current.Proxy == nil {
+		add("Proxy metrics", "Unknown", "A fresh Caddy traffic metrics sample is not available.")
+	} else {
+		state, detail := "Healthy", "A fresh Caddy traffic metrics sample is available."
+		if current.Proxy.ErrorRatePercent != nil && *current.Proxy.ErrorRatePercent >= 5 {
+			state, detail = "Degraded", fmt.Sprintf("The latest measured HTTP error rate is %.1f%%.", *current.Proxy.ErrorRatePercent)
+		}
+		add("Proxy metrics", state, detail)
+	}
+	add("Container status", "Unknown", "Container liveness and restart counts are not observable under the no-Docker-socket security boundary.")
+	return s.recordHealth(result, now)
 }
 
 func (s *Server) wireguardHeartbeatHealthy() bool {
@@ -463,6 +756,9 @@ func (s *Server) statisticsPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if s.adminAppIndex(w) {
 		return
 	}
 	status := "Waiting for live metrics"
@@ -533,11 +829,34 @@ func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return true
 	}
+	writeHealth := func() bool {
+		entries := []string{}
+		if s.whitelist != nil {
+			var err error
+			entries, err = s.whitelist.List()
+			if err != nil {
+				s.logger.Error("read allowlist for health event", "error", err)
+				return true
+			}
+		}
+		payload, err := json.Marshal(map[string]any{"components": s.componentHealth(entries), "health_events": s.recentHealthEvents()})
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: health\ndata: %s\n\n", payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
 	writeAuthenticationRequired := func() {
 		_, _ = io.WriteString(w, "event: auth-required\ndata: {}\n\n")
 		flusher.Flush()
 	}
 	if !write(s.statistics.Current()) {
+		return
+	}
+	if !writeHealth() {
 		return
 	}
 	keepalive := time.NewTicker(15 * time.Second)
@@ -562,6 +881,9 @@ func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			if !writeHealth() {
 				return
 			}
 			flusher.Flush()
@@ -825,7 +1147,9 @@ func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request)
 	}
 	data, err := wireguard.LoadRetainedClientConfig(s.wireguardClientConfig)
 	if err != nil {
-		s.logger.Error("load retained Windows WireGuard configuration", "error", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			s.logger.Error("load retained Windows WireGuard configuration", "error", err)
+		}
 		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -833,7 +1157,84 @@ func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Disposition", `attachment; filename="jellyfin-proxy.conf"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	written, writeErr := w.Write(data)
+	clear(data)
+	if writeErr != nil || written != len(data) {
+		// Retain the configuration so an interrupted transfer can be retried.
+		return
+	}
+	if err := os.Remove(s.wireguardClientConfig); err != nil {
+		s.logger.Error("remove downloaded Windows WireGuard configuration", "error", err)
+	}
+}
+
+func (s *Server) rotateWireGuardConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.wireguardClientConfig == "" || s.wireguardControl.SocketPath == "" || s.wireguardEndpoint == "" {
+		http.Error(w, "WireGuard peer rotation is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	status, err := s.wireguardControl.Status(ctx)
+	if err != nil {
+		s.logger.Error("read active WireGuard peer status", "error", err)
+		http.Error(w, "WireGuard peer rotation is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	clientData, _, err := wireguard.ClientConfiguration(s.wireguardEndpoint, status, s.wireguardKeepalive)
+	if err != nil {
+		s.logger.Error("generate replacement Windows WireGuard configuration", "error", err)
+		http.Error(w, "WireGuard peer rotation failed", http.StatusInternalServerError)
+		return
+	}
+	defer clear(clientData)
+	if err := s.wireguardControl.Rotate(ctx, clientData); err != nil {
+		s.logger.Error("rotate Windows WireGuard peer", "error", err)
+		http.Error(w, "WireGuard peer rotation failed. The previous peer remains active.", http.StatusConflict)
+		return
+	}
+	http.Redirect(w, r, "/wireguard?rotated=1", http.StatusSeeOther)
+}
+
+func (s *Server) deleteWireGuardConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.wireguardClientConfig == "" {
+		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := os.Remove(s.wireguardClientConfig); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.logger.Error("delete downloadable Windows WireGuard configuration", "error", err)
+		http.Error(w, "Windows WireGuard configuration could not be deleted", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/wireguard?deleted=1", http.StatusSeeOther)
 }
 
 func (s *Server) addWhitelistEntry(w http.ResponseWriter, r *http.Request) {

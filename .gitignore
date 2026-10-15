@@ -1,6 +1,9 @@
 # Go build output
 /bin/
 /dist/
+/internal/admin/frontend/dist/*
+!/internal/admin/frontend/dist/placeholder.txt
+**/node_modules/
 *.out
 
 # Local runtime and generated test data
