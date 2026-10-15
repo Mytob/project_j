@@ -614,11 +614,23 @@ these limits explicitly and use VPS preflight checks.
   retention, and reset checks passed. The report at
   `dist/release-validation-1.2.1-dev.json` records `local_gate: passed` and
   `release_readiness: blocked_host_checks_pending`.
-- **Host limits:** This follow-up has not been deployed to the VPS. The release
-  report correctly leaves Ubuntu/provider-firewall and native Windows checks
-  blocked; no test result from the earlier 1.2.0-dev deployment is carried
-  forward to this package.
+- **Version-matched VPS update — 2026-10-15:** `proxyctl update` installed
+  `1.2.1-dev` on the authorized test VPS. It reported successful service health
+  checks and public HTTPS readiness. Compose reported the admin, Caddy,
+  hostmetrics, and WireGuard services healthy. `https://darkcry.com/` and
+  `https://admin.darkcry.com/` returned HTTP 200 with valid TLS; the
+  empty-allowlist `https://access.darkcry.com/` returned HTTP 403 with valid
+  TLS. The admin image tag was `jellyfin-proxy/admin:1.2.1-dev`.
+- **Host limits:** Windows WireGuard-client playback has not yet been checked
+  after this package update. The generated release report continues to mark
+  host-specific readiness blocked pending that client check; the VPS results
+  above are version-matched evidence.
 - **Artifact:** `dist/jellyfin-proxy-1.2.1-dev-linux-amd64.tar.gz` was built
   and validated locally; it is generated output and is not committed.
 - **Source control:** Commit `5c0fb42` was merged into `dev` by [PR #40](https://github.com/Mytob/project_j/pull/40),
   merge commit `4bc5c41`.
+- **Reproduction note:** The first clean release-gate attempt was interrupted
+  while its isolated integration stack was running, leaving that uniquely
+  named test project active. The next run exposed its reserved-port collision.
+  The project was removed with its own Compose file and scoped project name;
+  the subsequent complete release gate passed.

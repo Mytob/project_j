@@ -25,7 +25,7 @@ before promoting a stable release.
 | 4 — Caddy in-flight proxy instrumentation | **Complete (local gate)** | Integration covered concurrent and interrupted transfers, ranges, WebSockets, allowed/blocked requests, and byte accounting against the local Caddy module. |
 | 5 — Historical storage and authenticated SSE | **Complete (local and VPS checks)** | Local checks covered authentication, reconnect/expiry, aggregation, retention, update, rollback, and corrupt recovery; populated history remained present after a VPS admin restart. |
 | 6 — Statistics UI and browser checks | **Complete (local gate)** | Chromium exercised live/history views and all four ranges, chart bounds, disconnect/reconnect, and responsive/keyboard behavior. |
-| 7 — Installer/package integration and release gate | **Local gate passed; host checks pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed Go, browser/monitoring, package install/update/rollback checks. This follow-up has not yet been deployed to the VPS. See [TESTING.md](TESTING.md). |
+| 7 — Installer/package integration and release gate | **Local gate and VPS update passed; Windows check pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed Go, browser/monitoring, package install/update/rollback checks. The version-matched package is healthy on the test VPS; Windows playback confirmation remains pending. See [TESTING.md](TESTING.md). |
 
 ### Authorized administrator UI follow-up — 2026-10-14
 
@@ -43,9 +43,10 @@ before promoting a stable release.
   published health endpoint was added.
 - **Validation:** `pwsh -NoProfile -File .\build.ps1 test` and
   `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed; the
-  release report is `dist/release-validation-1.2.1-dev.json`. Host-specific
-  checks remain blocked because this local gate does not simulate VPS and
-  native Windows operation. Full command evidence is in [TESTING.md](TESTING.md).
+  release report is `dist/release-validation-1.2.1-dev.json`. The package was
+  installed on the test VPS and its services and public HTTPS endpoints passed
+  checks. Native Windows playback after this update remains pending. Full
+  command evidence is in [TESTING.md](TESTING.md).
 
 ### v1.2 local gate evidence — 2026-10-14
 
