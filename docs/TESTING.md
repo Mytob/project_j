@@ -666,3 +666,6 @@ these limits explicitly and use VPS preflight checks.
   Docker Scout was not run after the automatic approval reviewer rejected
   external transfer of private-image SBOM/package metadata. Full evidence is in
   `docs/DEPENDENCY_AUDIT_V1.3.md`.
+- **Source control:** [PR #43](https://github.com/Mytob/project_j/pull/43) was
+  merged into `dev` at `98012d6`. This is an integration merge only; the v1.3
+  host-specific release checks remain pending.
