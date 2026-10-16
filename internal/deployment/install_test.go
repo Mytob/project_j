@@ -297,6 +297,13 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "site", "operator-page.txt"), []byte("keep site content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	clientConfigDir := filepath.Join(root, "data", "wireguard-client")
+	if err := os.Chown(clientConfigDir, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(clientConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
 	progressEvents := []UpdateProgress{}
 	manifest, err := Update(context.Background(), UpdateOptions{
@@ -306,6 +313,14 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	clientConfigDirInfo, err := os.Stat(clientConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConfigDirStat, ok := clientConfigDirInfo.Sys().(*syscall.Stat_t)
+	if !ok || clientConfigDirStat.Uid != 0 || clientConfigDirStat.Gid != adminContainerUID || clientConfigDirInfo.Mode().Perm() != 0o770 {
+		t.Fatalf("one-time config directory was not repaired for admin deletion: info=%v sys=%#v", clientConfigDirInfo, clientConfigDirInfo.Sys())
 	}
 	if manifest.Version != "1.0.1-dev" {
 		t.Fatalf("updated version = %s", manifest.Version)

@@ -111,6 +111,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
 		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)
 	}
+	if err := ensureWireGuardClientConfigDirectory(options.InstallRoot); err != nil {
+		return manifest, fmt.Errorf("prepare one-time Windows configuration storage: %w", err)
+	}
 	progress(2, true, "Release package and persistent TOTP storage verified")
 	progress(3, false, "Retaining the verified release files")
 	finalRelease := filepath.Join(options.InstallRoot, "releases", manifest.Version)
@@ -242,6 +245,23 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	changed = false
 	progress(8, true, "Update completed successfully")
 	return manifest, nil
+}
+
+// ensureWireGuardClientConfigDirectory restores the ownership and permissions
+// required for the unprivileged admin service to consume a downloaded config.
+// Older deployments may have created this bind-mounted directory as root:root.
+func ensureWireGuardClientConfigDirectory(installRoot string) error {
+	path := filepath.Join(installRoot, "data", "wireguard-client")
+	if err := os.MkdirAll(path, 0o2770); err != nil {
+		return err
+	}
+	if err := os.Chown(path, 0, adminContainerUID); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o2770); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ResetPassword replaces the local administrator password and recreates only
