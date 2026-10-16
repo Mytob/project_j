@@ -732,3 +732,5 @@ these limits explicitly and use VPS preflight checks.
   pending a version-matched Ubuntu VPS/provider-firewall/ACME run and native
   Windows WireGuard/firewall/playback verification. No v1.3 deployment was
   performed.
+- **Source control:** [PR #47](https://github.com/Mytob/project_j/pull/47)
+  merged to `dev` at `f9fed92` after the local release gate passed.
