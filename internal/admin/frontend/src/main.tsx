@@ -35,7 +35,7 @@ async function getInitial(): Promise<Initial> {
   return response.json() as Promise<Initial>;
 }
 
-function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { components: Component[]; health_events: HealthEvent[] }) => void) {
+function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { components: Component[]; health_events: HealthEvent[] }) => void, onAuthRequired: () => void) {
   useEffect(() => {
     const source = new EventSource("/statistics/events", { withCredentials: true });
     source.addEventListener("metrics", (event) => {
@@ -44,9 +44,9 @@ function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { comp
     source.addEventListener("health", (event) => {
       try { onHealth(JSON.parse((event as MessageEvent<string>).data) as { components: Component[]; health_events: HealthEvent[] }); } catch { /* reconnect will deliver the next health snapshot */ }
     });
-    source.addEventListener("auth-required", () => window.location.assign("/"));
+    source.addEventListener("auth-required", () => { source.close(); onAuthRequired(); });
     return () => source.close();
-  }, [onData, onHealth]);
+  }, [onData, onHealth, onAuthRequired]);
 }
 
 function App() {
@@ -55,10 +55,24 @@ function App() {
   const [path, setPath] = useState(window.location.pathname === "/" ? "/dashboard" : window.location.pathname);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const refresh = useCallback(() => { getInitial().then((value) => { setInitial(value); setMetrics(value.current); setError(""); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load admin status.")).finally(() => setLoading(false)); }, []);
+  const refresh = useCallback(async () => {
+    try {
+      const value = await getInitial();
+      setInitial(value);
+      setMetrics(value.current);
+      setError("");
+      return value;
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Unable to load admin status.");
+      return undefined;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
   const onLive = useCallback((value: Metrics) => setMetrics(value), []);
   const onHealth = useCallback((value: { components: Component[]; health_events: HealthEvent[] }) => setInitial((prior) => prior ? { ...prior, ...value } : prior), []);
-  useLiveMetrics(onLive, onHealth);
+  const onAuthRequired = useCallback(() => setError("Your administrator session has ended. Sign in again."), []);
+  useLiveMetrics(onLive, onHealth, onAuthRequired);
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 30_000); const pop = () => setPath(window.location.pathname); window.addEventListener("popstate", pop); return () => { window.clearInterval(timer); window.removeEventListener("popstate", pop); }; }, [refresh]);
   const navigate = (to: string) => { window.history.pushState({}, "", to); setPath(to); document.body.classList.remove("nav-open"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const available = useMemo(() => pages.filter(([href]) => href !== "/access-control" || initial?.whitelist_enabled).filter(([href]) => href !== "/wireguard" || initial?.wireguard_enabled), [initial]);
@@ -71,46 +85,33 @@ function App() {
   return <div className="shell"><a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="rail"><a className="brand" href="/dashboard" onClick={(e) => { e.preventDefault(); navigate("/dashboard"); }}><Brand/><span><b>Jellyfin Proxy</b><small>Administration</small></span></a>
       <nav aria-label="Main navigation">{available.map(([href, label, icon]) => <a key={href} href={href} className={`nav-link ${page === href ? "active" : ""}`} aria-current={page === href ? "page" : undefined} onClick={(e) => { e.preventDefault(); navigate(href); }}><span className="nav-icon" aria-hidden="true">{icon}</span><span>{label}</span></a>)}</nav>
-      <div className="rail-bottom"><span className="live-indicator"><i/>Signed in</span><form action="/logout" method="post"><input type="hidden" name="csrf" value={initial.csrf}/><button className="nav-link" type="submit"><span className="nav-icon" aria-hidden="true">↪</span>Sign out</button></form></div>
+      <div className="rail-bottom"><form action="/logout" method="post"><input type="hidden" name="csrf" value={initial.csrf}/><button className="nav-link" type="submit"><span className="nav-icon" aria-hidden="true">↪</span>Sign out</button></form></div>
     </aside>
-    <main id="main-content" className="main" tabIndex={-1}><header className="topbar"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="muted">{description}</p></div><div className="top-status"><span className={`live-indicator ${metrics?.status === "live" ? "" : "dim"}`}><i/>{metrics?.status === "live" ? "STREAMING LIVE" : metrics?.status === "partial" ? "PARTIAL METRICS" : "RECONNECTING"}</span><span className="build-tag">{initial.version} · {initial.build_number}</span></div><button className="mobile-menu" aria-label="Toggle navigation" onClick={() => document.body.classList.toggle("nav-open")}>☰</button></header>
+    <main id="main-content" className="main" tabIndex={-1}><header className="topbar"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="muted">{description}</p></div><button className="mobile-menu" aria-label="Toggle navigation" onClick={() => document.body.classList.toggle("nav-open")}>☰</button></header>
       {error && <div className="banner" role="alert">{error}</div>}
-      {page === "/dashboard" && <Dashboard data={initial} metrics={metrics ?? initial.current} go={navigate}/>}
+      {page === "/dashboard" && <Dashboard data={initial} go={navigate}/>}
       {page === "/statistics" && <Statistics metrics={metrics ?? initial.current}/>}
       {page === "/health" && <Health data={initial} refresh={refresh}/>}
       {page === "/access-control" && <Access data={initial}/>}
       {page === "/wireguard" && <WireGuard data={initial} refresh={refresh}/>}
       {page === "/security" && <Security data={initial}/>}
-      <footer className="page-footer"><span><i className="health-dot"/>Live measurements update as they arrive</span><span>Version {initial.version} · Build {initial.build_number}</span></footer>
+      <footer className="page-footer"><span>Version {initial.version} · Build {initial.build_number}</span></footer>
     </main>
   </div>;
 }
 
 function Brand() { return <span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><path d="M18 3 32 29H4L18 3Z"/><circle cx="18" cy="20" r="4"/></svg></span>; }
 function Stat({ title, value, detail, color = "cyan" }: { title: string; value: string; detail: string; color?: string }) { return <article className={`stat-card ${color}`}><div className="stat-head"><span className="stat-glyph" aria-hidden="true">✦</span><span>{title}</span></div><strong>{value}</strong><small>{detail}</small><span className="stat-glow"/></article>; }
-function Dashboard({ data, metrics, go }: { data: Initial; metrics: Metrics; go: (path: string) => void }) {
-  const host = metrics.host; const proxy = metrics.proxy;
+function Dashboard({ data, go }: { data: Initial; go: (path: string) => void }) {
+  const healthyCount = data.components.filter((component) => component.state === "Healthy").length;
   return <>
-    <div className="health-strip"><span className="health-dot"/><b>System health</b><span>{worst(data.components)}</span><button onClick={() => go("/health")}>View diagnostics <b>→</b></button></div>
-    <section className="stat-grid" aria-label="Current system metrics">
-      <Stat title="CPU usage" value={number(host?.cpu_percent, "%")} detail="VPS host"/>
-      <Stat title="Memory" value={pct(host?.memory_used_bytes, host?.memory_total_bytes)} detail={`${bytes(host?.memory_used_bytes)} used`} color="purple"/>
-      <Stat title="Requests / sec" value={number(proxy?.requests_per_second)} detail={`${number(proxy?.active_requests)} active`} color="blue"/>
-      <Stat title="Live bandwidth" value={rate(proxy?.outgoing_bytes_per_second)} detail={`↓ ${rate(proxy?.incoming_bytes_per_second)} inbound`} color="amber"/>
-    </section>
-    <section className="content-grid"><article className="panel span-2"><div className="panel-title"><div><p className="eyebrow">CONNECTION PATH</p><h2>Service health</h2></div><span className="muted">Updated {metrics.captured_at ? new Date(metrics.captured_at).toLocaleTimeString() : "waiting"}</span></div><ComponentCards components={data.components}/><PathDiagram/></article>
-      <article className="panel"><div className="panel-title"><div><p className="eyebrow">PROXY</p><h2>Traffic snapshot</h2></div><button className="text-button" onClick={() => go("/statistics")}>Statistics →</button></div><div className="mini-metrics"><Metric label="Allowed requests" value={number(proxy?.allowed_requests)}/><Metric label="Blocked requests" value={number(proxy?.blocked_requests)}/><Metric label="HTTP errors" value={number(proxy?.http_error_count)}/><Metric label="Total transferred" value={bytes(proxy?.total_transferred_bytes)}/></div></article>
-      <article className="panel"><div className="panel-title"><div><p className="eyebrow">VPS</p><h2>Resource overview</h2></div><button className="text-button" onClick={() => go("/statistics")}>Details →</button></div><div className="resource-list"><Resource label="CPU" percent={host?.cpu_percent}/><Resource label="Memory" percent={host?.memory_used_bytes != null && host.memory_total_bytes ? 100 * host.memory_used_bytes / host.memory_total_bytes : undefined}/><Resource label="Disk" percent={host?.disk_used_bytes != null && host.disk_total_bytes ? 100 * host.disk_used_bytes / host.disk_total_bytes : undefined}/><Metric label="Load · 1 / 5 / 15 min" value={[host?.load_1,host?.load_5,host?.load_15].some((x) => x != null) ? `${number(host?.load_1)} · ${number(host?.load_5)} · ${number(host?.load_15)}` : "—"}/></div></article>
-    </section>
+    <section className="panel overview-status"><div className="overview-summary"><div><p className="eyebrow">SYSTEM HEALTH</p><h2>{worst(data.components)}</h2><p>{healthyCount} of {data.components.length} components healthy</p></div><button className="button secondary" onClick={() => go("/health")}>Health details →</button></div><ul className="overview-components" aria-label="Component status">{data.components.map((component) => <li key={component.name}><span>{component.name}</span><span className={`state-pill ${component.class}`}><i/>{component.state}</span></li>)}</ul></section>
   </>;
 }
 function worst(items: Component[]) { const states = items.map((item) => item.state); return states.includes("Down") ? "Down" : states.includes("Degraded") ? "Degraded" : states.includes("Unknown") ? "Unknown" : "Healthy"; }
 function displayTime(value?: string) { return value ? new Date(value).toLocaleString() : "Not recorded"; }
 function ComponentCards({ components }: { components: Component[] }) { return <div className="component-grid">{components.map((item) => <article className="component-card" key={item.name}><span className={`state-pill ${item.class}`}><i/>{item.state}</span><h3>{item.name}</h3><p>{item.detail}</p><small>Checked {displayTime(item.checked_at)} · Last success {displayTime(item.last_success_at)} · Last failure {displayTime(item.last_failure_at)}</small></article>)}</div>; }
 function PathDiagram() { return <div className="path-diagram" aria-label="Jellyfin connection path"><span>Caddy / Proxy</span><b>→</b><span>WireGuard</span><b>→</b><span>Windows PC</span><b>→</b><span>Jellyfin</span></div>; }
-function Metric({ label, value }: { label: string; value: string }) { return <div className="metric-row"><span>{label}</span><b>{value}</b></div>; }
-function Resource({ label, percent }: { label: string; percent?: number }) { return <div className="resource"><div><span>{label}</span><b>{percent == null ? "—" : `${percent.toFixed(1)}%`}</b></div><div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }}/></div></div>; }
-
 function Statistics({ metrics }: { metrics: Metrics }) {
   const [range, setRange] = useState("24h"); const [history, setHistory] = useState<HistoryPoint[]>([]); const [failed, setFailed] = useState(false);
   useEffect(() => { let alive = true; fetch(`/statistics/history?range=${range}`, { credentials: "same-origin" }).then((response) => { if (!response.ok) throw new Error(); return response.json() as Promise<HistoryPoint[]>; }).then((rows) => { if (alive) { setHistory(rows); setFailed(false); } }).catch(() => { if (alive) setFailed(true); }); return () => { alive = false; }; }, [range]);
@@ -149,24 +150,60 @@ function Chart({ title, rows, read }: { title: string; rows: HistoryPoint[]; rea
   </article>;
 }
 
-function Health({ data, refresh }: { data: Initial; refresh: () => void }) { return <><div className="health-summary"><span className="health-dot"/><div><b>{worst(data.components)}</b><p>Each state is based on its latest check. Unknown means the service cannot be observed through the private admin boundary.</p></div><button className="button secondary" onClick={refresh}>Run diagnostics</button></div><article className="panel"><div className="panel-title"><div><p className="eyebrow">SERVICE PATH</p><h2>Caddy → WireGuard → Windows PC → Jellyfin</h2></div></div><PathDiagram/><p className="muted">Peer handshakes and Jellyfin reachability are checked from the WireGuard network namespace. Container liveness stays Unknown because the admin service has no Docker socket.</p></article><section className="panel"><div className="panel-title"><div><p className="eyebrow">COMPONENTS</p><h2>Detailed status</h2></div></div><ComponentCards components={data.components}/></section><section className="panel"><div className="panel-title"><div><p className="eyebrow">RECENT CHANGES</p><h2>Health history</h2></div><span className="muted">Last 90 days · up to 500 changes</span></div>{data.health_events.length ? <ol className="health-events">{[...data.health_events].reverse().map((event, index) => <li key={`${event.at}-${event.name}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.name}</b><span>{event.from ?? "First check"} → {event.to}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No health status changes have been recorded.</p>}</section></>; }
+function Health({ data, refresh }: { data: Initial; refresh: () => void }) { return <><div className="health-summary"><span className="health-dot"/><div><b>{worst(data.components)}</b><p>Each state is based on its latest check. Unknown means the service cannot be observed through the private admin boundary.</p></div><button className="button secondary" onClick={refresh}>Run diagnostics</button></div><article className="panel"><div className="panel-title"><div><p className="eyebrow">SERVICE PATH</p><h2>Caddy → WireGuard → Windows PC → Jellyfin</h2></div></div><PathDiagram/><p className="muted">Peer handshakes and Jellyfin reachability are checked from the WireGuard network namespace. Container liveness and restart counts come from a private, GET-only Docker observer.</p></article><section className="panel"><div className="panel-title"><div><p className="eyebrow">COMPONENTS</p><h2>Detailed status</h2></div></div><ComponentCards components={data.components}/></section><section className="panel"><div className="panel-title"><div><p className="eyebrow">RECENT CHANGES</p><h2>Health history</h2></div><span className="muted">Last 90 days · up to 500 changes</span></div>{data.health_events.length ? <ol className="health-events">{[...data.health_events].reverse().map((event, index) => <li key={`${event.at}-${event.name}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.name}</b><span>{event.from ?? "First check"} → {event.to}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No health status changes have been recorded.</p>}</section></>; }
 function Access({ data }: { data: Initial }) { const whitelist = data.whitelist ?? []; return <section className="panel"><div className="panel-title"><div><p className="eyebrow">DEFAULT DENY</p><h2>Allowed addresses</h2><p className="muted">IPv4, IPv6, and CIDR ranges with the trusted socket peer address.</p></div></div><form className="inline-form" action="/whitelist/add" method="post"><input type="hidden" name="csrf" value={data.csrf}/><label className="sr-only" htmlFor="allow-entry">IP address or CIDR</label><input id="allow-entry" name="entry" placeholder="203.0.113.10 or 2001:db8::/64" required/><button className="button" type="submit">Add address</button></form><div className="address-list">{whitelist.length ? whitelist.map((entry) => <div className="address-row" key={entry}><code>{entry}</code><form action="/whitelist/remove" method="post"><input type="hidden" name="csrf" value={data.csrf}/><input type="hidden" name="entry" value={entry}/><button className="button danger" type="submit" aria-label={`Remove ${entry}`}>Remove</button></form></div>) : <p className="empty-chart">No addresses are configured. Access remains blocked by default.</p>}</div></section>; }
-function WireGuard({ data, refresh }: { data: Initial; refresh: () => void }) {
+function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<Initial | undefined> }) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadMessage, setDownloadMessage] = useState("");
+  const [downloadError, setDownloadError] = useState("");
   const rotated = new URLSearchParams(window.location.search).get("rotated") === "1";
   const deleted = new URLSearchParams(window.location.search).get("deleted") === "1";
   const status = data.wireguard_status;
+  async function downloadConfiguration() {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadMessage("");
+    setDownloadError("");
+    try {
+      const response = await fetch("/wireguard/config", { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error("The configuration download could not be completed. Refresh the status and try again.");
+      const configuration = await response.blob();
+      const objectURL = URL.createObjectURL(configuration);
+      const link = document.createElement("a");
+      link.href = objectURL;
+      link.download = "jellyfin-proxy.conf";
+      link.hidden = true;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+
+      const latest = await refresh();
+      if (latest && !latest.wireguard_config_available) {
+        setDownloadMessage("The browser received the configuration response. The server copy was removed. Keep the downloaded file secure.");
+      } else {
+        setDownloadError("The browser received the configuration response, but the server still reports a stored copy. Refresh status or delete the downloadable file.");
+      }
+    } catch {
+      setDownloadError("The configuration download could not be confirmed. Refresh status before trying again.");
+    } finally {
+      setDownloading(false);
+    }
+  }
   return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">WINDOWS PEER</p><h2>WireGuard configuration</h2></div><span className={`state-pill ${data.wireguard_config_available ? "healthy" : "unknown"}`}><i/>{data.wireguard_config_available ? "Download available" : "No downloadable copy"}</span></div>
     <p>The VPS keeps the active Windows peer's public key. Its private configuration is held only until you download it or delete the stored copy.</p>
     {rotated && <p className="notice notice-success" role="status">Peer rotated. The previous Windows credentials have been revoked. Download the replacement configuration now.</p>}
     {deleted && <p className="notice notice-success" role="status">The downloadable copy was deleted. The active peer remains authorized until you regenerate it.</p>}
-    {data.wireguard_config_available ? <><a className="button download-button" href="/wireguard/config" download="jellyfin-proxy.conf">Download and delete configuration</a><p className="muted">The server removes its copy after the complete response is transferred. Your browser may still ask where to save it. Keep the downloaded file secure.</p>
+    {data.wireguard_config_available ? <><button className="button download-button" type="button" onClick={downloadConfiguration} disabled={downloading}>{downloading ? "Downloading configuration…" : "Download and delete configuration"}</button><p className="muted">The server removes its copy after the complete response is transferred. Your browser may still ask where to save it. Keep the downloaded file secure.</p>
       <form action="/wireguard/config/delete" method="post"><input type="hidden" name="csrf" value={data.csrf}/><button className="button secondary" type="submit">Delete downloadable file</button></form></> : <p className="muted">There is no private configuration stored on the server. Regenerate a peer if you need a replacement download.</p>}
+    {downloadMessage && <p className="notice notice-success" role="status">{downloadMessage}</p>}
+    {downloadError && <p className="notice notice-error" role="alert">{downloadError}</p>}
     <div className="notice">Regenerating creates new client keys, activates the replacement peer, and revokes the current peer. Any device using the old configuration will disconnect.</div>
     <form action="/wireguard/rotate" method="post" onSubmit={(event) => { if (!window.confirm("Regenerate the Windows peer? The current configuration will stop working and must be replaced.")) event.preventDefault(); }}><input type="hidden" name="csrf" value={data.csrf}/><button className="button danger" type="submit">Regenerate and revoke current peer</button></form>
     <button className="text-button" type="button" onClick={refresh}>Refresh configuration status</button>
   </section>{status && <section className="panel"><div className="panel-title"><div><p className="eyebrow">LIVE DIAGNOSTICS</p><h2>Current tunnel status</h2></div></div><div className="stat-grid"><Stat title="Windows peer" value={status.peer_state} detail={status.peer_last_handshake ? `Handshake ${displayTime(status.peer_last_handshake)}` : "No handshake recorded"} color="blue"/><Stat title="Received" value={bytes(status.peer_rx_bytes)} detail="Peer traffic received by VPS" color="cyan"/><Stat title="Sent" value={bytes(status.peer_tx_bytes)} detail="Peer traffic sent by VPS" color="purple"/><Stat title="Jellyfin" value={status.jellyfin_state} detail={status.jellyfin_latency_ms == null ? "Health response unavailable" : `HTTP health response in ${number(status.jellyfin_latency_ms, " ms")}`} color="amber"/></div><p className="muted">{status.peer_detail} {status.jellyfin_detail}</p></section>}</>;
 }
-function Security({ data }: { data: Initial }) { return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">ADMINISTRATOR ACCOUNT</p><h2>Change password</h2></div></div><p className="muted">Use at least 12 characters. Changing the password signs out all administrator sessions. Authenticator protection remains enabled.</p><form className="form-grid" action="/password/change" method="post"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Current password" name="current_password" autocomplete="current-password"/><Field label="New password" name="new_password" autocomplete="new-password"/><Field label="Confirm new password" name="confirm_password" autocomplete="new-password"/><button className="button" type="submit">Change password</button></form><p className="muted">Root recovery remains available with <code>proxyctl reset-password</code>.</p></section><TOTP data={data}/></>; }
+function Security({ data }: { data: Initial }) { return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">ADMINISTRATOR ACCOUNT</p><h2>Change password</h2></div></div><p className="muted">Use at least 12 characters. Changing the password signs out all administrator sessions. Authenticator protection remains enabled.</p><form className="form-grid" action="/password/change" method="post"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Current password" name="current_password" autocomplete="current-password"/><Field label="New password" name="new_password" autocomplete="new-password"/><Field label="Confirm new password" name="confirm_password" autocomplete="new-password"/>{data.totp_status === "enabled" && <div className="form-field"><label htmlFor="password-change-code">Current six-digit authenticator code for password change</label><input id="password-change-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" maxLength={6} required/></div>}<button className="button" type="submit">Change password</button></form><p className="muted">Root recovery remains available with <code>proxyctl reset-password</code>.</p></section><TOTP data={data}/></>; }
 function Field({ label, name, autocomplete }: { label: string; name: string; autocomplete: string }) { return <div className="form-field"><label htmlFor={name}>{label}</label><input id={name} name={name} type="password" autoComplete={autocomplete} minLength={12} maxLength={1024} required/></div>; }
 function TOTP({ data }: { data: Initial }) { return <section className="panel"><div className="panel-title"><div><p className="eyebrow">TWO-FACTOR AUTHENTICATION</p><h2>Administrator authenticator</h2></div><span className={`state-pill ${data.totp_status === "enabled" ? "healthy" : "unknown"}`}><i/>{data.totp_status === "enabled" ? "Enabled" : data.totp_status}</span></div>{data.totp_status === "enabled" ? <><p>Two-factor authentication is enabled for administrator sign-in.</p><details className="details"><summary>Disable two-factor authentication</summary><p className="muted">Both your administrator password and a current authenticator code are required. All administrator sessions will be signed out.</p><form action="/totp/disable" method="post" className="form-grid"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Administrator password" name="password" autocomplete="current-password"/><div className="form-field"><label htmlFor="disable-code">Current six-digit authenticator code</label><input id="disable-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" maxLength={6} required/></div><button className="button danger" type="submit">Disable authenticator</button></form></details></> : <><p className="muted">Add a second factor to protect administrator sign-in.</p><form action="/totp/enroll/start" method="post" className="inline-form"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Administrator password" name="password" autocomplete="current-password"/><button className="button" type="submit">Set up authenticator</button></form>{data.totp_setup_visible && <div className="setup-card"><p>Scan the QR code or enter the secret in your authenticator app.</p>{data.totp_qr_code && <img src={data.totp_qr_code} alt="Authenticator setup QR code" width="256" height="256"/>}<code>{data.totp_secret}</code><form action="/totp/enroll/confirm" method="post" className="inline-form"><input type="hidden" name="csrf" value={data.csrf}/><label htmlFor="confirm-code">Six-digit code</label><input id="confirm-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" required/><button className="button" type="submit">Confirm authenticator</button></form><form action="/totp/enroll/cancel" method="post"><input type="hidden" name="csrf" value={data.csrf}/><button className="button secondary" type="submit">Cancel setup</button></form></div>}</>}</section>; }
 

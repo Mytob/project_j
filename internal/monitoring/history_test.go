@@ -97,7 +97,7 @@ func TestHistoryRejectsOutOfOrderAndOversizedSamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now().UTC().Truncate(time.Minute)
+	at := time.Date(2026, time.October, 16, 0, 0, 0, 0, time.UTC)
 	if err := history.Append(Snapshot{CapturedAt: at}); err != nil {
 		t.Fatal(err)
 	}

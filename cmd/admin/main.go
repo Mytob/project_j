@@ -34,6 +34,7 @@ func main() {
 	wireguardKeepalive := flag.Uint("wireguard-keepalive", 25, "Windows peer persistent keepalive in seconds")
 	wireguardHealth := flag.String("wireguard-health", "/run/wireguard-health/current", "read-only recent WireGuard interface health heartbeat")
 	hostMetricsURL := flag.String("host-metrics-url", "http://hostmetrics:8181", "private host metrics collector origin")
+	containerHealthURL := flag.String("container-health-url", "http://containerhealth:8282", "private read-only Docker container health observer origin")
 	proxyMetricsPath := flag.String("proxy-metrics", "/run/proxy-metrics/current.json", "read-only current Caddy metrics snapshot")
 	statisticsPath := flag.String("statistics-history", "/opt/jellyfin-proxy/data/statistics", "persistent 90-day statistics directory")
 	flag.Parse()
@@ -95,6 +96,7 @@ func main() {
 		os.Exit(1)
 	}
 	application.ConfigureComponentHealth(caddyAPI, *wireguardHealth)
+	application.ConfigureContainerHealth(*containerHealthURL)
 	application.ConfigureBuildInfo(version, buildNumber)
 	if err := application.ConfigureTOTPStore(totpStore); err != nil {
 		logger.Error("configure administrator TOTP", "error", err)

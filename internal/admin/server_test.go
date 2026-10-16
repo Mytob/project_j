@@ -380,6 +380,51 @@ func TestPasswordChangeVerifiesCSRFCurrentPasswordAndRevokesSessions(t *testing.
 	}
 }
 
+func TestPasswordChangeRequiresFreshTOTPWhenEnabled(t *testing.T) {
+	server, handler, store, _ := newTOTPTestServer(t)
+	credentialPath := filepath.Join(t.TempDir(), "admin-credential.json")
+	if err := auth.SaveCredential(credentialPath, "correct test administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.ConfigureCredentialPath(credentialPath); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginTestAdmin(t, server)
+	enrolledAt := time.Unix(1_700_000_010, 0)
+	secret := activateTestTOTP(t, store, enrolledAt)
+	defer clear(secret)
+	changeAt := enrolledAt.Add(time.Minute)
+	server.now = func() time.Time { return changeAt }
+	csrf := initialState(t, handler, cookie)["csrf"].(string)
+	form := url.Values{
+		"csrf":            {csrf},
+		"current_password": {"correct test administrator password"},
+		"new_password":     {"new secure administrator password"},
+		"confirm_password": {"new secure administrator password"},
+	}
+	missingCode := request(handler, http.MethodPost, "/password/change", form, cookie)
+	if missingCode.Code != http.StatusUnauthorized || !strings.Contains(missingCode.Body.String(), "authenticator code") {
+		t.Fatalf("missing authenticator code response = %d %q", missingCode.Code, missingCode.Body.String())
+	}
+	form.Set("code", codeOutsideWindow(secret, changeAt))
+	wrongCode := request(handler, http.MethodPost, "/password/change", form, cookie)
+	if wrongCode.Code != http.StatusUnauthorized || !server.credential.Verify("correct test administrator password") {
+		t.Fatalf("incorrect authenticator code changed password: status=%d", wrongCode.Code)
+	}
+	validCode, err := totp.Code(secret, changeAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form.Set("code", validCode)
+	changed := request(handler, http.MethodPost, "/password/change", form, cookie)
+	if changed.Code != http.StatusSeeOther || changed.Header().Get("Location") != "/?password=changed" {
+		t.Fatalf("valid authenticator code did not change password: status=%d location=%q body=%s", changed.Code, changed.Header().Get("Location"), changed.Body.String())
+	}
+	if !server.credential.Verify("new secure administrator password") || server.credential.Verify("correct test administrator password") {
+		t.Fatal("password was not replaced after successful authenticator verification")
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	response := request(newTestServer(t), http.MethodGet, "/healthz", nil, nil)
 	if response.Code != http.StatusOK || response.Body.String() != "ok\n" {
@@ -1156,13 +1201,37 @@ func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) 
 		}
 		observed[item["name"].(string)] = item
 	}
-	for _, name := range []string{"Admin backend", "Access control", "Caddy / proxy", "WireGuard interface", "Windows peer", "Jellyfin endpoint", "Host metrics", "Proxy metrics", "Container status"} {
+	for _, name := range []string{"Admin backend", "Access control", "Caddy / proxy", "WireGuard interface", "Windows peer", "Jellyfin endpoint", "Host metrics", "Proxy metrics", "Admin container", "Host metrics container", "Caddy container", "WireGuard container"} {
 		if observed[name] == nil {
 			t.Errorf("bootstrap health is missing component %q", name)
 		}
 	}
-	if observed["Caddy / proxy"]["detail"] != "Caddy responded through its private admin socket." || observed["WireGuard interface"]["detail"] != "A recent heartbeat confirms that the interface is up. This does not prove peer reachability." || observed["Windows peer"]["detail"] != "The private WireGuard status socket is not configured." || observed["Host metrics"]["state"] != "Unknown" || observed["Proxy metrics"]["state"] != "Unknown" || observed["Container status"]["state"] != "Unknown" {
+	if observed["Caddy / proxy"]["detail"] != "Caddy responded through its private admin socket." || observed["WireGuard interface"]["detail"] != "A recent heartbeat confirms that the interface is up. This does not prove peer reachability." || observed["Windows peer"]["detail"] != "The private WireGuard status socket is not configured." || observed["Host metrics"]["state"] != "Unknown" || observed["Proxy metrics"]["state"] != "Unknown" || observed["Admin container"]["state"] != "Unknown" {
 		t.Fatalf("bootstrap health did not reflect observed evidence: %#v", observed)
+	}
+}
+
+func TestContainerHealthUsesPrivateObserverSnapshot(t *testing.T) {
+	observer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/containers" {
+			t.Fatalf("unexpected observer request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"service":"admin","state":"running","health":"healthy","restart_count":2,"checked_at":"2026-10-16T12:00:00Z"},{"service":"hostmetrics","state":"running","health":"healthy","restart_count":0,"checked_at":"2026-10-16T12:00:00Z"},{"service":"caddy","state":"running","health":"unhealthy","restart_count":1,"checked_at":"2026-10-16T12:00:00Z"},{"service":"wireguard","state":"exited","health":"none","restart_count":4,"checked_at":"2026-10-16T12:00:00Z"}]`)
+	}))
+	defer observer.Close()
+	server, _, _, _ := newTOTPTestServer(t)
+	server.ConfigureContainerHealth(observer.URL)
+	components := server.componentHealth(nil)
+	states := make(map[string]componentStatus, len(components))
+	for _, component := range components {
+		states[component.Name] = component
+	}
+	if states["Admin container"].State != "Healthy" || states["Host metrics container"].State != "Healthy" || states["Caddy container"].State != "Down" || states["WireGuard container"].State != "Down" {
+		t.Fatalf("container states did not reflect Docker observer evidence: %#v", states)
+	}
+	if !strings.Contains(states["Admin container"].Detail, "2 restarts") || !strings.Contains(states["WireGuard container"].Detail, "4 restarts") {
+		t.Fatalf("container restart counts were omitted: %#v", states)
 	}
 }
 
@@ -1235,7 +1304,7 @@ func TestHealthDoesNotInferWindowsOrJellyfinFromTunnelHeartbeat(t *testing.T) {
 	if states["Caddy / proxy"] != "Healthy" || states["WireGuard interface"] != "Healthy" {
 		t.Fatalf("observed private checks were not healthy: %#v", states)
 	}
-	for _, name := range []string{"Windows peer", "Jellyfin endpoint", "Host metrics", "Proxy metrics", "Container status"} {
+	for _, name := range []string{"Windows peer", "Jellyfin endpoint", "Host metrics", "Proxy metrics", "Admin container", "Host metrics container", "Caddy container", "WireGuard container"} {
 		if states[name] != "Unknown" {
 			t.Errorf("unobserved component %q was reported as %q", name, states[name])
 		}

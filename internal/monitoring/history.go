@@ -44,10 +44,11 @@ type Snapshot struct {
 // History stores one-minute samples in compressed, per-day files. Each file
 // is replaced atomically, is bounded, and is independent of release contents.
 type History struct {
-	mu   sync.RWMutex
-	root string
-	days map[string][]Snapshot
-	now  func() time.Time
+	mu     sync.RWMutex
+	root   string
+	days   map[string][]Snapshot
+	latest time.Time
+	now    func() time.Time
 }
 
 func OpenHistory(root string) (*History, error) {
@@ -101,6 +102,9 @@ func (h *History) load() error {
 			continue
 		}
 		h.days[date] = samples
+		if latest := samples[len(samples)-1].CapturedAt; latest.After(h.latest) {
+			h.latest = latest
+		}
 	}
 	return nil
 }
@@ -145,6 +149,9 @@ func (h *History) Append(sample Snapshot) error {
 	date := sample.CapturedAt.Format("2006-01-02")
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if !h.latest.IsZero() && sample.CapturedAt.Before(h.latest) {
+		return errors.New("statistics samples must be appended in timestamp order")
+	}
 	if err := h.expireLocked(sample.CapturedAt.Add(-HistoryRetention)); err != nil {
 		return err
 	}
@@ -165,6 +172,9 @@ func (h *History) Append(sample Snapshot) error {
 		return fmt.Errorf("persist statistics history: %w", err)
 	}
 	h.days[date] = day
+	if sample.CapturedAt.After(h.latest) {
+		h.latest = sample.CapturedAt
+	}
 	return nil
 }
 

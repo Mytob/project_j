@@ -704,3 +704,31 @@ these limits explicitly and use VPS preflight checks.
   remain blocked; v1.2 host evidence does not satisfy them.
 - **Source control:** [PR #45](https://github.com/Mytob/project_j/pull/45)
   merged to `dev` at `658e8da` after the clean local gate passed.
+
+### v1.3 authorized UI and container-health follow-up — 2026-10-16
+
+- **Overview:** The overall health summary and compact status of every
+  component now share one panel. It contains no statistics cards, charts, or
+  diagnostic detail; those remain on Statistics and Health. Desktop/mobile
+  screenshot baselines and browser assertions were updated.
+- **Security and observation:** Password changes require a fresh TOTP code
+  whenever TOTP is enabled. A dedicated private observer reports container
+  state for labeled application containers through fixed GET-only Docker API
+  calls; the Docker socket is not mounted in admin or host-metrics.
+- **Integration:** `pwsh -NoProfile -File
+  .\tests\integration\run.ps1` — PASS. All four Playwright tests passed,
+  including Chromium, Firefox, and WebKit navigation/chart checks and the
+  Chromium authentication, responsive-page, password/TOTP, one-time
+  WireGuard-config download, and container-health flow.
+- **Release gate:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.3.0-dev` — PASS, exit 0 at 2026-10-16 00:29:52 UTC. All Go packages,
+  frontend typecheck/six Vitest tests/production build, browser and monitoring
+  integration, and offline package install/update/preservation/rollback/
+  retention/password-reset checks passed. Six images loaded without registry
+  access. `dist/release-validation-1.3.0-dev.json` records
+  `local_gate: passed`; the package under `dist/` is generated output and is
+  not committed.
+- **Host checks:** The report correctly leaves release readiness blocked
+  pending a version-matched Ubuntu VPS/provider-firewall/ACME run and native
+  Windows WireGuard/firewall/playback verification. No v1.3 deployment was
+  performed.

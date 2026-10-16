@@ -555,7 +555,7 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 		return "", "", err
 	}
 	oldVersion := manifest.Version
-	for _, image := range []string{"admin", "hostmetrics", "wireguard", "caddy"} {
+	for _, image := range []string{"admin", "hostmetrics", "containerhealth", "wireguard", "caddy"} {
 		oldRef := "jellyfin-proxy/" + image + ":" + oldVersion
 		newRef := "jellyfin-proxy/" + image + ":" + version
 		if _, err := runner.Run(ctx, "docker", "image", "tag", oldRef, newRef); err != nil {
@@ -565,6 +565,7 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 	newImages := []string{
 		"jellyfin-proxy/admin:" + version,
 		"jellyfin-proxy/hostmetrics:" + version,
+		"jellyfin-proxy/containerhealth:" + version,
 		"jellyfin-proxy/wireguard:" + version,
 		"jellyfin-proxy/caddy:" + version,
 		"alpine:3.24.2",
