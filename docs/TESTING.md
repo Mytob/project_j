@@ -823,7 +823,7 @@ these limits explicitly and use VPS preflight checks.
   pending configuration once; the server-side endpoint was not invoked during
   diagnosis so the user's pending config remained available.
 
-### WireGuard transient notices — 2026-10-16
+### v1.3.4-dev WireGuard transient notices and test VPS update — 2026-10-16
 
 - **Behavior:** Peer-rotation confirmation and configuration download success
   or failure notices dismiss after five seconds. The `rotated` query marker is
@@ -836,3 +836,23 @@ these limits explicitly and use VPS preflight checks.
 - **Validation:** `.\build.ps1 test` — PASS, exit 0; Go tests and all four
   Playwright browser tests passed, including Firefox/WebKit admin smoke checks
   and the Chromium authentication/WireGuard flow.
+- **Release gate:** Clean-tree `.\build.ps1 release -Version 1.3.4-dev` on
+  merged `dev` commit `f8d530a70abf` — PASS, exit 0. Go tests, frontend
+  typecheck/six unit tests/build, all four browser integration tests, and
+  offline package install/update/rollback/retention/password-reset checks
+  passed. `dist/release-validation-1.3.4-dev.json` records
+  `local_gate: passed`; native Windows checks remain pending.
+- **Package:** `dist/jellyfin-proxy-1.3.4-dev-linux-amd64.tar.gz`, SHA-256
+  `e5b01ef58f716d35946be30db1bff9cbf8b6e686f66dc28fbbf8bbde324d656d`.
+  `dist/proxyctl-linux-amd64`, SHA-256
+  `78dabc8433a93079fcff87eeb18facfaf89f366480b360af91bb05f68ef3c04b`.
+  Both VPS transfer checksums matched.
+- **VPS update:** The package updater completed successfully on the
+  user-authorized Ubuntu 26.04.1 LTS VPS. All five containers report healthy;
+  the admin image is `1.3.4-dev` at revision `f8d530a70abf`. No WireGuard
+  configuration download or deletion operation was run during this update.
+- **Public routes:** Normal TLS verification returned `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403; all reported
+  `ssl_verify_result=0`.
+- **Limits:** Native Windows WireGuard import, firewall, and playback checks
+  were not performed for this update.
