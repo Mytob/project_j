@@ -734,3 +734,35 @@ these limits explicitly and use VPS preflight checks.
   performed.
 - **Source control:** [PR #47](https://github.com/Mytob/project_j/pull/47)
   merged to `dev` at `f9fed92` after the local release gate passed.
+
+### v1.3.1-dev release gate and VPS update — 2026-10-16
+
+- **Build:** On clean source commit `9e1b7b943805`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.1-dev` — PASS,
+  exit 0. Go packages, frontend typecheck/six Vitest tests/production build,
+  Chromium/Firefox/WebKit browser and monitoring integration, and offline
+  package install/update/preservation/rollback/retention/password-reset checks
+  passed. Six images loaded without registry access. The report is
+  `dist/release-validation-1.3.1-dev.json`; it records local gate passed and
+  host checks pending. The generated package is not committed.
+- **Package:** `dist/jellyfin-proxy-1.3.1-dev-linux-amd64.tar.gz`, SHA-256
+  `f777383345dbe101cf77bea4522b5ca90ff23be49c087db0530da03b7a3a0b5a`.
+  `dist/proxyctl-linux-amd64` SHA-256:
+  `ddfbcd196db536f9169096645fa7571aba0643b873db0125c408eb99980fda06`.
+  Both transferred VPS copies matched these checksums.
+- **VPS update:** On the user-authorized Ubuntu 26.04.1 LTS x86_64 host,
+  `./proxyctl-linux-amd64 update
+  ./jellyfin-proxy-1.3.1-dev-linux-amd64.tar.gz` — PASS. The updater reported
+  successful package and persistent TOTP verification, image loading,
+  configuration validation, service restart, health checks, and completion.
+- **Container state:** Compose reported admin, Caddy, containerhealth,
+  hostmetrics, and WireGuard all running and healthy on `1.3.1-dev` images.
+  This confirms the observer service itself is healthy; its container-health
+  UI was not separately inspected during this deployment.
+- **Public routes:** VPS `curl` with normal TLS verification returned
+  `darkcry.com` 200, `admin.darkcry.com` 200, and `access.darkcry.com` 403;
+  all three reported `ssl_verify_result=0`.
+- **Limits:** No native Windows WireGuard/firewall/playback verification was
+  performed for this update. The v1.3 host release gate remains blocked on
+  those Windows checks; successful VPS installation and HTTPS do not imply
+  those checks passed.
