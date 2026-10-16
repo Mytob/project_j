@@ -156,8 +156,24 @@ function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<In
   const [downloading, setDownloading] = useState(false);
   const [downloadMessage, setDownloadMessage] = useState("");
   const [downloadError, setDownloadError] = useState("");
-  const rotated = new URLSearchParams(window.location.search).get("rotated") === "1";
+  const [rotated, setRotated] = useState(() => new URLSearchParams(window.location.search).get("rotated") === "1");
   const status = data.wireguard_status;
+  useEffect(() => {
+    if (!rotated) return;
+    const location = new URL(window.location.href);
+    location.searchParams.delete("rotated");
+    window.history.replaceState(window.history.state, "", `${location.pathname}${location.search}${location.hash}`);
+    const timer = window.setTimeout(() => setRotated(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [rotated]);
+  useEffect(() => {
+    if (!downloadMessage && !downloadError) return;
+    const timer = window.setTimeout(() => {
+      setDownloadMessage("");
+      setDownloadError("");
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [downloadMessage, downloadError]);
   async function downloadConfiguration() {
     if (downloading) return;
     setDownloading(true);

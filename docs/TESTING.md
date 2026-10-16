@@ -822,3 +822,17 @@ these limits explicitly and use VPS preflight checks.
   retained both active and previous releases. The user can now download the
   pending configuration once; the server-side endpoint was not invoked during
   diagnosis so the user's pending config remained available.
+
+### WireGuard transient notices — 2026-10-16
+
+- **Behavior:** Peer-rotation confirmation and configuration download success
+  or failure notices dismiss after five seconds. The `rotated` query marker is
+  removed from the address bar once the confirmation has been rendered.
+  Persistent configuration state and safety guidance remain visible.
+- **Browser coverage:** The Chromium admin flow verifies the rotation notice,
+  simulates a failed config request and checks its alert expires, then performs
+  the one-time download and checks its success notice expires while the peer
+  regeneration guidance remains visible.
+- **Validation:** `.\build.ps1 test` — PASS, exit 0; Go tests and all four
+  Playwright browser tests passed, including Firefox/WebKit admin smoke checks
+  and the Chromium authentication/WireGuard flow.
