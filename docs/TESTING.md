@@ -797,3 +797,28 @@ these limits explicitly and use VPS preflight checks.
 - **Limits:** No native Windows client import, firewall, or playback check was
   performed for this update. The release report remains blocked on those
   Windows checks.
+
+### v1.3.3-dev WireGuard config deletion permission repair — 2026-10-16
+
+- **Root cause:** VPS admin logs showed `permission denied` when deleting
+  `windows.conf`. The bind-mounted `data/wireguard-client` directory was
+  `root:root` mode 0755, so the unprivileged admin process (UID 65532) could
+  read and return the file but could not consume it.
+- **Immediate VPS repair:** The directory was changed to `root:65532` mode
+  2770. A disposable sentinel file was removed successfully from inside the
+  admin container as UID 65532. The live Windows config was not read or
+  consumed during diagnosis.
+- **Code fix:** The updater now restores this directory's ownership and
+  permissions on every update. The update regression test first changes the
+  directory to `root:root` mode 0755 and verifies repair to `root:65532` with
+  group write access.
+- **Validation:** `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0;
+  all Go packages and all four Playwright tests passed. Clean-tree
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.3-dev` — PASS,
+  exit 0; frontend typecheck/six tests/build and offline install/update/rollback
+  gates also passed. The release report records the local gate as passed and
+  native Windows checks as pending.
+- **VPS update:** The 1.3.3-dev package updater completed successfully and
+  retained both active and previous releases. The user can now download the
+  pending configuration once; the server-side endpoint was not invoked during
+  diagnosis so the user's pending config remained available.
