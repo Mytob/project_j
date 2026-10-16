@@ -5,6 +5,10 @@
 The separate [v1.2 scope and design](V1.2.md) records the later authorized
 admin redesign and statistics requirements. It does not change the historical
 v1.0 decisions below or authorize unrelated product expansion.
+The repeat-download behavior in decision 29 was later superseded for the
+authorized v1.3 WireGuard lifecycle: each generated client configuration is a
+one-time download, removed after a complete transfer; peer regeneration is
+available only after that transfer is complete.
 
 The pasted implementation brief refers to 41 previously confirmed decisions,
 but it does not contain a separate numbered list of those 41 decisions. This

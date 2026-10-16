@@ -397,7 +397,7 @@ func TestPasswordChangeRequiresFreshTOTPWhenEnabled(t *testing.T) {
 	server.now = func() time.Time { return changeAt }
 	csrf := initialState(t, handler, cookie)["csrf"].(string)
 	form := url.Values{
-		"csrf":            {csrf},
+		"csrf":             {csrf},
 		"current_password": {"correct test administrator password"},
 		"new_password":     {"new secure administrator password"},
 		"confirm_password": {"new secure administrator password"},
@@ -1046,7 +1046,7 @@ func TestWireGuardDownloadFailsClosedWhenRetainedFilePermissionsChange(t *testin
 	}
 }
 
-func TestWireGuardDeleteDownloadRequiresSessionAndCSRF(t *testing.T) {
+func TestWireGuardRotationWaitsForOneTimeDownload(t *testing.T) {
 	root := t.TempDir()
 	paths, err := wireguard.EnsureProvisioned(filepath.Join(root, "wireguard"), wireguard.ProvisionOptions{
 		Endpoint: "vpn.example.test:51820", ListenPort: 51820,
@@ -1068,29 +1068,43 @@ func TestWireGuardDeleteDownloadRequiresSessionAndCSRF(t *testing.T) {
 	if err := server.ConfigureWireGuardConfig(paths.ClientPath); err != nil {
 		t.Fatal(err)
 	}
-	handler := server.Handler()
-	unauthorized := request(handler, http.MethodPost, "/wireguard/config/delete", url.Values{"csrf": {"invalid"}}, nil)
-	if unauthorized.Code != http.StatusSeeOther {
-		t.Fatalf("anonymous deletion returned %d", unauthorized.Code)
-	}
-	cookie := loginTestAdmin(t, server)
-	invalidCSRF := request(handler, http.MethodPost, "/wireguard/config/delete", url.Values{"csrf": {"invalid"}}, cookie)
-	if invalidCSRF.Code != http.StatusForbidden {
-		t.Fatalf("invalid-CSRF deletion returned %d", invalidCSRF.Code)
-	}
-	state := request(handler, http.MethodGet, "/api/initial", nil, cookie)
-	var data struct {
-		CSRF string `json:"csrf"`
-	}
-	if err := json.Unmarshal(state.Body.Bytes(), &data); err != nil {
+	if err := server.ConfigureWireGuardControl(filepath.Join(root, "unused.sock"), "vpn.example.test:51820", 25); err != nil {
 		t.Fatal(err)
 	}
-	deleted := request(handler, http.MethodPost, "/wireguard/config/delete", url.Values{"csrf": {data.CSRF}}, cookie)
-	if deleted.Code != http.StatusSeeOther || deleted.Header().Get("Location") != "/wireguard?deleted=1" {
-		t.Fatalf("authorized deletion status/location = %d %q", deleted.Code, deleted.Header().Get("Location"))
+	handler := server.Handler()
+	cookie := loginTestAdmin(t, server)
+	csrf, _, ok := server.sessions.State(cookie.Value)
+	if !ok {
+		t.Fatal("authenticated session is missing")
+	}
+	rotate := func() *httptest.ResponseRecorder {
+		t.Helper()
+		return request(handler, http.MethodPost, "/wireguard/rotate", url.Values{"csrf": {csrf}}, cookie)
+	}
+
+	blocked := rotate()
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "Download the current Windows configuration") {
+		t.Fatalf("rotation with an unconsumed config returned %d: %s", blocked.Code, blocked.Body.String())
+	}
+	if _, err := os.Stat(paths.ClientPath); err != nil {
+		t.Fatalf("blocked rotation changed the current downloadable config: %v", err)
+	}
+
+	download := request(handler, http.MethodGet, "/wireguard/config", nil, cookie)
+	if download.Code != http.StatusOK {
+		t.Fatalf("one-time download returned %d: %s", download.Code, download.Body.String())
 	}
 	if _, err := os.Stat(paths.ClientPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("deleted downloadable config still exists: %v", err)
+		t.Fatalf("successful download did not consume the config: %v", err)
+	}
+	if next := rotate(); next.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rotation after consuming the config returned %d, want control-service failure after passing the download gate", next.Code)
+	}
+	if _, err := os.Stat(paths.ClientPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed rotation restored an unavailable config: %v", err)
+	}
+	if response := request(handler, http.MethodPost, "/wireguard/config/delete", url.Values{"csrf": {csrf}}, cookie); response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("manual config deletion endpoint returned %d, want method not allowed", response.Code)
 	}
 }
 

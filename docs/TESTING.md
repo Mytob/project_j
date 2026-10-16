@@ -766,3 +766,34 @@ these limits explicitly and use VPS preflight checks.
   performed for this update. The v1.3 host release gate remains blocked on
   those Windows checks; successful VPS installation and HTTPS do not imply
   those checks passed.
+
+### v1.3.2-dev one-time WireGuard download and VPS update — 2026-10-16
+
+- **WireGuard lifecycle:** The stored Windows configuration can be downloaded
+  once. A completed response removes the server copy; interrupted transfers
+  keep it available for retry. Peer regeneration is blocked until the stored
+  configuration is consumed, and the admin UI only shows regeneration after
+  that point. The manual delete endpoint was removed so it cannot bypass the
+  download-before-rotation gate.
+- **Release gate:** On clean source commit `b9955bb94501`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.2-dev` — PASS,
+  exit 0. Go, Chromium/Firefox/WebKit browser and monitoring integration, and
+  offline package install/update/preservation/rollback/retention/password-reset
+  gates passed. The JSON report is
+  `dist/release-validation-1.3.2-dev.json`; it correctly leaves overall release
+  readiness blocked pending native Windows client/firewall checks.
+- **Package:** `dist/jellyfin-proxy-1.3.2-dev-linux-amd64.tar.gz`, SHA-256
+  `768dd748dbffed5a2f3498300d13a3066f6f0b3b9cc8d1aeeedb2ef4c025115c`.
+  `dist/proxyctl-linux-amd64` SHA-256:
+  `ddfbcd196db536f9169096645fa7571aba0643b873db0125c408eb99980fda06`.
+  Both transferred files matched their local checksums on the VPS.
+- **VPS update:** The package updater completed successfully on the user-
+  authorized Ubuntu 26.04.1 LTS x86_64 VPS and retained the active and previous
+  release. Admin, Caddy, containerhealth, hostmetrics, and WireGuard all report
+  healthy on `1.3.2-dev`; the admin image build label is `b9955bb94501`.
+- **Public routes:** Requests with normal TLS verification returned
+  `darkcry.com` 200, `admin.darkcry.com` 200, and `access.darkcry.com` 403;
+  each reported `ssl_verify_result=0`.
+- **Limits:** No native Windows client import, firewall, or playback check was
+  performed for this update. The release report remains blocked on those
+  Windows checks.
