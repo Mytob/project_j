@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/containerhealth"
 	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/whitelist"
 	"github.com/Mytob/project_j/internal/wireguard"
@@ -55,6 +56,7 @@ type Server struct {
 	buildNumber           string
 	statistics            *monitoring.Feed
 	caddyHealth           interface{ CheckHealth() error }
+	containerHealth       *containerhealth.Client
 	wireguardHealthPath   string
 }
 
@@ -234,6 +236,11 @@ func (s *Server) ConfigureStatistics(feed *monitoring.Feed) error {
 func (s *Server) ConfigureComponentHealth(caddy interface{ CheckHealth() error }, wireguardHeartbeatPath string) {
 	s.caddyHealth = caddy
 	s.wireguardHealthPath = wireguardHeartbeatPath
+}
+
+// ConfigureContainerHealth connects the private, read-only Docker observer.
+func (s *Server) ConfigureContainerHealth(origin string) {
+	s.containerHealth = containerhealth.NewClient(origin)
 }
 
 func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
@@ -434,6 +441,17 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		s.passwordLimiter.Failed()
 		http.Error(w, "The current password was not accepted.", http.StatusUnauthorized)
 		return
+	}
+	if s.totpStore != nil && s.totpStore.Status() == auth.TOTPEnabled {
+		accepted, err := s.totpStore.Verify(r.FormValue("code"), s.now())
+		if err != nil || !accepted {
+			s.passwordLimiter.Failed()
+			if err != nil {
+				s.logger.Error("verify administrator TOTP code before changing password", "error", err)
+			}
+			http.Error(w, "The password or authenticator code was not accepted.", http.StatusUnauthorized)
+			return
+		}
 	}
 	if err := s.credential.ReplacePassword(s.credentialPath, replacement); err != nil {
 		s.passwordLimiter.Failed()
@@ -728,8 +746,61 @@ func (s *Server) componentHealthObserved(entries []string, wireguardStatus *wire
 		}
 		add("Proxy metrics", state, detail)
 	}
-	add("Container status", "Unknown", "Container liveness and restart counts are not observable under the no-Docker-socket security boundary.")
+	s.addContainerHealth(add)
 	return s.recordHealth(result, now)
+}
+
+func (s *Server) addContainerHealth(add func(string, string, string)) {
+	services := []struct{ name, service string }{
+		{"Admin container", "admin"},
+		{"Host metrics container", "hostmetrics"},
+		{"Caddy container", "caddy"},
+		{"WireGuard container", "wireguard"},
+	}
+	if s.containerHealth == nil {
+		for _, item := range services {
+			add(item.name, "Unknown", "The private Docker health observer is not configured.")
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	snapshots, err := s.containerHealth.Snapshot(ctx)
+	if err != nil {
+		for _, item := range services {
+			add(item.name, "Unknown", "The private Docker health observer could not provide a fresh status.")
+		}
+		return
+	}
+	byService := make(map[string]containerhealth.Snapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		byService[snapshot.Service] = snapshot
+	}
+	for _, item := range services {
+		snapshot, ok := byService[item.service]
+		if !ok {
+			add(item.name, "Unknown", "No managed container was returned for this service.")
+			continue
+		}
+		state := "Unknown"
+		switch {
+		case snapshot.State == "running" && snapshot.Health == "healthy":
+			state = "Healthy"
+		case snapshot.State == "running" && snapshot.Health == "unhealthy":
+			state = "Down"
+		case snapshot.State == "exited" || snapshot.State == "dead":
+			state = "Down"
+		case snapshot.State == "running" && snapshot.Health == "starting":
+			state = "Degraded"
+		case snapshot.State == "restarting" || snapshot.State == "paused" || snapshot.State == "created":
+			state = "Degraded"
+		}
+		detail := fmt.Sprintf("Docker state %s · health %s · %d restarts", snapshot.State, snapshot.Health, snapshot.RestartCount)
+		if !snapshot.StartedAt.IsZero() {
+			detail += " · started " + snapshot.StartedAt.UTC().Format(time.RFC3339)
+		}
+		add(item.name, state, detail)
+	}
 }
 
 func (s *Server) wireguardHeartbeatHealthy() bool {

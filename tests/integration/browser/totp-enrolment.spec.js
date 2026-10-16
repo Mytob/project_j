@@ -46,34 +46,44 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   expect(anonymousEvents.status()).toBe(401);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Jellyfin Proxy' })).toBeVisible();
+  await expect(page.getByText('Use your administrator credentials to continue.')).toHaveCount(0);
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Service health' })).toBeVisible();
-  await expect(page.getByText('integration-test · browser-test')).toBeVisible();
-  const overview = await page.locator('.component-card').allTextContents();
-  for (const component of ['Admin backend', 'Access control', 'Caddy / proxy', 'WireGuard interface', 'Windows peer', 'Jellyfin endpoint', 'Host metrics', 'Proxy metrics', 'Container status']) {
+  await expect(page.locator('.overview-status')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Health details' })).toBeVisible();
+  await expect(page.locator('.stat-grid, .chart-grid')).toHaveCount(0);
+  await expect(page.getByText('Signed in', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('STREAMING LIVE', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Live measurements update as they arrive')).toHaveCount(0);
+  await expect(page.getByText('Version integration-test · Build browser-test')).toBeVisible();
+  await expect(page.getByText(/^Version integration-test · Build browser-test$/)).toHaveCount(1);
+  const overview = await page.locator('.overview-components li').allTextContents();
+  for (const component of ['Admin backend', 'Access control', 'Caddy / proxy', 'WireGuard interface', 'Windows peer', 'Jellyfin endpoint', 'Host metrics', 'Proxy metrics', 'Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container']) {
     expect(overview.join(' ')).toContain(component);
   }
-  expect(overview.join(' ')).toContain('Unknown');
+  for (const container of ['Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container']) {
+    expect(overview.join(' ')).toContain(`${container}Healthy`);
+  }
   await page.getByRole('link', { name: 'Access control' }).click();
   await expect(page).toHaveURL(/\/access-control$/);
   await expect(page.locator('body')).toContainText('Allowed addresses');
   await expect(page.getByRole('heading', { name: 'Allowed addresses' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Service health' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Current status' })).toHaveCount(0);
   await page.getByRole('link', { name: 'WireGuard' }).click();
   await expect(page).toHaveURL(/\/wireguard$/);
   await expect(page.getByRole('heading', { name: 'WireGuard configuration' })).toBeVisible();
   await expect(page.getByText('No downloadable copy')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Download and delete configuration' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Download and delete configuration' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Health' }).click();
   await expect(page).toHaveURL(/\/health$/);
   await expect(page.getByRole('heading', { name: 'Detailed status' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Service health' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Current status' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Security' }).click();
   await expect(page).toHaveURL(/\/security$/);
   await expect(page.getByRole('heading', { name: 'Administrator authenticator' })).toBeVisible();
+  await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page).toHaveScreenshot('security-desktop.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015 });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -198,11 +208,12 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await page.getByRole('link', { name: 'Security' }).click();
   await expect(page).toHaveURL(/\/security$/);
   await expect(page.getByText('Two-factor authentication is enabled for administrator sign-in.')).toBeVisible();
+  await expect(page.getByLabel('Current six-digit authenticator code for password change')).toBeVisible();
   await page.getByText('Disable two-factor authentication').click();
   await expect(page.getByLabel('Administrator password')).toBeVisible();
   await page.getByLabel('Administrator password').fill('integration-test-admin-password');
   const disableCodeStep = Math.max(Math.floor(Date.now() / 1000 / 30), disableLoginStep + 1);
-  await page.getByLabel('Current six-digit authenticator code').fill(codeAt(finalSecret, disableCodeStep));
+  await page.getByLabel('Current six-digit authenticator code', { exact: true }).fill(codeAt(finalSecret, disableCodeStep));
   await page.getByRole('button', { name: 'Disable authenticator' }).click();
   await expect(page).toHaveURL(/\?totp=disabled$/);
   await expect(page.getByText('Authenticator disabled. Sign in with your administrator password.')).toBeVisible();
@@ -218,6 +229,7 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await otherPage.getByRole('button', { name: 'Sign in' }).click();
   await expect(otherPage).toHaveURL(/\/dashboard$/);
   await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
   await page.getByLabel('Current password').fill('integration-test-admin-password');
   await page.getByLabel('New password', { exact: true }).fill('new-integration-admin-password');
   await page.getByLabel('Confirm new password').fill('new-integration-admin-password');
@@ -349,8 +361,11 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(mobilePage).toHaveURL(/\/wireguard\?rotated=1$/);
   await expect(mobilePage.getByRole('status')).toContainText('previous Windows credentials have been revoked');
   const mobileDownload = mobilePage.waitForEvent('download');
-  await mobilePage.getByRole('link', { name: 'Download and delete configuration' }).tap();
+  await mobilePage.getByRole('button', { name: 'Download and delete configuration' }).tap();
   expect((await mobileDownload).suggestedFilename()).toBe('jellyfin-proxy.conf');
+  await expect(mobilePage.getByText('No downloadable copy')).toBeVisible();
+  await expect(mobilePage.getByRole('button', { name: 'Download and delete configuration' })).toHaveCount(0);
+  await expect(mobilePage.getByText(/^The browser received the configuration response\. The server copy was removed\./)).toBeVisible();
   await expect.poll(async () => {
     const response = await mobilePage.request.get('/api/initial');
     return (await response.json()).wireguard_config_available;

@@ -27,6 +27,7 @@ $daemonName = "jellyfin-proxy-package-check-$PID"
 $imageReferences = @(
     "jellyfin-proxy/admin:$Version",
     "jellyfin-proxy/hostmetrics:$Version",
+    "jellyfin-proxy/containerhealth:$Version",
     "jellyfin-proxy/wireguard:$Version",
     "jellyfin-proxy/caddy:$Version",
     'alpine:3.24.2'
@@ -69,10 +70,12 @@ try {
 
     $adminImage = $imageReferences[0]
     $hostMetricsImage = $imageReferences[1]
-    $wireguardImage = $imageReferences[2]
-    $caddyImage = $imageReferences[3]
+    $containerHealthImage = $imageReferences[2]
+    $wireguardImage = $imageReferences[3]
+    $caddyImage = $imageReferences[4]
     Invoke-Checked 'docker' @('build', '--file', 'deploy/admin/Dockerfile', '--build-arg', "VERSION=$Version", '--build-arg', "BUILD_NUMBER=$buildNumber", '--tag', $adminImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/hostmetrics/Dockerfile', '--tag', $hostMetricsImage, '.')
+    Invoke-Checked 'docker' @('build', '--file', 'deploy/containerhealth/Dockerfile', '--tag', $containerHealthImage, '.')
     $builtVersion = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' $adminImage
     if ($LASTEXITCODE -ne 0 -or [string]$builtVersion -ne $Version) { throw 'Packaged admin image does not contain the requested version metadata.' }
     $builtRevision = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' $adminImage

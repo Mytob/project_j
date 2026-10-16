@@ -254,15 +254,18 @@ try {
     Assert-Equal '200' ([string][int]$dashboard.StatusCode) 'Authenticated administrator could not open dashboard.'
     $adminState = Get-AdminInitial -CookieJar $adminJar
     $components = @($adminState.components)
-    foreach ($component in @('Admin backend', 'Access control', 'Caddy / proxy', 'WireGuard interface', 'Windows peer', 'Jellyfin endpoint', 'Host metrics', 'Proxy metrics', 'Container status')) {
+    foreach ($component in @('Admin backend', 'Access control', 'Caddy / proxy', 'WireGuard interface', 'Windows peer', 'Jellyfin endpoint', 'Host metrics', 'Proxy metrics', 'Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container')) {
         if ($components.name -notcontains $component) { throw "Overview did not report component '$component'." }
     }
     foreach ($component in @('Windows peer', 'Jellyfin endpoint')) {
         $entry = $components | Where-Object name -eq $component | Select-Object -First 1
         Assert-Equal 'Healthy' $entry.state "$component did not report its observed healthy state."
     }
-    $containerStatus = $components | Where-Object name -eq 'Container status' | Select-Object -First 1
-    Assert-Equal 'Unknown' $containerStatus.state 'Container status must remain Unknown without Docker socket access.'
+    foreach ($component in @('Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container')) {
+        $entry = $components | Where-Object name -eq $component | Select-Object -First 1
+        Assert-Equal 'Healthy' $entry.state "$component did not report its Docker healthcheck state."
+        if ($entry.detail -notmatch 'health healthy' -or $entry.detail -notmatch 'restarts') { throw "$component did not include Docker health and restart evidence." }
+    }
     $wireguardPage = Invoke-AdminRequest -Path '/wireguard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$wireguardPage.StatusCode) 'Authenticated administrator could not open the WireGuard page.'
     if ($wireguardPage.Body -notmatch '/app-assets/assets/') { throw 'WireGuard route did not serve the embedded React application.' }
