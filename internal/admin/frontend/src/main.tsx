@@ -157,7 +157,6 @@ function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<In
   const [downloadMessage, setDownloadMessage] = useState("");
   const [downloadError, setDownloadError] = useState("");
   const rotated = new URLSearchParams(window.location.search).get("rotated") === "1";
-  const deleted = new URLSearchParams(window.location.search).get("deleted") === "1";
   const status = data.wireguard_status;
   async function downloadConfiguration() {
     if (downloading) return;
@@ -191,15 +190,12 @@ function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<In
     }
   }
   return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">WINDOWS PEER</p><h2>WireGuard configuration</h2></div><span className={`state-pill ${data.wireguard_config_available ? "healthy" : "unknown"}`}><i/>{data.wireguard_config_available ? "Download available" : "No downloadable copy"}</span></div>
-    <p>The VPS keeps the active Windows peer's public key. Its private configuration is held only until you download it or delete the stored copy.</p>
+    <p>The VPS keeps the active Windows peer's public key. Its private configuration is available for one download and removed after the complete transfer.</p>
     {rotated && <p className="notice notice-success" role="status">Peer rotated. The previous Windows credentials have been revoked. Download the replacement configuration now.</p>}
-    {deleted && <p className="notice notice-success" role="status">The downloadable copy was deleted. The active peer remains authorized until you regenerate it.</p>}
-    {data.wireguard_config_available ? <><button className="button download-button" type="button" onClick={downloadConfiguration} disabled={downloading}>{downloading ? "Downloading configuration…" : "Download and delete configuration"}</button><p className="muted">The server removes its copy after the complete response is transferred. Your browser may still ask where to save it. Keep the downloaded file secure.</p>
-      <form action="/wireguard/config/delete" method="post"><input type="hidden" name="csrf" value={data.csrf}/><button className="button secondary" type="submit">Delete downloadable file</button></form></> : <p className="muted">There is no private configuration stored on the server. Regenerate a peer if you need a replacement download.</p>}
+    {data.wireguard_config_available ? <><button className="button download-button" type="button" onClick={downloadConfiguration} disabled={downloading}>{downloading ? "Downloading configuration…" : "Download configuration"}</button><p className="muted">Save the downloaded file securely. Peer regeneration becomes available after the transfer completes.</p></> : <><p className="muted">No downloadable configuration is stored. You can generate a new Windows peer configuration now.</p><div className="notice">Generating a new peer revokes the previous Windows credentials. Any device using the old configuration will disconnect.</div>
+      <form action="/wireguard/rotate" method="post" onSubmit={(event) => { if (!window.confirm("Regenerate the Windows peer? The current configuration will stop working and must be replaced.")) event.preventDefault(); }}><input type="hidden" name="csrf" value={data.csrf}/><button className="button danger" type="submit">Regenerate and revoke current peer</button></form></>}
     {downloadMessage && <p className="notice notice-success" role="status">{downloadMessage}</p>}
     {downloadError && <p className="notice notice-error" role="alert">{downloadError}</p>}
-    <div className="notice">Regenerating creates new client keys, activates the replacement peer, and revokes the current peer. Any device using the old configuration will disconnect.</div>
-    <form action="/wireguard/rotate" method="post" onSubmit={(event) => { if (!window.confirm("Regenerate the Windows peer? The current configuration will stop working and must be replaced.")) event.preventDefault(); }}><input type="hidden" name="csrf" value={data.csrf}/><button className="button danger" type="submit">Regenerate and revoke current peer</button></form>
     <button className="text-button" type="button" onClick={refresh}>Refresh configuration status</button>
   </section>{status && <section className="panel"><div className="panel-title"><div><p className="eyebrow">LIVE DIAGNOSTICS</p><h2>Current tunnel status</h2></div></div><div className="stat-grid"><Stat title="Windows peer" value={status.peer_state} detail={status.peer_last_handshake ? `Handshake ${displayTime(status.peer_last_handshake)}` : "No handshake recorded"} color="blue"/><Stat title="Received" value={bytes(status.peer_rx_bytes)} detail="Peer traffic received by VPS" color="cyan"/><Stat title="Sent" value={bytes(status.peer_tx_bytes)} detail="Peer traffic sent by VPS" color="purple"/><Stat title="Jellyfin" value={status.jellyfin_state} detail={status.jellyfin_latency_ms == null ? "Health response unavailable" : `HTTP health response in ${number(status.jellyfin_latency_ms, " ms")}`} color="amber"/></div><p className="muted">{status.peer_detail} {status.jellyfin_detail}</p></section>}</>;
 }

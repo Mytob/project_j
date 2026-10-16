@@ -35,8 +35,8 @@ type Provisioned struct {
 }
 
 // EnsureProvisioned creates one server/client keypair in a private directory.
-// An existing pair is validated and preserved so restarts and repeat downloads
-// do not silently rotate the Windows peer identity.
+// An existing pair is validated and preserved so restarts do not silently
+// rotate the Windows peer identity.
 func EnsureProvisioned(directory string, options ProvisionOptions) (Provisioned, error) {
 	if directory == "" {
 		return Provisioned{}, errors.New("WireGuard configuration directory is empty")

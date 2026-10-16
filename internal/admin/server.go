@@ -45,6 +45,7 @@ type Server struct {
 	healthEvents          []healthEvent
 	whitelist             *WhitelistManager
 	wireguardClientConfig string
+	wireguardConfigMu     sync.Mutex
 	wireguardControl      wireguard.ControlClient
 	wireguardEndpoint     string
 	wireguardKeepalive    uint16
@@ -103,7 +104,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
 	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
-	mux.HandleFunc("POST /wireguard/config/delete", s.deleteWireGuardConfig)
 	mux.HandleFunc("POST /wireguard/rotate", s.rotateWireGuardConfig)
 	return s.securityHeaders(mux)
 }
@@ -1216,6 +1216,8 @@ func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	s.wireguardConfigMu.Lock()
+	defer s.wireguardConfigMu.Unlock()
 	data, err := wireguard.LoadRetainedClientConfig(s.wireguardClientConfig)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -1258,6 +1260,16 @@ func (s *Server) rotateWireGuardConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "WireGuard peer rotation is unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	s.wireguardConfigMu.Lock()
+	defer s.wireguardConfigMu.Unlock()
+	if _, err := os.Lstat(s.wireguardClientConfig); err == nil {
+		http.Error(w, "Download the current Windows configuration before regenerating the peer", http.StatusConflict)
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		s.logger.Error("check pending Windows WireGuard configuration before rotation", "error", err)
+		http.Error(w, "WireGuard peer rotation is unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	status, err := s.wireguardControl.Status(ctx)
@@ -1280,34 +1292,6 @@ func (s *Server) rotateWireGuardConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/wireguard?rotated=1", http.StatusSeeOther)
 }
-
-func (s *Server) deleteWireGuardConfig(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form submission", http.StatusBadRequest)
-		return
-	}
-	id, authenticated := s.session(r)
-	if !authenticated {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
-		http.Error(w, "Invalid form token", http.StatusForbidden)
-		return
-	}
-	if s.wireguardClientConfig == "" {
-		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	if err := os.Remove(s.wireguardClientConfig); err != nil && !errors.Is(err, os.ErrNotExist) {
-		s.logger.Error("delete downloadable Windows WireGuard configuration", "error", err)
-		http.Error(w, "Windows WireGuard configuration could not be deleted", http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, "/wireguard?deleted=1", http.StatusSeeOther)
-}
-
 func (s *Server) addWhitelistEntry(w http.ResponseWriter, r *http.Request) {
 	s.changeWhitelist(w, r, true)
 }

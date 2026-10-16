@@ -75,7 +75,7 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(page).toHaveURL(/\/wireguard$/);
   await expect(page.getByRole('heading', { name: 'WireGuard configuration' })).toBeVisible();
   await expect(page.getByText('No downloadable copy')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Download and delete configuration' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Health' }).click();
   await expect(page).toHaveURL(/\/health$/);
   await expect(page.getByRole('heading', { name: 'Detailed status' })).toBeVisible();
@@ -360,11 +360,13 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' }).tap();
   await expect(mobilePage).toHaveURL(/\/wireguard\?rotated=1$/);
   await expect(mobilePage.getByRole('status')).toContainText('previous Windows credentials have been revoked');
+  await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toHaveCount(0);
   const mobileDownload = mobilePage.waitForEvent('download');
-  await mobilePage.getByRole('button', { name: 'Download and delete configuration' }).tap();
+  await mobilePage.getByRole('button', { name: 'Download configuration' }).tap();
   expect((await mobileDownload).suggestedFilename()).toBe('jellyfin-proxy.conf');
   await expect(mobilePage.getByText('No downloadable copy')).toBeVisible();
-  await expect(mobilePage.getByRole('button', { name: 'Download and delete configuration' })).toHaveCount(0);
+  await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
+  await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
   await expect(mobilePage.getByText(/^The browser received the configuration response\. The server copy was removed\./)).toBeVisible();
   await expect.poll(async () => {
     const response = await mobilePage.request.get('/api/initial');
