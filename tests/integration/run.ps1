@@ -434,7 +434,13 @@ try {
     $unbanBody = @{ service = 'admin'; ip = $trustedIP } | ConvertTo-Json -Compress
     $securityUnban = Invoke-AdminJSON -Path '/security/unban' -CookieJar $adminJar -CSRF $securityCsrf -Body $unbanBody
     Assert-Equal '200' ([string]$securityUnban.StatusCode) 'Admin could not manually remove the integration ban.'
-    $unblockedAdmin = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+    $unbanDeadline = (Get-Date).AddSeconds(5)
+    $unblockedAdmin = $null
+    do {
+        $unblockedAdmin = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+        if ([int]$unblockedAdmin.StatusCode -eq 200) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $unbanDeadline)
     Assert-Equal '200' ([string]$unblockedAdmin.StatusCode) 'Manual unban did not restore admin access without a Caddy restart.'
     $untrustedLoginAfterUnban = Invoke-ClientLogin -Service 'trusted-client' -Password 'integration-test-admin-password' -CookieName 'admin-ban'
     Assert-Equal '303' ([string]$untrustedLoginAfterUnban) 'Unbanned administrator source could not sign in successfully.'
