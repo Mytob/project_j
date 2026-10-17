@@ -945,7 +945,7 @@ these limits explicitly and use VPS preflight checks.
   the v1.3 host-specific checks. Version-matched evidence for the stable
   1.3.6 release is recorded in
   [release-host-checks-v1.3.6.json](release-host-checks-v1.3.6.json). The
-  stable-version release command remains to be run.
+  stable release gate passed; see the results immediately below.
 ### v1.3.6 stable release gate — 2026-10-17
 
 - Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6 -HostCheckEvidence dist/release-host-checks-v1.3.6.json` — PASS. The first attempt could not access Docker Desktop from the sandbox; the retry with Docker engine access completed the gate.
