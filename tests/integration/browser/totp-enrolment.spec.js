@@ -71,6 +71,17 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(page.locator('body')).toContainText('Allowed addresses');
   await expect(page.getByRole('heading', { name: 'Allowed addresses' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Current status' })).toHaveCount(0);
+  await page.getByLabel('IP address or CIDR').fill('203.0.113.44');
+  await page.getByLabel('Friendly name (optional)').fill('Home laptop');
+  await page.getByRole('button', { name: 'Add address' }).click();
+  const namedAddress = page.locator('.address-row').filter({ hasText: '203.0.113.44/32' });
+  await expect(namedAddress).toContainText('Home laptop');
+  await namedAddress.getByText('Edit name').click();
+  await namedAddress.getByLabel('Friendly name for 203.0.113.44/32').fill('Travel laptop');
+  await namedAddress.getByRole('button', { name: 'Save name' }).click();
+  await expect(page.locator('.address-row').filter({ hasText: '203.0.113.44/32' })).toContainText('Travel laptop');
+  await page.getByRole('button', { name: 'Remove 203.0.113.44/32' }).click();
+  await expect(page.getByText('203.0.113.44/32')).toHaveCount(0);
   await page.getByRole('link', { name: 'WireGuard' }).click();
   await expect(page).toHaveURL(/\/wireguard$/);
   await expect(page.getByRole('heading', { name: 'WireGuard configuration' })).toBeVisible();
@@ -116,6 +127,11 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
     await page.goto(path);
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     if (name === 'health') await page.addStyleTag({ content: '.health-events { display: none !important; }' });
+    if (name === 'wireguard') {
+      const tunnelStatus = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Current tunnel status' }) });
+      await expect(tunnelStatus.locator('.stat-card')).toHaveCount(3);
+      await expect(tunnelStatus).not.toContainText('Health response unavailable');
+    }
     await page.setViewportSize({ width: 1440, height: 1000 });
     await expect(page).toHaveScreenshot(`admin-${name}-desktop.png`, { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.02, mask: dynamicVisualRegions, maskColor: '#102238' });
     await page.setViewportSize({ width: 390, height: 844 });

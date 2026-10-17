@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [int]$HttpPort = 18080,
-    [int]$HttpsPort = 18443
+    [int]$HttpsPort = 18443,
+    [switch]$UpdateBrowserSnapshots
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,7 +88,7 @@ function New-TestCredential {
     if ($LASTEXITCODE -ne 0) { throw "Test credential fixture permissions could not be set (exit $LASTEXITCODE)" }
 }
 
-function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar, [string]$CSRF = '', [string]$Password = '', [string]$Entry = '') {
+function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar, [string]$CSRF = '', [string]$Password = '', [string]$Entry = '', [string]$Name = '') {
     $uri = "https://admin.domain.test:${HttpsPort}${Path}"
     $resolve = "admin.domain.test:${HttpsPort}:127.0.0.1"
     $headersPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.headers')
@@ -96,7 +97,8 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
     if ($Method -eq 'POST') {
         $curlArgs += @('--request', 'POST', '--data-urlencode', "csrf=$CSRF")
         if ($Path -eq '/login') { $curlArgs += @('--data-urlencode', "password=$Password") }
-        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/remove') { $curlArgs += @('--data-urlencode', "entry=$Entry") }
+        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/remove' -or $Path -eq '/whitelist/name') { $curlArgs += @('--data-urlencode', "entry=$Entry") }
+        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/name') { $curlArgs += @('--data-urlencode', "name=$Name") }
     }
     $curlArgs += @('--write-out', '%{http_code}', $uri)
     $status = & curl.exe @curlArgs
@@ -159,6 +161,7 @@ try {
     $env:TRUSTED_CLIENT_IP = $trustedIP
     $env:UNTRUSTED_CLIENT_IP = $untrustedIP
     $env:BROWSER_TEST_IP = $browserIP
+    $env:BROWSER_SNAPSHOT_MODE = if ($UpdateBrowserSnapshots) { 'all' } else { 'missing' }
     Set-WhitelistPolicy -Entries @()
     $script:adminTempDir = Join-Path $env:TEMP "jellyfin-proxy-admin-test-$PID"
     New-Item -ItemType Directory -Path $adminTempDir -Force | Out-Null
@@ -334,8 +337,13 @@ try {
     $managementCsrf = $emptyState.csrf
     $invalidAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry 'bad.example'
     Assert-Equal '400' ([string][int]$invalidAdd.StatusCode) 'Admin accepted an invalid whitelist entry.'
-    $addNetwork = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
+    $addNetwork = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork -Name 'Home network'
     Assert-Equal '303' ([string][int]$addNetwork.StatusCode) 'Admin could not add a valid IPv4 CIDR entry.'
+    $namedEntry = @((Get-AdminInitial -CookieJar $adminJar).whitelist_entries | Where-Object { $_.address -eq $allowedNetwork })
+    if ($namedEntry.Count -ne 1 -or $namedEntry[0].name -ne 'Home network') { throw 'Admin did not return the friendly name for the added whitelist entry.' }
+    $renameCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $renameNetwork = Invoke-AdminRequest -Path '/whitelist/name' -Method 'POST' -CookieJar $adminJar -CSRF $renameCsrf -Entry $allowedNetwork -Name 'Family devices'
+    Assert-Equal '303' ([string][int]$renameNetwork.StatusCode) 'Admin could not update a whitelist friendly name.'
     $duplicateAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
     Assert-Equal '409' ([string][int]$duplicateAdd.StatusCode) 'Admin did not reject a duplicate entry.'
     $managedAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
@@ -350,7 +358,10 @@ try {
     $relogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $reloginCsrf -Password 'integration-test-admin-password'
     Assert-Equal '303' ([string][int]$relogin.StatusCode) 'Admin could not sign in after persistence restart check.'
     $persistedAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
-    if (@((Get-AdminInitial -CookieJar $adminJar).whitelist) -notcontains $allowedNetwork) { throw 'Whitelist entry did not persist across admin restart.' }
+    $persistedState = Get-AdminInitial -CookieJar $adminJar
+    if (@($persistedState.whitelist) -notcontains $allowedNetwork) { throw 'Whitelist entry did not persist across admin restart.' }
+    $persistedNamedEntry = @($persistedState.whitelist_entries | Where-Object { $_.address -eq $allowedNetwork })
+    if ($persistedNamedEntry.Count -ne 1 -or $persistedNamedEntry[0].name -ne 'Family devices') { throw 'Whitelist friendly name did not persist across admin restart.' }
     $persistedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '200' ([string][int]$persistedAllowed.StatusCode) 'Caddy did not restore the persisted whitelist after admin restart.'
     $removeCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
@@ -373,6 +384,9 @@ try {
 
     Set-WhitelistPolicy -Entries @("$browserIP/32")
     Invoke-Compose exec --no-TTY caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+    $browserWhitelistState = Get-AdminInitial -CookieJar $adminJar
+    $browserWhitelist = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $browserWhitelistState.csrf -Entry "$browserIP/32" -Name 'Browser test client'
+    Assert-Equal '303' ([string][int]$browserWhitelist.StatusCode) 'Could not seed the browser test client in the admin whitelist.'
 
     $composeRows = Invoke-Compose ps --format json
     $mockRows = @($composeRows | ForEach-Object { $_ | ConvertFrom-Json })
@@ -481,6 +495,7 @@ finally {
         Remove-Item Env:TRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
         Remove-Item Env:UNTRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
         Remove-Item Env:BROWSER_TEST_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:BROWSER_SNAPSHOT_MODE -ErrorAction SilentlyContinue
         Pop-Location
     }
 }
