@@ -934,3 +934,15 @@ these limits explicitly and use VPS preflight checks.
   playback was not repeated after this deployment. Windows import, firewall,
   and playback checks remain pending for this build.
 
+### v1.3.6-dev post-update Windows playback confirmation — 2026-10-17
+
+- The operator confirmed that Jellyfin playback works from the native Windows
+  client through the test VPS after its 1.3.6-dev update.
+- The Windows WireGuard profile and scoped inbound firewall setup were already
+  confirmed during the earlier host gate. The v1.3.6 update did not change the
+  Windows configuration; the VPS observed a fresh peer handshake after restart.
+- Together with the recorded VPS health and valid public TLS routes, this closes
+  the v1.3 host-specific checks. Version-matched evidence for the stable
+  1.3.6 release is recorded in
+  [release-host-checks-v1.3.6.json](release-host-checks-v1.3.6.json). The
+  stable-version release command remains to be run.
