@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	go.yaml.in/yaml/v3 v3.0.5
 )
 
 require (
@@ -132,7 +133,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261014201258-cf169cd0986f // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
