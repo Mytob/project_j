@@ -4,13 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Mytob/project_j/internal/whitelist"
 )
 
 type memoryWhitelistStore struct {
-	entries []string
-	fail    bool
+	entries      []string
+	namedEntries []whitelist.Entry
+	fail         bool
 }
 
 func (s *memoryWhitelistStore) Load() ([]string, error) {
@@ -21,6 +25,28 @@ func (s *memoryWhitelistStore) Save(entries []string) error {
 		return errors.New("simulated disk failure")
 	}
 	s.entries = append([]string(nil), entries...)
+	s.namedEntries = make([]whitelist.Entry, len(entries))
+	for i, address := range entries {
+		s.namedEntries[i] = whitelist.Entry{Address: address}
+	}
+	return nil
+}
+func (s *memoryWhitelistStore) LoadEntries() ([]whitelist.Entry, error) {
+	if s.namedEntries != nil {
+		return append([]whitelist.Entry(nil), s.namedEntries...), nil
+	}
+	entries := make([]whitelist.Entry, len(s.entries))
+	for i, address := range s.entries {
+		entries[i] = whitelist.Entry{Address: address}
+	}
+	return entries, nil
+}
+func (s *memoryWhitelistStore) SaveEntries(entries []whitelist.Entry) error {
+	if s.fail {
+		return errors.New("simulated disk failure")
+	}
+	s.namedEntries = append([]whitelist.Entry(nil), entries...)
+	s.entries = whitelist.Addresses(entries)
 	return nil
 }
 
@@ -72,6 +98,38 @@ func TestWhitelistManagerInitializeAddRemoveAndDuplicate(t *testing.T) {
 	got, _ := manager.List()
 	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(store.entries, want) {
 		t.Fatalf("state = %v, persisted = %v, want %v", got, store.entries, want)
+	}
+}
+
+func TestWhitelistManagerPersistsFriendlyNameWithoutChangingPolicy(t *testing.T) {
+	store := &memoryWhitelistStore{}
+	applier := &recordingPolicy{}
+	manager := newManager(store, applier)
+	if err := manager.Add("203.0.113.24", "Home phone"); err != nil {
+		t.Fatal(err)
+	}
+	want := []whitelist.Entry{{Address: "203.0.113.24/32", Name: "Home phone"}}
+	got, err := manager.ListEntries()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("named entries = %#v, %v; want %#v", got, err, want)
+	}
+	if !reflect.DeepEqual(store.namedEntries, want) {
+		t.Fatalf("persisted named entries = %#v, want %#v", store.namedEntries, want)
+	}
+	if len(applier.applied) != 2 || len(applier.applied[0]) != 0 || !reflect.DeepEqual(applier.applied[1], []string{"203.0.113.24/32"}) {
+		t.Fatalf("applied policies = %#v, want deny-all then only the address", applier.applied)
+	}
+	if err := manager.SetName("203.0.113.24", "Living room TV"); err != nil {
+		t.Fatal(err)
+	}
+	want[0].Name = "Living room TV"
+	if err := manager.SetName("203.0.113.24", strings.Repeat("x", whitelist.MaxEntryNameRunes+1)); !errors.Is(err, whitelist.ErrInvalidEntryName) {
+		t.Fatalf("invalid name error = %v", err)
+	}
+	reopened := newManager(store, &recordingPolicy{})
+	got, err = reopened.ListEntries()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("reloaded named entries = %#v, %v; want %#v", got, err, want)
 	}
 }
 

@@ -8,9 +8,76 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 var ErrInvalidEntry = errors.New("invalid whitelist entry")
+var ErrInvalidEntryName = errors.New("invalid whitelist entry name")
+
+const MaxEntryNameRunes = 80
+
+// Entry combines an address or network with an optional administrator label.
+// Name is display metadata and is never included in access-control rules.
+type Entry struct {
+	Address string `json:"address"`
+	Name    string `json:"name,omitempty"`
+}
+
+// ValidateEntries canonicalizes addresses and labels, removes duplicate
+// addresses, and returns a stable order suitable for persistence and display.
+func ValidateEntries(values []Entry) ([]Entry, error) {
+	type parsedEntry struct {
+		prefix netip.Prefix
+		name   string
+	}
+	seen := make(map[netip.Prefix]struct{}, len(values))
+	entries := make([]parsedEntry, 0, len(values))
+	for _, value := range values {
+		prefix, err := ParseEntry(value.Address)
+		if err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(value.Name)
+		if utf8.RuneCountInString(name) > MaxEntryNameRunes {
+			return nil, fmt.Errorf("%w: names must be %d characters or fewer", ErrInvalidEntryName, MaxEntryNameRunes)
+		}
+		for _, r := range name {
+			if unicode.IsControl(r) {
+				return nil, fmt.Errorf("%w: control characters are not allowed", ErrInvalidEntryName)
+			}
+		}
+		if _, exists := seen[prefix]; exists {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		entries = append(entries, parsedEntry{prefix: prefix, name: name})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i].prefix, entries[j].prefix
+		if a.Addr().Is4() != b.Addr().Is4() {
+			return a.Addr().Is4()
+		}
+		if cmp := a.Addr().Compare(b.Addr()); cmp != 0 {
+			return cmp < 0
+		}
+		return a.Bits() < b.Bits()
+	})
+	result := make([]Entry, len(entries))
+	for i, entry := range entries {
+		result[i] = Entry{Address: entry.prefix.String(), Name: entry.name}
+	}
+	return result, nil
+}
+
+// Addresses returns only the canonical address portion of named entries.
+func Addresses(entries []Entry) []string {
+	result := make([]string, len(entries))
+	for i, entry := range entries {
+		result[i] = entry.Address
+	}
+	return result
+}
 
 // ParseEntry accepts one IPv4 address, IPv6 address, or CIDR prefix.
 // Addresses are represented as host prefixes and networks are masked.

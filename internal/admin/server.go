@@ -102,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /statistics/events", s.statisticsEvents)
 	mux.HandleFunc("GET /statistics/history", s.statisticsHistory)
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
+	mux.HandleFunc("POST /whitelist/name", s.nameWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
 	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
 	mux.HandleFunc("POST /wireguard/rotate", s.rotateWireGuardConfig)
@@ -499,15 +500,20 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) 
 	}
 	csrf, _, _ := s.sessions.State(id)
 	entries := []string{}
+	namedEntries := []whitelist.Entry{}
 	if s.whitelist != nil {
 		var err error
-		entries, err = s.whitelist.List()
+		namedEntries, err = s.whitelist.ListEntries()
 		if err != nil {
 			http.Error(w, "Whitelist is unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		entries = whitelist.Addresses(namedEntries)
 		if entries == nil {
 			entries = []string{}
+		}
+		if namedEntries == nil {
+			namedEntries = []whitelist.Entry{}
 		}
 	}
 	titles := map[string][3]string{
@@ -518,7 +524,7 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request, page string) 
 	}
 	pageDetails := titles[page]
 	data := map[string]any{
-		"CSRF": csrf, "Entries": entries, "WhitelistEnabled": s.whitelist != nil,
+		"CSRF": csrf, "Entries": entries, "NamedEntries": namedEntries, "WhitelistEnabled": s.whitelist != nil,
 		"WireGuardEnabled": s.wireguardClientConfig != "", "TOTPConfigured": s.totpStore != nil,
 		"CredentialChangeEnabled": s.credentialPath != "",
 		"Version":                 s.version, "BuildNumber": s.buildNumber, "Page": page,
@@ -584,15 +590,20 @@ func (s *Server) apiInitial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries := []string{}
+	namedEntries := []whitelist.Entry{}
 	if s.whitelist != nil {
 		var err error
-		entries, err = s.whitelist.List()
+		namedEntries, err = s.whitelist.ListEntries()
 		if err != nil {
 			http.Error(w, "Whitelist is unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		entries = whitelist.Addresses(namedEntries)
 		if entries == nil {
 			entries = []string{}
+		}
+		if namedEntries == nil {
+			namedEntries = []whitelist.Entry{}
 		}
 	}
 	status := auth.TOTPUnconfigured
@@ -614,7 +625,7 @@ func (s *Server) apiInitial(w http.ResponseWriter, r *http.Request) {
 	}
 	result := map[string]any{
 		"csrf": csrf, "version": s.version, "build_number": s.buildNumber,
-		"whitelist_enabled": s.whitelist != nil, "whitelist": entries,
+		"whitelist_enabled": s.whitelist != nil, "whitelist": entries, "whitelist_entries": namedEntries,
 		"wireguard_enabled": s.wireguardClientConfig != "", "wireguard_config_available": configAvailable, "totp_status": string(status),
 		"components": s.componentHealthObserved(entries, wireguardStatus), "health_events": s.recentHealthEvents(),
 		"current": monitoring.LiveData{Status: "disconnected"},
@@ -1293,13 +1304,16 @@ func (s *Server) rotateWireGuardConfig(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/wireguard", http.StatusSeeOther)
 }
 func (s *Server) addWhitelistEntry(w http.ResponseWriter, r *http.Request) {
-	s.changeWhitelist(w, r, true)
+	s.changeWhitelist(w, r, "add")
+}
+func (s *Server) nameWhitelistEntry(w http.ResponseWriter, r *http.Request) {
+	s.changeWhitelist(w, r, "name")
 }
 func (s *Server) removeWhitelistEntry(w http.ResponseWriter, r *http.Request) {
-	s.changeWhitelist(w, r, false)
+	s.changeWhitelist(w, r, "remove")
 }
 
-func (s *Server) changeWhitelist(w http.ResponseWriter, r *http.Request, add bool) {
+func (s *Server) changeWhitelist(w http.ResponseWriter, r *http.Request, action string) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form submission", http.StatusBadRequest)
@@ -1319,15 +1333,18 @@ func (s *Server) changeWhitelist(w http.ResponseWriter, r *http.Request, add boo
 		return
 	}
 	var err error
-	if add {
-		err = s.whitelist.Add(r.FormValue("entry"))
-	} else {
+	switch action {
+	case "add":
+		err = s.whitelist.Add(r.FormValue("entry"), r.FormValue("name"))
+	case "name":
+		err = s.whitelist.SetName(r.FormValue("entry"), r.FormValue("name"))
+	default:
 		err = s.whitelist.Remove(r.FormValue("entry"))
 	}
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
-		case errors.Is(err, whitelist.ErrInvalidEntry):
+		case errors.Is(err, whitelist.ErrInvalidEntry), errors.Is(err, whitelist.ErrInvalidEntryName):
 			status = http.StatusBadRequest
 		case errors.Is(err, ErrDuplicateWhitelistEntry), errors.Is(err, ErrWhitelistEntryNotFound):
 			status = http.StatusConflict

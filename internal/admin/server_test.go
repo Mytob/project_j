@@ -240,6 +240,10 @@ func TestAdminBootstrapReturnsEmptyWhitelistAsArray(t *testing.T) {
 	if entries == nil || len(entries) != 0 {
 		t.Fatalf("empty whitelist = %#v, want empty array", entries)
 	}
+	var namedEntries []map[string]any
+	if err := json.Unmarshal(payload["whitelist_entries"], &namedEntries); err != nil || namedEntries == nil || len(namedEntries) != 0 {
+		t.Fatalf("empty named whitelist is not an array: %s (%v)", payload["whitelist_entries"], err)
+	}
 }
 
 func request(handler http.Handler, method, target string, body url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -1139,9 +1143,26 @@ func TestWhitelistChangesRequireAuthenticatedSessionAndCSRF(t *testing.T) {
 	if len(store.entries) != 0 || len(applier.applied) != 1 {
 		t.Fatal("invalid CSRF request changed the whitelist or Caddy")
 	}
-	valid := request(handler, "POST", "/whitelist/add", url.Values{"csrf": {csrf}, "entry": {"192.0.2.1"}}, cookie)
+	valid := request(handler, "POST", "/whitelist/add", url.Values{"csrf": {csrf}, "entry": {"192.0.2.1"}, "name": {"Home phone"}}, cookie)
 	if valid.Code != http.StatusSeeOther {
 		t.Fatalf("valid change status %d, body %s", valid.Code, valid.Body.String())
+	}
+	entries, err := manager.ListEntries()
+	if err != nil || len(entries) != 1 || entries[0].Address != "192.0.2.1/32" || entries[0].Name != "Home phone" {
+		t.Fatalf("added named entry = %#v, %v", entries, err)
+	}
+	nameResponse := request(handler, "POST", "/whitelist/name", url.Values{"csrf": {csrf}, "entry": {"192.0.2.1"}, "name": {"Living room TV"}}, cookie)
+	if nameResponse.Code != http.StatusSeeOther {
+		t.Fatalf("friendly-name update status %d, body %s", nameResponse.Code, nameResponse.Body.String())
+	}
+	state := initialState(t, handler, cookie)
+	encodedEntries, err := json.Marshal(state["whitelist_entries"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var responseEntries []map[string]string
+	if err := json.Unmarshal(encodedEntries, &responseEntries); err != nil || len(responseEntries) != 1 || responseEntries[0]["address"] != "192.0.2.1/32" || responseEntries[0]["name"] != "Living room TV" {
+		t.Fatalf("bootstrap whitelist entries = %s, %v", encodedEntries, err)
 	}
 }
 

@@ -1,11 +1,32 @@
 package whitelist
 
 import (
+	"errors"
 	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestValidateEntriesCanonicalizesAndValidatesFriendlyNames(t *testing.T) {
+	entries, err := ValidateEntries([]Entry{
+		{Address: "2001:db8::1", Name: "  Travel laptop  "},
+		{Address: "192.0.2.1", Name: "Home phone"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Entry{{Address: "192.0.2.1/32", Name: "Home phone"}, {Address: "2001:db8::1/128", Name: "Travel laptop"}}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("entries = %#v, want %#v", entries, want)
+	}
+	if _, err := ValidateEntries([]Entry{{Address: "192.0.2.1", Name: strings.Repeat("x", MaxEntryNameRunes+1)}}); !errors.Is(err, ErrInvalidEntryName) {
+		t.Fatalf("long name error = %v", err)
+	}
+	if _, err := ValidateEntries([]Entry{{Address: "192.0.2.1", Name: "Home\nphone"}}); !errors.Is(err, ErrInvalidEntryName) {
+		t.Fatalf("control-character name error = %v", err)
+	}
+}
 
 func TestParseEntryNormalizesAddressesAndNetworks(t *testing.T) {
 	tests := []struct {

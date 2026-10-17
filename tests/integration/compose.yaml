@@ -240,7 +240,7 @@ services:
       - ./browser:/tests:rw
     environment:
       BASE_URL: https://admin.domain.test
-    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.0 && npm ci && npx playwright test --reporter=line --update-snapshots=missing; status=$$?; cp -a /tmp/totp-browser/*-snapshots /tests/ 2>/dev/null || true; exit $$status"]
+    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.0 && npm ci && npx playwright test --reporter=line --update-snapshots=${BROWSER_SNAPSHOT_MODE:-missing}; status=$$?; cp -a /tmp/totp-browser/*-snapshots /tests/ 2>/dev/null || true; exit $$status"]
     depends_on:
       admin:
         condition: service_started
