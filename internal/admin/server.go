@@ -1290,7 +1290,7 @@ func (s *Server) rotateWireGuardConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "WireGuard peer rotation failed. The previous peer remains active.", http.StatusConflict)
 		return
 	}
-	http.Redirect(w, r, "/wireguard?rotated=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/wireguard", http.StatusSeeOther)
 }
 func (s *Server) addWhitelistEntry(w http.ResponseWriter, r *http.Request) {
 	s.changeWhitelist(w, r, true)

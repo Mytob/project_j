@@ -74,7 +74,7 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await page.getByRole('link', { name: 'WireGuard' }).click();
   await expect(page).toHaveURL(/\/wireguard$/);
   await expect(page.getByRole('heading', { name: 'WireGuard configuration' })).toBeVisible();
-  await expect(page.getByText('No downloadable copy')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Health' }).click();
   await expect(page).toHaveURL(/\/health$/);
@@ -356,30 +356,21 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
 
   await mobileMenu.tap();
   await mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'WireGuard' }).tap();
-  mobilePage.once('dialog', (dialog) => dialog.accept());
   await mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' }).tap();
   await expect(mobilePage).toHaveURL(/\/wireguard$/);
-  const rotatedNotice = mobilePage.getByText(/^Peer rotated\./);
-  await expect(rotatedNotice).toContainText('previous Windows credentials have been revoked');
-  await expect(rotatedNotice).toBeHidden({ timeout: 7000 });
   await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toHaveCount(0);
+  await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toBeVisible();
   await mobilePage.route('**/wireguard/config', (route) => route.fulfill({ status: 503, body: 'temporary test failure' }));
   await mobilePage.getByRole('button', { name: 'Download configuration' }).tap();
-  const downloadError = mobilePage.getByRole('alert');
-  await expect(downloadError).toContainText('configuration download could not be confirmed');
-  await expect(downloadError).toBeHidden({ timeout: 7000 });
-  await expect(mobilePage.getByText('Save the downloaded file securely. Peer regeneration becomes available after the transfer completes.')).toBeVisible();
+  await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toBeEnabled();
+  await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toHaveCount(0);
   await mobilePage.unroute('**/wireguard/config');
   const mobileDownload = mobilePage.waitForEvent('download');
   await mobilePage.getByRole('button', { name: 'Download configuration' }).tap();
   expect((await mobileDownload).suggestedFilename()).toBe('jellyfin-proxy.conf');
-  await expect(mobilePage.getByText('No downloadable copy')).toBeVisible();
   await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
   await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
-  const downloadNotice = mobilePage.getByText(/^The browser received the configuration response\. The server copy was removed\./);
-  await expect(downloadNotice).toBeVisible();
-  await expect(downloadNotice).toBeHidden({ timeout: 7000 });
-  await expect(mobilePage.getByText(/^Generating a new peer revokes the previous Windows credentials\./)).toBeVisible();
+  await expect(mobilePage.getByText(/No downloadable copy|Peer rotated|configuration response|Generating a new peer revokes/)).toHaveCount(0);
   await expect.poll(async () => {
     const response = await mobilePage.request.get('/api/initial');
     return (await response.json()).wireguard_config_available;

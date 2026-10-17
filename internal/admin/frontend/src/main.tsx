@@ -154,34 +154,15 @@ function Health({ data, refresh }: { data: Initial; refresh: () => void }) { ret
 function Access({ data }: { data: Initial }) { const whitelist = data.whitelist ?? []; return <section className="panel"><div className="panel-title"><div><p className="eyebrow">DEFAULT DENY</p><h2>Allowed addresses</h2><p className="muted">IPv4, IPv6, and CIDR ranges with the trusted socket peer address.</p></div></div><form className="inline-form" action="/whitelist/add" method="post"><input type="hidden" name="csrf" value={data.csrf}/><label className="sr-only" htmlFor="allow-entry">IP address or CIDR</label><input id="allow-entry" name="entry" placeholder="203.0.113.10 or 2001:db8::/64" required/><button className="button" type="submit">Add address</button></form><div className="address-list">{whitelist.length ? whitelist.map((entry) => <div className="address-row" key={entry}><code>{entry}</code><form action="/whitelist/remove" method="post"><input type="hidden" name="csrf" value={data.csrf}/><input type="hidden" name="entry" value={entry}/><button className="button danger" type="submit" aria-label={`Remove ${entry}`}>Remove</button></form></div>) : <p className="empty-chart">No addresses are configured. Access remains blocked by default.</p>}</div></section>; }
 function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<Initial | undefined> }) {
   const [downloading, setDownloading] = useState(false);
-  const [downloadMessage, setDownloadMessage] = useState("");
-  const [downloadError, setDownloadError] = useState("");
-  const [rotated, setRotated] = useState(() => new URLSearchParams(window.location.search).get("rotated") === "1");
+  const [downloadConsumed, setDownloadConsumed] = useState(false);
   const status = data.wireguard_status;
-  useEffect(() => {
-    if (!rotated) return;
-    const location = new URL(window.location.href);
-    location.searchParams.delete("rotated");
-    window.history.replaceState(window.history.state, "", `${location.pathname}${location.search}${location.hash}`);
-    const timer = window.setTimeout(() => setRotated(false), 5000);
-    return () => window.clearTimeout(timer);
-  }, [rotated]);
-  useEffect(() => {
-    if (!downloadMessage && !downloadError) return;
-    const timer = window.setTimeout(() => {
-      setDownloadMessage("");
-      setDownloadError("");
-    }, 5000);
-    return () => window.clearTimeout(timer);
-  }, [downloadMessage, downloadError]);
+  const configurationAvailable = data.wireguard_config_available && !downloadConsumed;
   async function downloadConfiguration() {
     if (downloading) return;
     setDownloading(true);
-    setDownloadMessage("");
-    setDownloadError("");
     try {
       const response = await fetch("/wireguard/config", { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) throw new Error("The configuration download could not be completed. Refresh the status and try again.");
+      if (!response.ok) return;
       const configuration = await response.blob();
       const objectURL = URL.createObjectURL(configuration);
       const link = document.createElement("a");
@@ -192,27 +173,16 @@ function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<In
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
-
-      const latest = await refresh();
-      if (latest && !latest.wireguard_config_available) {
-        setDownloadMessage("The browser received the configuration response. The server copy was removed. Keep the downloaded file secure.");
-      } else {
-        setDownloadError("The browser received the configuration response, but the server still reports a stored copy. Refresh status or delete the downloadable file.");
-      }
+      setDownloadConsumed(true);
+      await refresh();
     } catch {
-      setDownloadError("The configuration download could not be confirmed. Refresh status before trying again.");
+      // Keep the download action available when the transfer did not complete.
     } finally {
       setDownloading(false);
     }
   }
-  return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">WINDOWS PEER</p><h2>WireGuard configuration</h2></div><span className={`state-pill ${data.wireguard_config_available ? "healthy" : "unknown"}`}><i/>{data.wireguard_config_available ? "Download available" : "No downloadable copy"}</span></div>
-    <p>The VPS keeps the active Windows peer's public key. Its private configuration is available for one download and removed after the complete transfer.</p>
-    {rotated && <p className="notice notice-success" role="status">Peer rotated. The previous Windows credentials have been revoked. Download the replacement configuration now.</p>}
-    {data.wireguard_config_available ? <><button className="button download-button" type="button" onClick={downloadConfiguration} disabled={downloading}>{downloading ? "Downloading configuration…" : "Download configuration"}</button><p className="muted">Save the downloaded file securely. Peer regeneration becomes available after the transfer completes.</p></> : <><p className="muted">No downloadable configuration is stored. You can generate a new Windows peer configuration now.</p><div className="notice">Generating a new peer revokes the previous Windows credentials. Any device using the old configuration will disconnect.</div>
-      <form action="/wireguard/rotate" method="post" onSubmit={(event) => { if (!window.confirm("Regenerate the Windows peer? The current configuration will stop working and must be replaced.")) event.preventDefault(); }}><input type="hidden" name="csrf" value={data.csrf}/><button className="button danger" type="submit">Regenerate and revoke current peer</button></form></>}
-    {downloadMessage && <p className="notice notice-success" role="status">{downloadMessage}</p>}
-    {downloadError && <p className="notice notice-error" role="alert">{downloadError}</p>}
-    <button className="text-button" type="button" onClick={refresh}>Refresh configuration status</button>
+  return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">WINDOWS PEER</p><h2>WireGuard configuration</h2></div></div>
+    {configurationAvailable ? <button className="button download-button" type="button" onClick={downloadConfiguration} disabled={downloading}>Download configuration</button> : <form action="/wireguard/rotate" method="post"><input type="hidden" name="csrf" value={data.csrf}/><button className="button danger" type="submit">Regenerate and revoke current peer</button></form>}
   </section>{status && <section className="panel"><div className="panel-title"><div><p className="eyebrow">LIVE DIAGNOSTICS</p><h2>Current tunnel status</h2></div></div><div className="stat-grid"><Stat title="Windows peer" value={status.peer_state} detail={status.peer_last_handshake ? `Handshake ${displayTime(status.peer_last_handshake)}` : "No handshake recorded"} color="blue"/><Stat title="Received" value={bytes(status.peer_rx_bytes)} detail="Peer traffic received by VPS" color="cyan"/><Stat title="Sent" value={bytes(status.peer_tx_bytes)} detail="Peer traffic sent by VPS" color="purple"/><Stat title="Jellyfin" value={status.jellyfin_state} detail={status.jellyfin_latency_ms == null ? "Health response unavailable" : `HTTP health response in ${number(status.jellyfin_latency_ms, " ms")}`} color="amber"/></div><p className="muted">{status.peer_detail} {status.jellyfin_detail}</p></section>}</>;
 }
 function Security({ data }: { data: Initial }) { return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">ADMINISTRATOR ACCOUNT</p><h2>Change password</h2></div></div><p className="muted">Use at least 12 characters. Changing the password signs out all administrator sessions. Authenticator protection remains enabled.</p><form className="form-grid" action="/password/change" method="post"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Current password" name="current_password" autocomplete="current-password"/><Field label="New password" name="new_password" autocomplete="new-password"/><Field label="Confirm new password" name="confirm_password" autocomplete="new-password"/>{data.totp_status === "enabled" && <div className="form-field"><label htmlFor="password-change-code">Current six-digit authenticator code for password change</label><input id="password-change-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" maxLength={6} required/></div>}<button className="button" type="submit">Change password</button></form><p className="muted">Root recovery remains available with <code>proxyctl reset-password</code>.</p></section><TOTP data={data}/></>; }
