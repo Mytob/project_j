@@ -913,5 +913,24 @@ these limits explicitly and use VPS preflight checks.
   `local_gate: passed`; host-specific v1.3 checks remain blocked.
 - **Package:** `dist/jellyfin-proxy-1.3.6-dev-linux-amd64.tar.gz`, SHA-256
   `e6175e8b4b46f76fb76835dffaacc6b843bfc6900273eac227be661328caa3b3`.
-  The admin image build number is `a8a7937cd68b`. The test VPS was not updated
-  for this change.
+- **VPS update — 2026-10-17:** The package SHA-256 matched after transfer to
+  the authorized Ubuntu 26.04.1 x86_64 test VPS. `proxyctl update` completed
+  successfully with version `1.3.6-dev`; the admin image reports build
+  `a8a7937cd68b`. The active and previous releases are retained. All five
+  application containers report healthy, and the Windows WireGuard peer
+  established a fresh handshake after the service restart.
+- **VPS resource incident:** Docker and containerd API calls stalled under
+  severe memory pressure on the 833 MiB, no-swap host during the first image
+  import/verification attempt. `systemctl restart docker` restored the Docker
+  API; `docker compose ... up -d` restored the existing `1.3.5-dev` stack. A
+  temporary 1 GiB `/swapfile` (`fallocate`, `mkswap`, and `swapon`) let image
+  import and verification finish. `swapoff /swapfile` and `rm -f /swapfile`
+  removed it after the successful update; no swap configuration was added to
+  `/etc/fstab`.
+- **Public routes:** Normal TLS verification returned `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403; all three reported
+  `ssl_verify_result=0`.
+- **Limits:** The WireGuard handshake was verified, but native Windows client
+  playback was not repeated after this deployment. Windows import, firewall,
+  and playback checks remain pending for this build.
+
