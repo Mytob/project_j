@@ -856,3 +856,26 @@ these limits explicitly and use VPS preflight checks.
   `ssl_verify_result=0`.
 - **Limits:** Native Windows WireGuard import, firewall, and playback checks
   were not performed for this update.
+
+### v1.3.5-dev single WireGuard lifecycle action — 2026-10-17
+
+- **Behavior:** The Windows peer panel now has one action only. It says
+  “Download configuration” while the one-time file is available and changes
+  to “Regenerate and revoke current peer” after the complete response is
+  received. Removed the state badge, helper paragraphs, transient notices,
+  refresh link, rotation confirmation, and `rotated` query marker.
+- **Browser coverage:** Updated the Chromium flow for both button states,
+  failed-download retry behavior, and the absence of peer status messages.
+  Refreshed only the WireGuard desktop and mobile visual baselines. The first
+  runs caught an obsolete state-badge assertion and stale mobile baseline;
+  both were corrected before the passing run.
+- **Validation:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.3.5-dev` — PASS, exit 0. Go tests, frontend typecheck/six unit tests/build,
+  Chromium/Firefox/WebKit browser coverage, monitoring/streaming integration,
+  and offline package install/update/rollback/retention/password-reset checks
+  passed. `dist/release-validation-1.3.5-dev.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- **Package:** `dist/jellyfin-proxy-1.3.5-dev-linux-amd64.tar.gz`, SHA-256
+  `f9814d439c2ab3f3934ef5ee1c81198a61f79d22d57f424fedbad86cd6762d8d`.
+- **Limits:** This candidate has not yet been deployed. Native Windows client,
+  firewall, and playback checks remain unverified for this build.
