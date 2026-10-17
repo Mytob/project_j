@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [int]$HttpPort = 18080,
-    [int]$HttpsPort = 18443
+    [int]$HttpsPort = 18443,
+    [switch]$UpdateBrowserSnapshots
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +16,7 @@ $subnetOctet = 1 + ($PID % 250)
 $subnetPrefix = "172.29.$subnetOctet"
 $trustedIP = "$subnetPrefix.10"
 $untrustedIP = "$subnetPrefix.20"
+$browserIP = "$subnetPrefix.30"
 
 function Invoke-Compose {
     & docker compose --project-name $projectName --file $composeFile @args
@@ -59,7 +61,7 @@ function Set-WhitelistPolicy([string[]]$Entries) {
     }
     else {
         $repoPath = $repoRoot.Replace('\', '/')
-        $arguments = @('run', '--rm', '-v', "${repoPath}:/src", '-w', '/src', 'golang:1.25.2-alpine3.22', 'go', 'run', './tests/integration/policygen')
+        $arguments = @('run', '--rm', '-v', "${repoPath}:/src", '-w', '/src', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'run', './tests/integration/policygen')
         $arguments += $Entries
         $generated = & docker @arguments
     }
@@ -76,17 +78,17 @@ function New-TestCredential {
     }
     else {
         $repoPath = $repoRoot.Replace('\', '/')
-        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.25.2-alpine3.22 go run ./tests/integration/credentialgen --output ./tests/integration/admin-credential.generated.json --password $password
+        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go run ./tests/integration/credentialgen --output ./tests/integration/admin-credential.generated.json --password $password
     }
     if ($LASTEXITCODE -ne 0) { throw "Test credential generation failed with exit code $LASTEXITCODE" }
     # Windows bind mounts may map the generated owner-only file to an unrelated
     # container UID. This fixture contains only the disposable integration password.
     $repoPath = $repoRoot.Replace('\', '/')
-    & docker run --rm -v "${repoPath}:/src" alpine:3.22 chmod 644 /src/tests/integration/admin-credential.generated.json
+    & docker run --rm -v "${repoPath}:/src" alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 chmod 644 /src/tests/integration/admin-credential.generated.json
     if ($LASTEXITCODE -ne 0) { throw "Test credential fixture permissions could not be set (exit $LASTEXITCODE)" }
 }
 
-function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar, [string]$CSRF = '', [string]$Password = '', [string]$Entry = '') {
+function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar, [string]$CSRF = '', [string]$Password = '', [string]$Entry = '', [string]$Name = '') {
     $uri = "https://admin.domain.test:${HttpsPort}${Path}"
     $resolve = "admin.domain.test:${HttpsPort}:127.0.0.1"
     $headersPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.headers')
@@ -95,7 +97,8 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
     if ($Method -eq 'POST') {
         $curlArgs += @('--request', 'POST', '--data-urlencode', "csrf=$CSRF")
         if ($Path -eq '/login') { $curlArgs += @('--data-urlencode', "password=$Password") }
-        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/remove') { $curlArgs += @('--data-urlencode', "entry=$Entry") }
+        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/remove' -or $Path -eq '/whitelist/name') { $curlArgs += @('--data-urlencode', "entry=$Entry") }
+        if ($Path -eq '/whitelist/add' -or $Path -eq '/whitelist/name') { $curlArgs += @('--data-urlencode', "name=$Name") }
     }
     $curlArgs += @('--write-out', '%{http_code}', $uri)
     $status = & curl.exe @curlArgs
@@ -103,6 +106,12 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
     $code = 0
     if (-not [int]::TryParse([string]$status, [ref]$code)) { throw "curl returned an invalid status for $uri" }
     [pscustomobject]@{ StatusCode = $code; Body = [System.IO.File]::ReadAllText($bodyPath); Headers = [System.IO.File]::ReadAllText($headersPath) }
+}
+
+function Get-AdminInitial([string]$CookieJar) {
+    $response = Invoke-AdminRequest -Path '/api/initial' -Method 'GET' -CookieJar $CookieJar
+    Assert-Equal '200' ([string][int]$response.StatusCode) 'Authenticated admin state API was unavailable.'
+    $response.Body | ConvertFrom-Json
 }
 
 function Get-ClientResponse([string]$Service, [string]$Path, [string]$ForwardedFor = '') {
@@ -133,7 +142,7 @@ function New-WireGuardTestConfigs {
     }
     else {
         $repoPath = $repoRoot.Replace('\', '/')
-        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.25.2-alpine3.22 go run ./tests/integration/wireguardgen --directory ./tests/integration/wireguard.generated --endpoint 'wireguard:51820'
+        & docker run --rm -v "${repoPath}:/src" -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go run ./tests/integration/wireguardgen --directory ./tests/integration/wireguard.generated --endpoint 'wireguard:51820'
     }
     if ($LASTEXITCODE -ne 0) { throw "WireGuard test config generation failed with exit code $LASTEXITCODE" }
 }
@@ -151,6 +160,8 @@ try {
     $env:TEST_SUBNET = "$subnetPrefix.0/24"
     $env:TRUSTED_CLIENT_IP = $trustedIP
     $env:UNTRUSTED_CLIENT_IP = $untrustedIP
+    $env:BROWSER_TEST_IP = $browserIP
+    $env:BROWSER_SNAPSHOT_MODE = if ($UpdateBrowserSnapshots) { 'all' } else { 'missing' }
     Set-WhitelistPolicy -Entries @()
     $script:adminTempDir = Join-Path $env:TEMP "jellyfin-proxy-admin-test-$PID"
     New-Item -ItemType Directory -Path $adminTempDir -Force | Out-Null
@@ -244,7 +255,23 @@ try {
     Assert-Equal '303' ([string][int]$login.StatusCode) 'Valid administrator password did not sign in.'
     $dashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$dashboard.StatusCode) 'Authenticated administrator could not open dashboard.'
-    if ($dashboard.Body -notmatch '/wireguard/config') { throw 'Dashboard did not provide the Windows WireGuard download.' }
+    $adminState = Get-AdminInitial -CookieJar $adminJar
+    $components = @($adminState.components)
+    foreach ($component in @('Admin backend', 'Access control', 'Caddy / proxy', 'WireGuard interface', 'Windows peer', 'Jellyfin endpoint', 'Host metrics', 'Proxy metrics', 'Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container')) {
+        if ($components.name -notcontains $component) { throw "Overview did not report component '$component'." }
+    }
+    foreach ($component in @('Windows peer', 'Jellyfin endpoint')) {
+        $entry = $components | Where-Object name -eq $component | Select-Object -First 1
+        Assert-Equal 'Healthy' $entry.state "$component did not report its observed healthy state."
+    }
+    foreach ($component in @('Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container')) {
+        $entry = $components | Where-Object name -eq $component | Select-Object -First 1
+        Assert-Equal 'Healthy' $entry.state "$component did not report its Docker healthcheck state."
+        if ($entry.detail -notmatch 'health healthy' -or $entry.detail -notmatch 'restarts') { throw "$component did not include Docker health and restart evidence." }
+    }
+    $wireguardPage = Invoke-AdminRequest -Path '/wireguard' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$wireguardPage.StatusCode) 'Authenticated administrator could not open the WireGuard page.'
+    if ($wireguardPage.Body -notmatch '/app-assets/assets/') { throw 'WireGuard route did not serve the embedded React application.' }
     $wireguardDownload = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$wireguardDownload.StatusCode) 'Authenticated administrator could not download the Windows WireGuard config.'
     if ($wireguardDownload.Headers -notmatch '(?i)Content-Disposition: attachment; filename="jellyfin-proxy.conf"') { throw 'WireGuard config response lacks an attachment filename.' }
@@ -254,10 +281,9 @@ try {
         if ($wireguardDownload.Body -notmatch [regex]::Escape($expected)) { throw "WireGuard config download is missing '$expected'." }
     }
     $wireguardDownloadAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
-    Assert-Equal $wireguardDownload.Body $wireguardDownloadAgain.Body 'Repeated WireGuard downloads did not return the retained peer config.'
-    $logoutCsrfMatch = [regex]::Match($dashboard.Body, 'name="csrf" value="([^"]+)"')
-    if (-not $logoutCsrfMatch.Success) { throw 'Admin dashboard did not include a logout CSRF token.' }
-    $logout = Invoke-AdminRequest -Path '/logout' -Method 'POST' -CookieJar $adminJar -CSRF $logoutCsrfMatch.Groups[1].Value
+    Assert-Equal '503' ([string][int]$wireguardDownloadAgain.StatusCode) 'A second one-time WireGuard download unexpectedly succeeded.'
+    $logoutState = Get-AdminInitial -CookieJar $adminJar
+    $logout = Invoke-AdminRequest -Path '/logout' -Method 'POST' -CookieJar $adminJar -CSRF $logoutState.csrf
     Assert-Equal '303' ([string][int]$logout.StatusCode) 'Administrator logout did not redirect.'
     $afterLogout = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '303' ([string][int]$afterLogout.StatusCode) 'Logged-out administrator session remained valid.'
@@ -302,20 +328,26 @@ try {
     $freshLogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $freshCsrf -Password 'integration-test-admin-password'
     Assert-Equal '303' ([string][int]$freshLogin.StatusCode) 'Admin could not sign in after service restart.'
     $wireguardAfterRestart = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
-    Assert-Equal '200' ([string][int]$wireguardAfterRestart.StatusCode) 'Windows WireGuard config was unavailable after admin restart.'
-    Assert-Equal $wireguardDownload.Body $wireguardAfterRestart.Body 'Admin restart changed the retained Windows WireGuard config.'
-    $emptyDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    Assert-Equal '200' ([string][int]$emptyDashboard.StatusCode) 'Whitelist dashboard was unavailable.'
-    if ($emptyDashboard.Body -notmatch 'No allowed addresses') { throw 'Persistent whitelist unexpectedly contained entries before management tests.' }
-    $managementCsrf = [regex]::Match($emptyDashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    Assert-Equal '503' ([string][int]$wireguardAfterRestart.StatusCode) 'Admin restart unexpectedly restored a consumed one-time WireGuard config.'
+    $emptyAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$emptyAccessPage.StatusCode) 'Whitelist management page was unavailable.'
+    $emptyState = Get-AdminInitial -CookieJar $adminJar
+    $configuredEntries = @($emptyState.whitelist | ForEach-Object { [string]$_ } | Where-Object { $_.Length -gt 0 })
+    if ($configuredEntries.Count -gt 0) { throw "Persistent whitelist unexpectedly contained entries before management tests: $($configuredEntries -join ', ')." }
+    $managementCsrf = $emptyState.csrf
     $invalidAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry 'bad.example'
     Assert-Equal '400' ([string][int]$invalidAdd.StatusCode) 'Admin accepted an invalid whitelist entry.'
-    $addNetwork = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
+    $addNetwork = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork -Name 'Home network'
     Assert-Equal '303' ([string][int]$addNetwork.StatusCode) 'Admin could not add a valid IPv4 CIDR entry.'
+    $namedEntry = @((Get-AdminInitial -CookieJar $adminJar).whitelist_entries | Where-Object { $_.address -eq $allowedNetwork })
+    if ($namedEntry.Count -ne 1 -or $namedEntry[0].name -ne 'Home network') { throw 'Admin did not return the friendly name for the added whitelist entry.' }
+    $renameCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $renameNetwork = Invoke-AdminRequest -Path '/whitelist/name' -Method 'POST' -CookieJar $adminJar -CSRF $renameCsrf -Entry $allowedNetwork -Name 'Family devices'
+    Assert-Equal '303' ([string][int]$renameNetwork.StatusCode) 'Admin could not update a whitelist friendly name.'
     $duplicateAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $managementCsrf -Entry $allowedNetwork
     Assert-Equal '409' ([string][int]$duplicateAdd.StatusCode) 'Admin did not reject a duplicate entry.'
-    $managedDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($managedDashboard.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Added CIDR entry was not displayed canonically.' }
+    $managedAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    if (@((Get-AdminInitial -CookieJar $adminJar).whitelist) -notcontains $allowedNetwork) { throw 'Added CIDR entry was not displayed canonically.' }
     $managedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '200' ([string][int]$managedAllowed.StatusCode) 'Caddy did not activate the admin-added CIDR entry.'
     Invoke-Compose restart admin
@@ -325,26 +357,36 @@ try {
     $reloginCsrf = [regex]::Match($reloginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $relogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $reloginCsrf -Password 'integration-test-admin-password'
     Assert-Equal '303' ([string][int]$relogin.StatusCode) 'Admin could not sign in after persistence restart check.'
-    $persistedDashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($persistedDashboard.Body -notmatch [regex]::Escape($allowedNetwork)) { throw 'Whitelist entry did not persist across admin restart.' }
+    $persistedAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    $persistedState = Get-AdminInitial -CookieJar $adminJar
+    if (@($persistedState.whitelist) -notcontains $allowedNetwork) { throw 'Whitelist entry did not persist across admin restart.' }
+    $persistedNamedEntry = @($persistedState.whitelist_entries | Where-Object { $_.address -eq $allowedNetwork })
+    if ($persistedNamedEntry.Count -ne 1 -or $persistedNamedEntry[0].name -ne 'Family devices') { throw 'Whitelist friendly name did not persist across admin restart.' }
     $persistedAllowed = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '200' ([string][int]$persistedAllowed.StatusCode) 'Caddy did not restore the persisted whitelist after admin restart.'
-    $removeCsrf = [regex]::Match($persistedDashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $removeCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
     $removeNetwork = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry $allowedNetwork
     Assert-Equal '303' ([string][int]$removeNetwork.StatusCode) 'Admin could not remove a whitelist entry.'
     $removedDenied = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
     Assert-Equal '403' ([string][int]$removedDenied.StatusCode) 'Removing the whitelist entry did not immediately deny access.'
-    $emptyDashboardAgain = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($emptyDashboardAgain.Body -notmatch 'No allowed addresses') { throw 'Removed whitelist entry remains in the admin list.' }
+    $emptyAccessPageAgain = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    $remainingEntries = @((Get-AdminInitial -CookieJar $adminJar).whitelist | ForEach-Object { [string]$_ } | Where-Object { $_.Length -gt 0 })
+    if ($remainingEntries.Count -gt 0) { throw "Removed whitelist entry remains in the admin list: $($remainingEntries -join ', ')." }
     Assert-Equal '3' (Get-MockRequestCount) 'Denied post-removal request was unexpectedly forwarded to mock Jellyfin.'
 
     $addIPv6 = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry '2001:db8::/64'
     Assert-Equal '303' ([string][int]$addIPv6.StatusCode) 'Admin could not add an IPv6 CIDR entry.'
-    $ipv6Dashboard = Invoke-AdminRequest -Path '/dashboard' -Method 'GET' -CookieJar $adminJar
-    if ($ipv6Dashboard.Body -notmatch '2001:db8::/64') { throw 'IPv6 entry was not displayed.' }
-    $removeIPv6Csrf = [regex]::Match($ipv6Dashboard.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    $ipv6AccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
+    if (@((Get-AdminInitial -CookieJar $adminJar).whitelist) -notcontains '2001:db8::/64') { throw 'IPv6 entry was not displayed.' }
+    $removeIPv6Csrf = (Get-AdminInitial -CookieJar $adminJar).csrf
     $removeIPv6 = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $removeIPv6Csrf -Entry '2001:db8::/64'
     Assert-Equal '303' ([string][int]$removeIPv6.StatusCode) 'Admin could not remove the IPv6 CIDR entry.'
+
+    Set-WhitelistPolicy -Entries @("$browserIP/32")
+    Invoke-Compose exec --no-TTY caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+    $browserWhitelistState = Get-AdminInitial -CookieJar $adminJar
+    $browserWhitelist = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $browserWhitelistState.csrf -Entry "$browserIP/32" -Name 'Browser test client'
+    Assert-Equal '303' ([string][int]$browserWhitelist.StatusCode) 'Could not seed the browser test client in the admin whitelist.'
 
     $composeRows = Invoke-Compose ps --format json
     $mockRows = @($composeRows | ForEach-Object { $_ | ConvertFrom-Json })
@@ -362,22 +404,74 @@ try {
     $adminContainer = $mockRows | Where-Object { $_.Service -eq 'admin' } | Select-Object -First 1
     $adminInspection = (& docker inspect $adminContainer.ID | ConvertFrom-Json)[0]
     if ($adminInspection.NetworkSettings.Ports.'8080/tcp') { throw 'Admin unexpectedly has a published host port.' }
-    $clientConfigMode = & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin stat -c '%a %u:%g' /opt/jellyfin-proxy/config/wireguard/windows.conf
-    Assert-Equal '640 0:65532' ([string]$clientConfigMode).Trim() 'Retained Windows config does not have restricted admin-group permissions.'
+    & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin sh -c 'test ! -e /opt/jellyfin-proxy/data/wireguard-client/windows.conf' 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'One-time Windows config remained on the server after successful download.' }
     $serverConfigMode = & docker compose --project-name $projectName --file $composeFile exec --no-TTY wireguard stat -c '%a %u:%g' /etc/wireguard/wg0.conf
     Assert-Equal '600 0:0' ([string]$serverConfigMode).Trim() 'WireGuard server private config is not root-only.'
     & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin sh -c 'test ! -e /opt/jellyfin-proxy/config/wireguard/server.conf && test ! -e /etc/wireguard/wg0.conf' 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Admin container unexpectedly has access to the WireGuard server private key file.' }
+    $hostMetricsContainer = $mockRows | Where-Object { $_.Service -eq 'hostmetrics' } | Select-Object -First 1
+    $hostMetricsInspection = (& docker inspect $hostMetricsContainer.ID | ConvertFrom-Json)[0]
+    if ($hostMetricsInspection.Config.User -ne '65532:65532') { throw 'Host metrics collector is not running as its unprivileged UID.' }
+    if (-not $hostMetricsInspection.HostConfig.ReadonlyRootfs) { throw 'Host metrics collector root filesystem is writable.' }
+    if ($hostMetricsInspection.HostConfig.CapDrop -notcontains 'ALL') { throw 'Host metrics collector retains Linux capabilities.' }
+    if ($hostMetricsInspection.HostConfig.PidMode -or $hostMetricsInspection.HostConfig.NetworkMode -eq 'host') { throw 'Host metrics collector shares a host namespace.' }
+    if ($hostMetricsInspection.NetworkSettings.Ports.'8181/tcp') { throw 'Host metrics endpoint unexpectedly has a published port.' }
+    foreach ($target in @('/host/proc', '/host/sys', '/host/root')) {
+        $mount = $hostMetricsInspection.Mounts | Where-Object { $_.Destination -eq $target } | Select-Object -First 1
+        if (-not $mount -or $mount.RW) { throw "Host metrics mount $target is missing or writable." }
+    }
     $caddyContainer = $mockRows | Where-Object { $_.Service -eq 'caddy' } | Select-Object -First 1
     $caddyInspection = (& docker inspect $caddyContainer.ID | ConvertFrom-Json)[0]
     if ($caddyInspection.NetworkSettings.Ports.'2019/tcp') { throw 'Caddy admin API unexpectedly has a published TCP port.' }
 
+    Invoke-Compose restart hostmetrics
+    Start-Sleep -Seconds 2
+
+    # Rotate the active peer, confirm the old in-use client loses its tunnel,
+    # then consume the replacement config once and use it to restore service.
+    $rotationState = Get-AdminInitial -CookieJar $adminJar
+    $rotation = Invoke-AdminRequest -Path '/wireguard/rotate' -Method 'POST' -CookieJar $adminJar -CSRF $rotationState.csrf
+    Assert-Equal '303' ([string][int]$rotation.StatusCode) 'Administrator could not rotate and revoke the Windows peer.'
+    $revokedProbe = Get-WireGuardHealth -TimeoutSeconds 2
+    if ($revokedProbe.Healthy) { throw 'The previously active Windows peer remained able to reach Jellyfin after rotation.' }
+    $replacementConfig = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$replacementConfig.StatusCode) 'Rotated Windows peer configuration was unavailable.'
+    if ($replacementConfig.Body -notmatch '(?m)^PrivateKey = [A-Za-z0-9+/]{43}=$') { throw 'Rotated config did not contain a valid private key.' }
+    $replacementPath = Join-Path $adminTempDir 'replacement-windows.conf'
+    [System.IO.File]::WriteAllText($replacementPath, $replacementConfig.Body, [System.Text.UTF8Encoding]::new($false))
+    $replacementAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '503' ([string][int]$replacementAgain.StatusCode) 'Rotated Windows configuration was not deleted after download.'
+    $originalConfigPath = Join-Path $wireguardConfigDir 'windows.conf'
+    & docker compose --project-name $projectName --file $composeFile cp $originalConfigPath home-peer:/tmp/windows.conf
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stage original peer config for interface shutdown.' }
+    Invoke-Compose exec --no-TTY home-peer chmod 600 /tmp/windows.conf
+    Invoke-Compose exec --no-TTY home-peer wg-quick down /tmp/windows.conf
+    & docker compose --project-name $projectName --file $composeFile cp $replacementPath home-peer:/tmp/windows.conf
+    if ($LASTEXITCODE -ne 0) { throw 'Could not copy rotated peer config to the integration client.' }
+    Invoke-Compose exec --no-TTY home-peer chmod 600 /tmp/windows.conf
+    Invoke-Compose exec --no-TTY home-peer wg-quick up /tmp/windows.conf
+    $rotationRecoveryDeadline = (Get-Date).AddSeconds(15)
+    $rotationRecovered = $false
+    while ((Get-Date) -lt $rotationRecoveryDeadline) {
+        $probe = Get-WireGuardHealth -TimeoutSeconds 2
+        if ($probe.Healthy) { $rotationRecovered = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $rotationRecovered) { throw 'The rotated Windows peer could not restore Jellyfin reachability.' }
+    & docker compose --project-name $projectName --file $composeFile exec --no-TTY admin sh -c 'test ! -e /opt/jellyfin-proxy/data/wireguard-client/windows.conf' 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'A dependency container restart restored a consumed one-time Windows configuration.' }
+    $rotatedHealth = Get-AdminInitial -CookieJar $adminJar
+    foreach ($component in @('Windows peer', 'Jellyfin endpoint')) {
+        $entry = @($rotatedHealth.components) | Where-Object name -eq $component | Select-Object -First 1
+        Assert-Equal 'Healthy' $entry.state "$component did not recover after installing the rotated config."
+    }
     Invoke-Compose --profile browser-tests run --rm browser-tests
     Invoke-Compose restart admin
     $postEnrollmentAdmin = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'admin.domain.test'
     Assert-Equal '200' ([string][int]$postEnrollmentAdmin.StatusCode) 'Admin service did not recover with active TOTP after restart.'
 
-    Write-Host 'M6 and TOTP admin browser integration checks passed: real Chromium navigation, dashboard build information, password reauthentication, QR setup, rejected and accepted codes, cancellation, authenticator disable with password and TOTP, session revocation, password-only login, retained WireGuard config, encrypted tunnel reachability, outage and recovery, and isolated test resources.'
+    Write-Host 'M6 and v1.1-v1.3 integration checks passed: Chromium auth workflows, Chromium/Firefox/WebKit admin navigation and chart controls, responsive admin UI, health diagnostics, authenticated metrics/history, host collector, Caddy stream/WebSocket instrumentation, one-time WireGuard config download, peer rotation/revocation, encrypted tunnel recovery, and isolated test resources.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1
@@ -400,6 +494,8 @@ finally {
         Remove-Item Env:TEST_SUBNET -ErrorAction SilentlyContinue
         Remove-Item Env:TRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
         Remove-Item Env:UNTRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:BROWSER_TEST_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:BROWSER_SNAPSHOT_MODE -ErrorAction SilentlyContinue
         Pop-Location
     }
 }

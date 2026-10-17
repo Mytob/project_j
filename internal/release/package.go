@@ -219,13 +219,15 @@ func ExtractAndValidate(archivePath, destination string) (Manifest, error) {
 
 func validateImages(manifest Manifest) error {
 	want := map[string]bool{
-		"jellyfin-proxy/admin:" + manifest.Version:     false,
-		"jellyfin-proxy/wireguard:" + manifest.Version: false,
-		"caddy:2.10.2-alpine":                          false,
-		"alpine:3.22":                                  false,
+		"jellyfin-proxy/admin:" + manifest.Version:       false,
+		"jellyfin-proxy/hostmetrics:" + manifest.Version: false,
+		"jellyfin-proxy/containerhealth:" + manifest.Version: false,
+		"jellyfin-proxy/wireguard:" + manifest.Version:   false,
+		"jellyfin-proxy/caddy:" + manifest.Version:       false,
+		"alpine:3.24.2": false,
 	}
 	if len(manifest.Images) != len(want) {
-		return errors.New("package must contain exactly the four supported deployment images")
+		return errors.New("package must contain exactly the six supported deployment images")
 	}
 	for _, image := range manifest.Images {
 		if _, ok := want[image.Reference]; !ok || want[image.Reference] {

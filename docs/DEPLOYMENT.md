@@ -161,9 +161,11 @@ commit build number.
    TOTP. Activation signs out every administrator session.
 3. Sign in again with both the administrator password and a current unused
    authenticator code. Every new administrator login requires both factors.
-4. Download the Windows WireGuard configuration from the authenticated admin
-   dashboard. The same retained configuration can be downloaded again; it uses
-   split-tunnel `/32` routes and a 25-second persistent keepalive.
+4. Download the Windows WireGuard configuration once from the authenticated
+   admin dashboard. The server removes its private copy after the complete
+   transfer. The download uses split-tunnel `/32` routes and a 25-second
+   persistent keepalive. Regeneration becomes available only after the
+   download completes.
 5. Import it into the official WireGuard client on the Windows Jellyfin PC and
    activate the tunnel.
 6. Add only the desired public client IP addresses/CIDRs to the access
@@ -185,8 +187,10 @@ commit build number.
 - Confirm all three names resolve to this VPS before installation.
 - Confirm `https://<domain>/` shows the static site and has a publicly trusted
   certificate.
-- Sign in at `https://admin.<domain>` and download the Windows config twice;
-  the files should be identical.
+- Sign in at `https://admin.<domain>`, download the Windows config once, and
+  confirm the stored copy disappears and peer regeneration becomes available.
+  A second download must be rejected; regeneration must remain unavailable
+  until the first transfer completes.
 - With the Windows peer active, confirm its handshake is recent and add a
   temporary allowed client to verify Jellyfin access through
   `https://access.<domain>`.

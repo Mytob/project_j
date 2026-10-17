@@ -100,7 +100,7 @@ func TestInstallCreatesFreshDefaultDenyDeployment(t *testing.T) {
 	if err != nil || serverInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("server key mode = %v, %v", serverInfo, err)
 	}
-	clientInfo, err := os.Stat(filepath.Join(root, "config", "wireguard", "windows.conf"))
+	clientInfo, err := os.Stat(filepath.Join(root, "data", "wireguard-client", "windows.conf"))
 	if err != nil || clientInfo.Mode().Perm() != 0o640 {
 		t.Fatalf("Windows config mode = %v, %v", clientInfo, err)
 	}
@@ -277,7 +277,7 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	}
 	preserved := map[string][]byte{}
 	for _, relative := range []string{
-		"config/admin.json", "config/wireguard/server.conf", "config/wireguard/windows.conf",
+		"config/admin.json", "config/wireguard/server.conf", "data/wireguard-client/windows.conf",
 		"config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html",
 	} {
 		path := filepath.Join(root, relative)
@@ -297,6 +297,13 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "site", "operator-page.txt"), []byte("keep site content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	clientConfigDir := filepath.Join(root, "data", "wireguard-client")
+	if err := os.Chown(clientConfigDir, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(clientConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
 	progressEvents := []UpdateProgress{}
 	manifest, err := Update(context.Background(), UpdateOptions{
@@ -306,6 +313,14 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	clientConfigDirInfo, err := os.Stat(clientConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConfigDirStat, ok := clientConfigDirInfo.Sys().(*syscall.Stat_t)
+	if !ok || clientConfigDirStat.Uid != 0 || clientConfigDirStat.Gid != adminContainerUID || clientConfigDirInfo.Mode().Perm() != 0o770 {
+		t.Fatalf("one-time config directory was not repaired for admin deletion: info=%v sys=%#v", clientConfigDirInfo, clientConfigDirInfo.Sys())
 	}
 	if manifest.Version != "1.0.1-dev" {
 		t.Fatalf("updated version = %s", manifest.Version)
@@ -517,6 +532,30 @@ func TestResetPasswordRecreatesOnlyAdminAndChangesCredential(t *testing.T) {
 	commands := strings.Join(runner.commands, "\n")
 	if !strings.Contains(commands, "--no-deps --force-recreate --pull never admin") {
 		t.Fatal("password reset did not recreate only the admin service")
+	}
+}
+
+func TestResetPasswordUsesPersistentWebCredentialOverride(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("installer filesystem test requires a root Linux test container")
+	}
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	runner := &fakeRunner{}
+	installFixture(t, root, runner)
+	override := filepath.Join(root, "data", "admin-credential.json")
+	if err := auth.SaveCredential(override, "password changed in the administrator web interface"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetPassword(context.Background(), root, "recovered administrator password", runner); err != nil {
+		t.Fatal(err)
+	}
+	active, err := auth.LoadCredential(override)
+	if err != nil || !active.Verify("recovered administrator password") {
+		t.Fatalf("root recovery did not replace the active web credential: %v", err)
+	}
+	legacy, err := auth.LoadCredential(filepath.Join(root, "config", "admin.json"))
+	if err != nil || !legacy.Verify("correct horse battery staple") {
+		t.Fatalf("legacy credential source was unexpectedly changed: %v", err)
 	}
 }
 

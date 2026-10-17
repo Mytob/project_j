@@ -1,6 +1,7 @@
 package whitelist
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,11 +10,11 @@ import (
 	"path/filepath"
 )
 
-const persistenceVersion = 1
+const persistenceVersion = 2
 
 type persistedEntries struct {
-	Version int      `json:"version"`
-	Entries []string `json:"entries"`
+	Version int             `json:"version"`
+	Entries json.RawMessage `json:"entries"`
 }
 
 // Store is a small atomic JSON file store. Its path is supplied by the caller
@@ -32,9 +33,19 @@ func NewStore(path string) (*Store, error) {
 // Load returns an empty whitelist when the file does not exist. Corrupt or
 // unsupported files return an error so callers can fail closed.
 func (s *Store) Load() ([]string, error) {
+	entries, err := s.LoadEntries()
+	if err != nil {
+		return nil, err
+	}
+	return Addresses(entries), nil
+}
+
+// LoadEntries reads both the original address-only file and the current
+// address-plus-name format. Older files are upgraded on the next save.
+func (s *Store) LoadEntries() ([]Entry, error) {
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return []string{}, nil
+		return []Entry{}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -47,7 +58,7 @@ func (s *Store) Load() ([]string, error) {
 	if err := decoder.Decode(&data); err != nil {
 		return nil, fmt.Errorf("decode whitelist: %w", err)
 	}
-	if data.Version != persistenceVersion {
+	if data.Version != 1 && data.Version != persistenceVersion {
 		return nil, fmt.Errorf("unsupported whitelist version %d", data.Version)
 	}
 	var extra any
@@ -58,23 +69,53 @@ func (s *Store) Load() ([]string, error) {
 		return nil, fmt.Errorf("decode trailing whitelist data: %w", err)
 	}
 
-	entries, err := Validate(data.Entries)
+	var entries []Entry
+	switch data.Version {
+	case 1:
+		var addresses []string
+		if err := decodeStrict(data.Entries, &addresses); err != nil {
+			return nil, fmt.Errorf("decode address-only whitelist: %w", err)
+		}
+		entries = make([]Entry, len(addresses))
+		for i, address := range addresses {
+			entries[i] = Entry{Address: address}
+		}
+	case persistenceVersion:
+		if err := decodeStrict(data.Entries, &entries); err != nil {
+			return nil, fmt.Errorf("decode named whitelist: %w", err)
+		}
+	}
+	validated, err := ValidateEntries(entries)
 	if err != nil {
 		return nil, fmt.Errorf("validate stored whitelist: %w", err)
 	}
-	return Strings(entries), nil
+	return validated, nil
 }
 
 // Save validates and atomically replaces the persisted list. A validation or
 // filesystem error leaves the previous file intact.
 func (s *Store) Save(values []string) error {
-	entries, err := Validate(values)
+	entries := make([]Entry, len(values))
+	for i, address := range values {
+		entries[i] = Entry{Address: address}
+	}
+	return s.SaveEntries(entries)
+}
+
+// SaveEntries validates and atomically replaces the persisted address and
+// display-name list.
+func (s *Store) SaveEntries(values []Entry) error {
+	entries, err := ValidateEntries(values)
+	if err != nil {
+		return err
+	}
+	entryData, err := json.Marshal(entries)
 	if err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(persistedEntries{
 		Version: persistenceVersion,
-		Entries: Strings(entries),
+		Entries: entryData,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -108,6 +149,22 @@ func (s *Store) Save(values []string) error {
 	}
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("replace whitelist: %w", err)
+	}
+	return nil
+}
+
+func decodeStrict(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("whitelist entries contain trailing JSON data")
+		}
+		return err
 	}
 	return nil
 }

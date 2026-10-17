@@ -83,6 +83,36 @@ func TestCredentialPersistenceAndValidation(t *testing.T) {
 	}
 }
 
+func TestCredentialReplacementPersistsBeforeActivating(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data", "admin-credential.json")
+	if err := SaveCredential(path, "old administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := LoadCredential(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := credential.ReplacePassword(path, "new administrator password"); err != nil {
+		t.Fatal(err)
+	}
+	if credential.Verify("old administrator password") || !credential.Verify("new administrator password") {
+		t.Fatal("in-memory credential was not replaced")
+	}
+	restarted, err := LoadCredential(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Verify("old administrator password") || !restarted.Verify("new administrator password") {
+		t.Fatal("replacement was not persisted")
+	}
+	if err := credential.ReplacePassword(t.TempDir(), "another valid administrator password"); err == nil {
+		t.Fatal("replacement unexpectedly succeeded when parent directory could not be written")
+	}
+	if !credential.Verify("new administrator password") {
+		t.Fatal("failed replacement changed the active credential")
+	}
+}
+
 func TestLoadCredentialRejectsTrailingData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "admin.json")
 	hash, err := HashPassword("adequate credential password")

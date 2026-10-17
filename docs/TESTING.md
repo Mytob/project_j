@@ -527,3 +527,429 @@ these limits explicitly and use VPS preflight checks.
   post-merge full-gate attempt had a transient curl connection reset in M1–M6;
   the subsequent full release command completed successfully with all checks
   passed.
+
+### Verified v1.2.0-dev local release gate — 2026-10-14
+
+- **Command:** `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev`.
+- **Result:** PASS (exit 0) for all mandatory local checks. The report at
+  `dist/release-validation-1.2.0-dev.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- **Go:** All packages passed, including admin, auth/TOTP, Caddy telemetry,
+  monitoring/history, deployment, release packaging, WireGuard, and installer
+  checks.
+- **Browser and container integration:** Existing M1–M6 and v1.1 journeys
+  passed. Chromium covered Statistics navigation, live and historical ranges,
+  responsive layouts at 1440/768/390px, keyboard navigation, and authenticated
+  SSE reconnect/session expiry. Container checks covered live host metrics,
+  read-only metric mounts, unprivileged isolation, restart recovery, and the
+  absence of published collector ports, Docker sockets, extra capabilities,
+  or host namespaces. The real Caddy module was exercised with concurrent,
+  interrupted, range, and WebSocket streams plus allow/deny and byte counters.
+- **Package/update:** The 1.2.0-dev archive loaded offline into an isolated
+  Docker-in-Docker daemon. Install, namespace firewall rules, monitoring image,
+  history persistence, update, forced-failure rollback, retention, and
+  password reset passed. The port collision in the forced-failure scenario
+  was expected and verified rollback to the working deployment.
+- **Host limits:** This run used Windows 11/Docker Desktop's Linux engine. It
+  did not deploy to a VPS or exercise Ubuntu 26.04's native host metrics,
+  provider firewall/public DNS/ACME, or a native Windows WireGuard client and
+  Firewall. Those checks remain pending before release readiness.
+- **Artifact:** `dist/jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz` was built
+  and validated locally. It is a generated artifact and is not committed.
+
+### Verified v1.2.0-dev test VPS update — 2026-10-14
+
+- **Target:** User-authorized Ubuntu 26.04.1 LTS x86_64 VPS serving
+  `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com`. The active
+  1.1.2-dev services were healthy before update; the root filesystem had
+  4.9 GB free.
+- **Command:** `./proxyctl-linux-amd64 update
+  ./jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz`.
+- **Result:** PASS. Package and persistent TOTP storage validation passed;
+  bundled images loaded offline; the updater reported services healthy and
+  completed its public HTTPS checks. Admin, Caddy, hostmetrics, and WireGuard
+  were healthy after deployment. The package SHA-256 matched the workstation
+  copy.
+- **Actual host metrics:** The private collector endpoint returned live VPS
+  memory (873,529,344 bytes total), root filesystem capacity (9,181,077,504
+  bytes), receive/transmit totals, load averages, and uptime. It was not a
+  published host port. Docker inspection reported user `65532:65532`, no added
+  capabilities, no privileged mode, no host PID/network namespace, and
+  read-only `/proc`, `/sys`, and root filesystem mounts.
+- **Public routes and authorization:** With normal TLS verification,
+  `darkcry.com` returned 200, `admin.darkcry.com` returned 200, and
+  `access.darkcry.com` returned 403; TLS verify result was 0 for all three.
+  Anonymous `/statistics` redirected to login, and `/statistics/history` and
+  `/statistics/events` returned 401. The public collector endpoint remained
+  unpublished.
+- **Persistence and WireGuard:** Existing TOTP key/state, whitelist files, and
+  site content remained present. A populated `data/statistics/2026-10-14.json.gz`
+  remained present through an admin-only restart, after which admin was
+  healthy. The WireGuard container showed a recent peer handshake following
+  the update restart.
+- **Build identity:** The deployed image reports version `1.2.0-dev` and build
+  `62acf66c2182-dirty`. The package was built from the tested v1.2 working tree
+  before commit `eaa14f9`; rebuild from the merged, clean `dev` revision before
+  stable promotion.
+- **Remaining check:** Native Windows playback was not repeated after this
+  update. The operator had previously confirmed the scoped TCP 8096 firewall
+  rule and streaming on 1.1.2-dev; the post-update WireGuard handshake was
+  observed, but the Windows client still needs a playback confirmation.
+
+### Administrator navigation and component health follow-up — 2026-10-14
+
+- **Focused command:** `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.25.2-alpine3.22 go test ./internal/admin ./cmd/admin` — PASS. Tests
+  cover authenticated separate page routes, removed UI fragments, Caddy's
+  private health request, and stale/future WireGuard heartbeat rejection.
+- **Full integration command:** `pwsh -NoProfile -File .\build.ps1 test` —
+  PASS, exit 0. Chromium verified each sidebar link opens a distinct page,
+  confirms all six health cards show Healthy in the functioning test stack,
+  and runs the existing password/TOTP, statistics, responsive UI, streaming,
+  collector and Caddy journeys. Integration also verified the WireGuard
+  health heartbeat is readable by the unprivileged admin container.
+- **Release command:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.2.1-dev` — PASS, exit 0. Go tests, M1–M6 plus v1.1/v1.2 browser and
+  container integration, and the offline package install/update/rollback,
+  retention, and reset checks passed. The report at
+  `dist/release-validation-1.2.1-dev.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- **Version-matched VPS update — 2026-10-15:** `proxyctl update` installed
+  `1.2.1-dev` on the authorized test VPS. It reported successful service health
+  checks and public HTTPS readiness. Compose reported the admin, Caddy,
+  hostmetrics, and WireGuard services healthy. `https://darkcry.com/` and
+  `https://admin.darkcry.com/` returned HTTP 200 with valid TLS; the
+  empty-allowlist `https://access.darkcry.com/` returned HTTP 403 with valid
+  TLS. The admin image tag was `jellyfin-proxy/admin:1.2.1-dev`.
+- **Host limits:** Windows WireGuard-client playback has not yet been checked
+  after this package update. The generated release report continues to mark
+  host-specific readiness blocked pending that client check; the VPS results
+  above are version-matched evidence.
+- **Artifact:** `dist/jellyfin-proxy-1.2.1-dev-linux-amd64.tar.gz` was built
+  and validated locally; it is generated output and is not committed.
+- **Source control:** Commit `5c0fb42` was merged into `dev` by [PR #40](https://github.com/Mytob/project_j/pull/40),
+  merge commit `4bc5c41`.
+- **Reproduction note:** The first clean release-gate attempt was interrupted
+  while its isolated integration stack was running, leaving that uniquely
+  named test project active. The next run exposed its reserved-port collision.
+  The project was removed with its own Compose file and scoped project name;
+  the subsequent complete release gate passed.
+
+### v1.3.0-dev local release gate — 2026-10-15
+
+- **Command:** On clean commit `f14737f2db83`, `pwsh -NoProfile -File
+  .\build.ps1 release -Version 1.3.0-dev` — PASS, exit 0 at 2026-10-15
+  20:18 UTC. The runner reported Go, browser/monitoring
+  integration, and offline package/install/update/rollback gates passed.
+- **Go and frontend:** All Go packages passed. Frontend typecheck, five Vitest
+  tests, and the Vite production build passed.
+- **Browser and container integration:** Chromium covered authentication,
+  responsive admin pages, health diagnostics, authenticated statistics,
+  history/SSE, password change, WireGuard peer lifecycle and config delivery.
+  Container checks covered collector isolation and real Caddy streaming,
+  range, WebSocket and byte-accounting behavior.
+- **Package/update:** Five images loaded into the isolated daemon without
+  registry access. Fresh install/readiness, IPv4/IPv6 ingress rules, offline
+  update, rollback, retention, credential reset/TOTP recovery, and preservation
+  of an unrelated container passed. The intentional port-conflict case also
+  verified rollback and left the unrelated container running.
+- **Report:** `dist/release-validation-1.3.0-dev.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  The archive is `dist/jellyfin-proxy-1.3.0-dev-linux-amd64.tar.gz` and is
+  generated output, not committed.
+- **Host limits:** No v1.3 deployment to a VPS or native Windows WireGuard,
+  firewall, and playback verification was performed. Those checks remain
+  blocked and the v1.2 evidence does not satisfy them.
+- **Dependency audit:** `npm audit` reported zero vulnerabilities for both
+  frontend lockfiles. `govulncheck` found no vulnerable reachable symbols;
+  one no-fix, module-only advisory applies to unused `golang.org/x/crypto/openpgp`.
+  Docker Scout was not run after the automatic approval reviewer rejected
+  external transfer of private-image SBOM/package metadata. Full evidence is in
+  `docs/DEPENDENCY_AUDIT_V1.3.md`.
+- **Source control:** [PR #43](https://github.com/Mytob/project_j/pull/43) was
+  merged into `dev` at `98012d6`. This is an integration merge only; the v1.3
+  host-specific release checks remain pending.
+
+### v1.3 chart and browser-gate follow-up — 2026-10-15
+
+- **Changes:** Commit `693c65d363f477b750b5423990e547bfc2ac8af5` adds
+  pointer and keyboard chart selection, keeps the chart control area stable
+  when a series has fewer than two samples, and records desktop/mobile
+  screenshot baselines for Overview, Statistics, Health, Access Control,
+  WireGuard, and Security. Browser smoke checks exercise Chromium, Firefox,
+  and WebKit. The dependency audit now records the pinned npm 12.2.0, xcaddy
+  0.4.7, and Playwright 1.64.1 toolchain.
+- **Focused integration:** `pwsh -NoProfile -File
+  .\tests\integration\run.ps1` — PASS on 2026-10-15; all 4 Playwright tests
+  passed across the three engines, alongside M1–M6, WireGuard, Caddy stream,
+  collector, history/SSE, password/TOTP, peer rotation, and config download
+  checks. Vitest ran 6 tests and the production frontend build passed.
+- **Clean-tree release:** On `693c65d363f477b750b5423990e547bfc2ac8af5`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.0-dev` — PASS,
+  exit 0 at 2026-10-15 21:14 UTC. Go, three-engine browser/container
+  integration, and offline package install/update/rollback all passed.
+  `dist/release-validation-1.3.0-dev.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`; the Linux amd64 package is
+  generated under `dist/` and is not committed.
+- **Failures and fixes:** Initial follow-up runs exposed an incorrect chart
+  target/selection expectation, a missing Security-route navigation in the
+  TOTP test, and unstable screenshot heights from conditionally rendered chart
+  controls and changing health-event history. The chart test now selects an
+  explicit point, the test navigates to Security before its authenticator
+  check, and the screenshots use fixed chart controls and omit volatile health
+  history rows. The final isolated integration and clean-tree release runs
+  passed.
+- **Host checks:** No v1.3 deployment, VPS/kernel/provider-firewall/ACME check,
+  native Windows client/firewall test, or playback check was performed. These
+  remain blocked; v1.2 host evidence does not satisfy them.
+- **Source control:** [PR #45](https://github.com/Mytob/project_j/pull/45)
+  merged to `dev` at `658e8da` after the clean local gate passed.
+
+### v1.3 authorized UI and container-health follow-up — 2026-10-16
+
+- **Overview:** The overall health summary and compact status of every
+  component now share one panel. It contains no statistics cards, charts, or
+  diagnostic detail; those remain on Statistics and Health. Desktop/mobile
+  screenshot baselines and browser assertions were updated.
+- **Security and observation:** Password changes require a fresh TOTP code
+  whenever TOTP is enabled. A dedicated private observer reports container
+  state for labeled application containers through fixed GET-only Docker API
+  calls; the Docker socket is not mounted in admin or host-metrics.
+- **Integration:** `pwsh -NoProfile -File
+  .\tests\integration\run.ps1` — PASS. All four Playwright tests passed,
+  including Chromium, Firefox, and WebKit navigation/chart checks and the
+  Chromium authentication, responsive-page, password/TOTP, one-time
+  WireGuard-config download, and container-health flow.
+- **Release gate:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.3.0-dev` — PASS, exit 0 at 2026-10-16 00:29:52 UTC. All Go packages,
+  frontend typecheck/six Vitest tests/production build, browser and monitoring
+  integration, and offline package install/update/preservation/rollback/
+  retention/password-reset checks passed. Six images loaded without registry
+  access. `dist/release-validation-1.3.0-dev.json` records
+  `local_gate: passed`; the package under `dist/` is generated output and is
+  not committed.
+- **Host checks:** The report correctly leaves release readiness blocked
+  pending a version-matched Ubuntu VPS/provider-firewall/ACME run and native
+  Windows WireGuard/firewall/playback verification. No v1.3 deployment was
+  performed.
+- **Source control:** [PR #47](https://github.com/Mytob/project_j/pull/47)
+  merged to `dev` at `f9fed92` after the local release gate passed.
+
+### v1.3.1-dev release gate and VPS update — 2026-10-16
+
+- **Build:** On clean source commit `9e1b7b943805`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.1-dev` — PASS,
+  exit 0. Go packages, frontend typecheck/six Vitest tests/production build,
+  Chromium/Firefox/WebKit browser and monitoring integration, and offline
+  package install/update/preservation/rollback/retention/password-reset checks
+  passed. Six images loaded without registry access. The report is
+  `dist/release-validation-1.3.1-dev.json`; it records local gate passed and
+  host checks pending. The generated package is not committed.
+- **Package:** `dist/jellyfin-proxy-1.3.1-dev-linux-amd64.tar.gz`, SHA-256
+  `f777383345dbe101cf77bea4522b5ca90ff23be49c087db0530da03b7a3a0b5a`.
+  `dist/proxyctl-linux-amd64` SHA-256:
+  `ddfbcd196db536f9169096645fa7571aba0643b873db0125c408eb99980fda06`.
+  Both transferred VPS copies matched these checksums.
+- **VPS update:** On the user-authorized Ubuntu 26.04.1 LTS x86_64 host,
+  `./proxyctl-linux-amd64 update
+  ./jellyfin-proxy-1.3.1-dev-linux-amd64.tar.gz` — PASS. The updater reported
+  successful package and persistent TOTP verification, image loading,
+  configuration validation, service restart, health checks, and completion.
+- **Container state:** Compose reported admin, Caddy, containerhealth,
+  hostmetrics, and WireGuard all running and healthy on `1.3.1-dev` images.
+  This confirms the observer service itself is healthy; its container-health
+  UI was not separately inspected during this deployment.
+- **Public routes:** VPS `curl` with normal TLS verification returned
+  `darkcry.com` 200, `admin.darkcry.com` 200, and `access.darkcry.com` 403;
+  all three reported `ssl_verify_result=0`.
+- **Limits:** No native Windows WireGuard/firewall/playback verification was
+  performed for this update. The v1.3 host release gate remains blocked on
+  those Windows checks; successful VPS installation and HTTPS do not imply
+  those checks passed.
+
+### v1.3.2-dev one-time WireGuard download and VPS update — 2026-10-16
+
+- **WireGuard lifecycle:** The stored Windows configuration can be downloaded
+  once. A completed response removes the server copy; interrupted transfers
+  keep it available for retry. Peer regeneration is blocked until the stored
+  configuration is consumed, and the admin UI only shows regeneration after
+  that point. The manual delete endpoint was removed so it cannot bypass the
+  download-before-rotation gate.
+- **Release gate:** On clean source commit `b9955bb94501`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.2-dev` — PASS,
+  exit 0. Go, Chromium/Firefox/WebKit browser and monitoring integration, and
+  offline package install/update/preservation/rollback/retention/password-reset
+  gates passed. The JSON report is
+  `dist/release-validation-1.3.2-dev.json`; it correctly leaves overall release
+  readiness blocked pending native Windows client/firewall checks.
+- **Package:** `dist/jellyfin-proxy-1.3.2-dev-linux-amd64.tar.gz`, SHA-256
+  `768dd748dbffed5a2f3498300d13a3066f6f0b3b9cc8d1aeeedb2ef4c025115c`.
+  `dist/proxyctl-linux-amd64` SHA-256:
+  `ddfbcd196db536f9169096645fa7571aba0643b873db0125c408eb99980fda06`.
+  Both transferred files matched their local checksums on the VPS.
+- **VPS update:** The package updater completed successfully on the user-
+  authorized Ubuntu 26.04.1 LTS x86_64 VPS and retained the active and previous
+  release. Admin, Caddy, containerhealth, hostmetrics, and WireGuard all report
+  healthy on `1.3.2-dev`; the admin image build label is `b9955bb94501`.
+- **Public routes:** Requests with normal TLS verification returned
+  `darkcry.com` 200, `admin.darkcry.com` 200, and `access.darkcry.com` 403;
+  each reported `ssl_verify_result=0`.
+- **Limits:** No native Windows client import, firewall, or playback check was
+  performed for this update. The release report remains blocked on those
+  Windows checks.
+
+### v1.3.3-dev WireGuard config deletion permission repair — 2026-10-16
+
+- **Root cause:** VPS admin logs showed `permission denied` when deleting
+  `windows.conf`. The bind-mounted `data/wireguard-client` directory was
+  `root:root` mode 0755, so the unprivileged admin process (UID 65532) could
+  read and return the file but could not consume it.
+- **Immediate VPS repair:** The directory was changed to `root:65532` mode
+  2770. A disposable sentinel file was removed successfully from inside the
+  admin container as UID 65532. The live Windows config was not read or
+  consumed during diagnosis.
+- **Code fix:** The updater now restores this directory's ownership and
+  permissions on every update. The update regression test first changes the
+  directory to `root:root` mode 0755 and verifies repair to `root:65532` with
+  group write access.
+- **Validation:** `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0;
+  all Go packages and all four Playwright tests passed. Clean-tree
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.3-dev` — PASS,
+  exit 0; frontend typecheck/six tests/build and offline install/update/rollback
+  gates also passed. The release report records the local gate as passed and
+  native Windows checks as pending.
+- **VPS update:** The 1.3.3-dev package updater completed successfully and
+  retained both active and previous releases. The user can now download the
+  pending configuration once; the server-side endpoint was not invoked during
+  diagnosis so the user's pending config remained available.
+
+### v1.3.4-dev WireGuard transient notices and test VPS update — 2026-10-16
+
+- **Behavior:** Peer-rotation confirmation and configuration download success
+  or failure notices dismiss after five seconds. The `rotated` query marker is
+  removed from the address bar once the confirmation has been rendered.
+  Persistent configuration state and safety guidance remain visible.
+- **Browser coverage:** The Chromium admin flow verifies the rotation notice,
+  simulates a failed config request and checks its alert expires, then performs
+  the one-time download and checks its success notice expires while the peer
+  regeneration guidance remains visible.
+- **Validation:** `.\build.ps1 test` — PASS, exit 0; Go tests and all four
+  Playwright browser tests passed, including Firefox/WebKit admin smoke checks
+  and the Chromium authentication/WireGuard flow.
+- **Release gate:** Clean-tree `.\build.ps1 release -Version 1.3.4-dev` on
+  merged `dev` commit `f8d530a70abf` — PASS, exit 0. Go tests, frontend
+  typecheck/six unit tests/build, all four browser integration tests, and
+  offline package install/update/rollback/retention/password-reset checks
+  passed. `dist/release-validation-1.3.4-dev.json` records
+  `local_gate: passed`; native Windows checks remain pending.
+- **Package:** `dist/jellyfin-proxy-1.3.4-dev-linux-amd64.tar.gz`, SHA-256
+  `e5b01ef58f716d35946be30db1bff9cbf8b6e686f66dc28fbbf8bbde324d656d`.
+  `dist/proxyctl-linux-amd64`, SHA-256
+  `78dabc8433a93079fcff87eeb18facfaf89f366480b360af91bb05f68ef3c04b`.
+  Both VPS transfer checksums matched.
+- **VPS update:** The package updater completed successfully on the
+  user-authorized Ubuntu 26.04.1 LTS VPS. All five containers report healthy;
+  the admin image is `1.3.4-dev` at revision `f8d530a70abf`. No WireGuard
+  configuration download or deletion operation was run during this update.
+- **Public routes:** Normal TLS verification returned `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403; all reported
+  `ssl_verify_result=0`.
+- **Limits:** Native Windows WireGuard import, firewall, and playback checks
+  were not performed for this update.
+
+### v1.3.5-dev single WireGuard lifecycle action — 2026-10-17
+
+- **Behavior:** The Windows peer panel now has one action only. It says
+  “Download configuration” while the one-time file is available and changes
+  to “Regenerate and revoke current peer” after the complete response is
+  received. Removed the state badge, helper paragraphs, transient notices,
+  refresh link, rotation confirmation, and `rotated` query marker.
+- **Browser coverage:** Updated the Chromium flow for both button states,
+  failed-download retry behavior, and the absence of peer status messages.
+  Refreshed only the WireGuard desktop and mobile visual baselines. The first
+  runs caught an obsolete state-badge assertion and stale mobile baseline;
+  both were corrected before the passing run.
+- **Validation:** On clean merged `dev` commit `f4803a4474b1`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.5-dev` — PASS,
+  exit 0. Go tests, frontend typecheck/six unit tests/build,
+  Chromium/Firefox/WebKit browser coverage, monitoring/streaming integration,
+  and offline package install/update/rollback/retention/password-reset checks
+  passed. `dist/release-validation-1.3.5-dev.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- **Package:** `dist/jellyfin-proxy-1.3.5-dev-linux-amd64.tar.gz`, SHA-256
+  `17ce10b37348c4a92e4be68100248f1e198a28b885e622774cbe2971c28ff70e`.
+- **VPS update:** The updater completed successfully on the authorized Ubuntu
+  test VPS and reports version `1.3.5-dev`. All five services report healthy;
+  the active and previous releases are retained. The WireGuard config endpoint
+  was not invoked during the update.
+- **Public routes:** `darkcry.com` returned 200, `admin.darkcry.com` returned
+  200, and `access.darkcry.com` returned 403. All three had TLS verification
+  result 0.
+- **Limits:** Native Windows client import, firewall, and playback checks were
+  not performed for this build.
+
+### v1.3.6-dev friendly IP names and simplified WireGuard diagnostics — 2026-10-17
+
+- **Behavior:** Administrators can add an optional friendly name to each
+  allowlisted IP/CIDR and edit or clear it later. Names are persisted as
+  display metadata and never enter the Caddy access policy. Address-only v1
+  whitelist files migrate on their next write. The redundant Jellyfin
+  health-response tile was removed from the WireGuard tunnel status panel;
+  Overview and Health still report component health.
+- **Browser coverage:** The Chromium flow adds, renames, and removes a named
+  address, and checks that tunnel diagnostics contain only the peer and byte
+  counters. Updated the Access Control and WireGuard desktop and mobile visual
+  baselines. The first integrated browser run exposed a fixture issue: removing
+  its temporary IP left the mock streaming route denied. The fixture now seeds
+  the browser test IP into the admin allowlist; the rerun passed all four
+  browser tests, including Firefox and WebKit smoke checks and Caddy streaming,
+  range, and WebSocket coverage.
+- **Release gate:** Clean-tree
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6-dev` on commit
+  `a8a7937cd68b` — PASS, exit 0. Go tests, frontend typecheck, six frontend
+  tests, production build, four browser tests, monitoring and streaming
+  integration, and isolated offline install/update/rollback, retention, and
+  password-recovery checks passed. The report records
+  `local_gate: passed`; host-specific v1.3 checks remain blocked.
+- **Package:** `dist/jellyfin-proxy-1.3.6-dev-linux-amd64.tar.gz`, SHA-256
+  `e6175e8b4b46f76fb76835dffaacc6b843bfc6900273eac227be661328caa3b3`.
+- **VPS update — 2026-10-17:** The package SHA-256 matched after transfer to
+  the authorized Ubuntu 26.04.1 x86_64 test VPS. `proxyctl update` completed
+  successfully with version `1.3.6-dev`; the admin image reports build
+  `a8a7937cd68b`. The active and previous releases are retained. All five
+  application containers report healthy, and the Windows WireGuard peer
+  established a fresh handshake after the service restart.
+- **VPS resource incident:** Docker and containerd API calls stalled under
+  severe memory pressure on the 833 MiB, no-swap host during the first image
+  import/verification attempt. `systemctl restart docker` restored the Docker
+  API; `docker compose ... up -d` restored the existing `1.3.5-dev` stack. A
+  temporary 1 GiB `/swapfile` (`fallocate`, `mkswap`, and `swapon`) let image
+  import and verification finish. `swapoff /swapfile` and `rm -f /swapfile`
+  removed it after the successful update; no swap configuration was added to
+  `/etc/fstab`.
+- **Public routes:** Normal TLS verification returned `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403; all three reported
+  `ssl_verify_result=0`.
+- **Limits:** The WireGuard handshake was verified, but native Windows client
+  playback was not repeated after this deployment. Windows import, firewall,
+  and playback checks remain pending for this build.
+
+### v1.3.6-dev post-update Windows playback confirmation — 2026-10-17
+
+- The operator confirmed that Jellyfin playback works from the native Windows
+  client through the test VPS after its 1.3.6-dev update.
+- The Windows WireGuard profile and scoped inbound firewall setup were already
+  confirmed during the earlier host gate. The v1.3.6 update did not change the
+  Windows configuration; the VPS observed a fresh peer handshake after restart.
+- Together with the recorded VPS health and valid public TLS routes, this closes
+  the v1.3 host-specific checks. Version-matched evidence for the stable
+  1.3.6 release is recorded in
+  [release-host-checks-v1.3.6.json](release-host-checks-v1.3.6.json). The
+  stable release gate passed; see the results immediately below.
+### v1.3.6 stable release gate — 2026-10-17
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6 -HostCheckEvidence dist/release-host-checks-v1.3.6.json` — PASS. The first attempt could not access Docker Desktop from the sandbox; the retry with Docker engine access completed the gate.
+- Go tests, frontend type-check and six unit tests, Chromium/Firefox/WebKit browser coverage, monitoring and streaming integration, and isolated offline package install/update/rollback/retention/password-recovery checks passed.
+- `dist/release-validation-1.3.6.json` records `local_gate: passed`, `release_readiness: ready`, and all required actual-host checks passed using the version-matched evidence in `docs/release-host-checks-v1.3.6.json`.
+- The package was built from product source commit `0bb612060b2b`: `dist/jellyfin-proxy-1.3.6-linux-amd64.tar.gz`, 71,554,425 bytes, SHA-256 `0cf95dd64657a0d1f8f7a731600a7dea66b132fdd7a04c3c30f4c3c6c8848fba`. A matching `.sha256` file was generated. Subsequent `dev` commits through this record changed documentation only.
+- Stable promotion to `main` is the remaining publication step.

@@ -1,11 +1,32 @@
 package whitelist
 
 import (
+	"errors"
 	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestValidateEntriesCanonicalizesAndValidatesFriendlyNames(t *testing.T) {
+	entries, err := ValidateEntries([]Entry{
+		{Address: "2001:db8::1", Name: "  Travel laptop  "},
+		{Address: "192.0.2.1", Name: "Home phone"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Entry{{Address: "192.0.2.1/32", Name: "Home phone"}, {Address: "2001:db8::1/128", Name: "Travel laptop"}}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("entries = %#v, want %#v", entries, want)
+	}
+	if _, err := ValidateEntries([]Entry{{Address: "192.0.2.1", Name: strings.Repeat("x", MaxEntryNameRunes+1)}}); !errors.Is(err, ErrInvalidEntryName) {
+		t.Fatalf("long name error = %v", err)
+	}
+	if _, err := ValidateEntries([]Entry{{Address: "192.0.2.1", Name: "Home\nphone"}}); !errors.Is(err, ErrInvalidEntryName) {
+		t.Fatalf("control-character name error = %v", err)
+	}
+}
 
 func TestParseEntryNormalizesAddressesAndNetworks(t *testing.T) {
 	tests := []struct {
@@ -97,7 +118,7 @@ func TestContainsFailsClosedForInvalidOrUnspecifiedPeer(t *testing.T) {
 
 func TestRenderCaddyPolicyDefaultsToDeny(t *testing.T) {
 	empty := RenderCaddyPolicy(nil)
-	if !strings.Contains(empty, `respond "Forbidden" 403`) {
+	if !strings.Contains(empty, "jp_metrics_deny") {
 		t.Fatalf("empty policy does not deny: %q", empty)
 	}
 	if strings.Contains(empty, "remote_ip") || strings.Contains(empty, "reverse_proxy") {
@@ -112,11 +133,11 @@ func TestRenderCaddyPolicyDefaultsToDeny(t *testing.T) {
 	if !strings.Contains(policy, "@whitelisted remote_ip 192.0.2.0/24 2001:db8::/64") {
 		t.Fatalf("policy has unexpected matcher: %q", policy)
 	}
-	if !strings.Contains(policy, "reverse_proxy 10.66.66.2:8096") || !strings.Contains(policy, `respond "Forbidden" 403`) {
+	if !strings.Contains(policy, "reverse_proxy 10.66.66.2:8096") || !strings.Contains(policy, "jp_metrics_deny") {
 		t.Fatalf("policy is missing proxy or deny handler: %q", policy)
 	}
 	invalid := RenderCaddyPolicy([]netip.Prefix{{}})
-	if strings.Contains(invalid, "reverse_proxy") || !strings.Contains(invalid, `respond "Forbidden" 403`) {
+	if strings.Contains(invalid, "reverse_proxy") || !strings.Contains(invalid, "jp_metrics_deny") {
 		t.Fatalf("invalid policy did not fail closed: %q", invalid)
 	}
 }

@@ -3,6 +3,102 @@
 Status is based on behaviour and recorded test evidence, not file presence.
 No milestone is marked complete until its mandatory tests pass.
 
+## v1.2 — Admin redesign and statistics
+
+The authorized scope is recorded in [V1.2.md](V1.2.md). It adds a responsive
+server-rendered admin redesign, containerized host metrics, in-process Caddy
+stream instrumentation, authenticated SSE, and bounded 90-day file history.
+The local release gate passed on 2026-10-14. The generated report records
+`local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+The `1.2.0-dev` package was deployed to the user-authorized test VPS and the
+Ubuntu, live host metrics, TLS/routes, isolation, and service-restart checks
+passed. Native Windows streaming after this update still needs operator
+confirmation. The deployed admin image identifies itself as build
+`62acf66c2182-dirty`; build a clean candidate from the merged `dev` revision
+before promoting a stable release.
+
+| Stage | Status | Evidence / blocker |
+| --- | --- | --- |
+| 1 — Requirements and architecture record | **Complete** | `docs/V1.2.md`, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` record scope and boundaries. |
+| 2 — Shared responsive admin shell | **Complete (local gate)** | Chromium exercised existing journeys, separate Overview/Access control/Security/WireGuard/Statistics pages, keyboard access, and responsive layouts. Overview reports live status for each service and metrics component. |
+| 3 — Host metrics collector | **Complete (local and VPS checks)** | Local integration verified isolation/recovery; the VPS collector returned live host memory, disk, network, load, and uptime values from read-only mounts. |
+| 4 — Caddy in-flight proxy instrumentation | **Complete (local gate)** | Integration covered concurrent and interrupted transfers, ranges, WebSockets, allowed/blocked requests, and byte accounting against the local Caddy module. |
+| 5 — Historical storage and authenticated SSE | **Complete (local and VPS checks)** | Local checks covered authentication, reconnect/expiry, aggregation, retention, update, rollback, and corrupt recovery; populated history remained present after a VPS admin restart. |
+| 6 — Statistics UI and browser checks | **Complete (local gate)** | Chromium exercised live/history views and all four ranges, chart bounds, disconnect/reconnect, and responsive/keyboard behavior. |
+| 7 — Installer/package integration and release gate | **Local gate and VPS update passed; Windows check pending** | `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed Go, browser/monitoring, package install/update/rollback checks. The version-matched package is healthy on the test VPS; Windows playback confirmation remains pending. See [TESTING.md](TESTING.md). |
+
+### Authorized administrator UI follow-up — 2026-10-14
+
+- **Status:** Implemented and local gates passed; [PR #40](https://github.com/Mytob/project_j/pull/40)
+  merged into `dev` as `4bc5c41`.
+- **Changes:** Removed the signed-in pill, administrator-session footer,
+  duplicate version/build footer, redundant login caption, Statistics privacy
+  note, and bottom return/sign-out link. Version and build remain in Overview's
+  Software panel. Access control, Security, and WireGuard now have distinct
+  authenticated pages. Overview reports checks for admin, access control,
+  Caddy, the WireGuard interface, host metrics, and proxy metrics.
+- **Health signals:** Caddy uses its private Unix-socket API; WireGuard writes a
+  short-lived interface heartbeat to a named volume mounted read-only by admin;
+  collector and proxy status use fresh metrics samples. At that point no Docker
+  socket or published health endpoint was added. The separately authorized
+  v1.3 container observer follow-up is recorded below.
+- **Validation:** `pwsh -NoProfile -File .\build.ps1 test` and
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.1-dev` passed; the
+  release report is `dist/release-validation-1.2.1-dev.json`. The package was
+  installed on the test VPS and its services and public HTTPS endpoints passed
+  checks. Native Windows playback after this update remains pending. Full
+  command evidence is in [TESTING.md](TESTING.md).
+
+### v1.2 local gate evidence — 2026-10-14
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.2.0-dev`.
+- Result: PASS (exit 0). The report at
+  `dist/release-validation-1.2.0-dev.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Source control: feature commit `eaa14f9` was merged into `dev` by PR #37
+  (`2cb0d8a`).
+- Covered: all Go packages; M1–M6 and v1.1 browser/integration regressions;
+  Chromium admin and Statistics workflows; collector container and recovery;
+  Caddy live streaming/range/WebSocket metrics; authenticated SSE and
+  persistent history; offline package build/load/install, firewall, update,
+  preservation, rollback, retention, and password reset.
+- At report generation the host checks were blocked because the local run used
+  Docker Desktop. Subsequent test-VPS results are recorded below; post-update
+  native Windows playback confirmation remains pending.
+
+### v1.2 test VPS deployment — 2026-10-14
+
+- Target: user-authorized Ubuntu 26.04.1 LTS x86_64 VPS serving the configured
+  `darkcry.com` hostnames. The existing 1.1.2-dev services were healthy before
+  the update and 4.9 GB was available on `/`.
+- Command: `./proxyctl-linux-amd64 update
+  ./jellyfin-proxy-1.2.0-dev-linux-amd64.tar.gz`.
+- Result: PASS. The updater verified the package and existing TOTP storage,
+  loaded bundled images without pulls, restarted the Jellyfin Proxy services,
+  and reported successful service health and public HTTPS checks. Admin,
+  Caddy, hostmetrics, and WireGuard were all healthy afterward.
+- Package identity: the archive SHA-256 matched the workstation copy. The
+  running admin image reports version `1.2.0-dev`, build
+  `62acf66c2182-dirty`. This was built from the tested v1.2 working tree before
+  its source commit; create a clean build from merged `dev` before a stable
+  release.
+- Host metrics: private `GET /metrics` returned live VPS memory, root disk,
+  network totals, load averages, and uptime. Docker inspection showed UID
+  65532, no added capabilities, no privileged/host PID/network mode, no
+  published port, and read-only `/proc`, `/sys`, and root filesystem mounts.
+- Public routes with certificate verification enabled: `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403 with TLS verify result
+  0 for each. Anonymous `/statistics` redirected to login; history and SSE
+  endpoints returned 401. The access host remained default-deny.
+- Persistence and tunnel: TOTP key/state, whitelist files, and site content
+  were present after update. A populated daily history file remained present
+  across an admin-only restart, and admin returned healthy. The WireGuard
+  container reported a recent peer handshake after the full update restart.
+- Remaining operator check: confirm Jellyfin streaming from the native
+  Windows client after the v1.2 update. The scoped Windows firewall rule and
+  streaming were previously operator-confirmed on 1.1.2-dev; the new update's
+  peer handshake is observed, but post-update playback was not tested here.
+
 ## Current status
 
 ### v1.1 — TOTP administrator authentication
@@ -452,3 +548,13 @@ merge commit `7470ef3`.
 | 2026-10-14 | v1.1 Stage 6 update downgrade guard, package permission fix, full TOTP package and release gate. | [PR #28](https://github.com/Mytob/project_j/pull/28), merged to `dev` as `0e17798` | `pwsh -NoProfile -File .\build.ps1 package -Version 1.1.0-dev` and `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.0-dev` — PASS; local gate passed, production host checks blocked. |
 | 2026-10-14 | Responsive TOTP disable form layout and 1.1.2-dev package. | [PR #31](https://github.com/Mytob/project_j/pull/31), merged to `dev` as `8df2ca7` | `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2-dev` — PASS, exit 0; Go, browser integration, and offline package gates passed. Host-specific checks remain blocked; package not published. |
 | 2026-10-14 | Stable 1.1.2 release gate, promotion, and publication. | [PR #33](https://github.com/Mytob/project_j/pull/33) recorded evidence in `dev`; [PR #34](https://github.com/Mytob/project_j/pull/34) promoted `dev` to `main` at `86bf9c2`; tag `v1.1.2`; [GitHub Release](https://github.com/Mytob/project_j/releases/tag/v1.1.2) | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.1.2 -HostCheckEvidence docs/release-host-checks-v1.1.2.json` on `dev` commit `ce3f4e5890e3` — PASS, exit 0, `release_readiness: ready`. Go, M1–M6 Chromium/WireGuard, and M7–M9 offline package/update/rollback/retention checks passed. The stable archive and updater, checksum files, and validation report were uploaded and verified on GitHub. |
+| 2026-10-15 | v1.3 React admin, health diagnostics, password change, WireGuard peer lifecycle, and dependency audit. | [PR #43](https://github.com/Mytob/project_j/pull/43), merged to `dev` at `98012d6`; implementation commit `f14737f` | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.0-dev` on commit `f14737f2db83` — PASS, exit 0 at 20:18 UTC. Go, browser/monitoring integration, and isolated offline package install/update/rollback passed. `dist/release-validation-1.3.0-dev.json` records `local_gate: passed`; host checks remain blocked. Dependency scan limits and exact pins are in `docs/DEPENDENCY_AUDIT_V1.3.md`. |
+| 2026-10-15 | v1.3 chart interaction, visual regression coverage, three-browser smoke checks, and toolchain audit follow-up. | Commit `693c65d363f4`; [PR #45](https://github.com/Mytob/project_j/pull/45), merged to `dev` at `658e8da`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.0-dev` — PASS, exit 0 at 21:14 UTC; Go, Chromium/Firefox/WebKit browser and container integration, and offline package install/update/rollback passed. `dist/release-validation-1.3.0-dev.json` records local gate passed, host checks blocked. Evidence and earlier corrected test failures are in `docs/TESTING.md`. |
+| 2026-10-16 | User-authorized Overview simplification, TOTP-protected password changes, one-time WireGuard configuration download confirmation, and restricted container-health observer. | Follow-up on `fix/v1-3-overview-health-followup`; [PR #47](https://github.com/Mytob/project_j/pull/47), merged to `dev` at `f9fed92`. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.0-dev` — PASS, exit 0 at 00:29:52 UTC; Go, frontend, Chromium/Firefox/WebKit browser and monitoring integration, plus offline package install/update/rollback passed. Overview now fits the system summary and compact all-component states into one panel. Report leaves host checks blocked. See [TESTING.md](TESTING.md). |
+| 2026-10-16 | v1.3.1-dev test VPS update. | Package built from clean source commit `9e1b7b943805`; product code from [PR #47](https://github.com/Mytob/project_j/pull/47), merged to `dev` at `f9fed92`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.1-dev` — PASS, exit 0. `proxyctl update` — PASS on the user-authorized Ubuntu 26.04.1 VPS. Admin, Caddy, containerhealth, hostmetrics, and WireGuard healthy; HTTPS routes returned 200/200/403 with TLS verification. Native Windows WireGuard/firewall/playback checks remain pending. See [TESTING.md](TESTING.md). |
+| 2026-10-16 | Require completed one-time WireGuard config download before peer regeneration; deploy `1.3.2-dev` to test VPS. | [PR #50](https://github.com/Mytob/project_j/pull/50), merged to `dev` at `1488ed3`; package built from code commit `b9955bb94501`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.2-dev` — PASS, exit 0; Go, three-browser integration, monitoring, offline install/update/rollback and preservation checks passed. VPS update passed; all five containers healthy; HTTPS routes verified 200/200/403 with valid TLS. Native Windows checks remain pending. See [TESTING.md](TESTING.md). |
+| 2026-10-16 | Repair one-time WireGuard config deletion permissions and deploy `1.3.3-dev`. | [PR #52](https://github.com/Mytob/project_j/pull/52), merged to `dev` at `fd1114f`; package built from code commit `b8b119d`. | Root cause verified from VPS logs: the admin UID could not remove the config from a root-owned directory. `build.ps1 test` and clean-tree `build.ps1 release -Version 1.3.3-dev` passed, including a regression test that restores the directory to root:65532 group-writable mode. VPS updater passed; pending config preserved for the user to download once. See [TESTING.md](TESTING.md). |
+| 2026-10-16 | Dismiss transient WireGuard rotation/download notices after five seconds and deploy `1.3.4-dev` to the test VPS. | [PR #54](https://github.com/Mytob/project_j/pull/54), merged to `dev` at `f8d530a`; package built from clean commit `f8d530a70abf`. | Clean-tree `.\build.ps1 release -Version 1.3.4-dev` — PASS, exit 0; local release gate passed. VPS update passed; all five containers healthy and public HTTPS routes verified 200/200/403 with valid TLS. Native Windows checks remain pending. See [TESTING.md](TESTING.md). |
+| 2026-10-17 | Replace Windows peer status and notices with a single state-driven download/regenerate button; deploy `1.3.5-dev` to the test VPS. | [PR #56](https://github.com/Mytob/project_j/pull/56), merged to `dev` at `f4803a4`; package built from clean commit `f4803a4474b1`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.5-dev` — PASS, exit 0; local release gate passed. VPS update passed; all five services healthy and public HTTPS routes verified 200/200/403 with TLS verification. Native Windows checks remain pending. See [TESTING.md](TESTING.md). |
+| 2026-10-17 | Add optional friendly names to allowed addresses, remove the redundant Jellyfin health-response tile, and deploy `1.3.6-dev` to the test VPS. | Code commit `a8a7937cd68b`; [PR #58](https://github.com/Mytob/project_j/pull/58) into `dev`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6-dev` — PASS, exit 0; Go, four browser tests, frontend, monitoring/streaming integration, and offline package install/update/rollback passed. VPS updater passed after resolving severe memory pressure with temporary swap; the swap and interrupted-attempt files were removed. All five services healthy, WireGuard handshake recovered, HTTPS routes verified 200/200/403 with TLS verification. The operator subsequently confirmed native Windows playback. The stable 1.3.6 release gate passed with readiness READY and the package was built; promotion to main remains pending. See [TESTING.md](TESTING.md). |
+

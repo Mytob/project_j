@@ -111,6 +111,9 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
 		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)
 	}
+	if err := ensureWireGuardClientConfigDirectory(options.InstallRoot); err != nil {
+		return manifest, fmt.Errorf("prepare one-time Windows configuration storage: %w", err)
+	}
 	progress(2, true, "Release package and persistent TOTP storage verified")
 	progress(3, false, "Retaining the verified release files")
 	finalRelease := filepath.Join(options.InstallRoot, "releases", manifest.Version)
@@ -244,6 +247,23 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	return manifest, nil
 }
 
+// ensureWireGuardClientConfigDirectory restores the ownership and permissions
+// required for the unprivileged admin service to consume a downloaded config.
+// Older deployments may have created this bind-mounted directory as root:root.
+func ensureWireGuardClientConfigDirectory(installRoot string) error {
+	path := filepath.Join(installRoot, "data", "wireguard-client")
+	if err := os.MkdirAll(path, 0o2770); err != nil {
+		return err
+	}
+	if err := os.Chown(path, 0, adminContainerUID); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o2770); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ResetPassword replaces the local administrator password and recreates only
 // the admin container. Sessions are in-memory, so its restart invalidates all
 // existing sessions without touching the other services or persistent data.
@@ -260,7 +280,10 @@ func ResetPassword(ctx context.Context, installRoot, password string, runner Com
 	if err := validateInstalledLayout(installRoot); err != nil {
 		return err
 	}
-	credentialPath := filepath.Join(installRoot, "config", "admin.json")
+	credentialPath, err := activeCredentialPath(installRoot)
+	if err != nil {
+		return err
+	}
 	old, err := os.ReadFile(credentialPath)
 	if err != nil {
 		return fmt.Errorf("read current administrator credential: %w", err)
@@ -460,6 +483,13 @@ func validateInstalledLayout(root string) error {
 			return fmt.Errorf("installation file %s is missing or unsafe", relative)
 		}
 	}
+	credentialPath, err := activeCredentialPath(root)
+	if err != nil {
+		return err
+	}
+	if _, err := auth.LoadCredential(credentialPath); err != nil {
+		return fmt.Errorf("validate active administrator credential: %w", err)
+	}
 	return nil
 }
 
@@ -598,4 +628,22 @@ func rollbackCredential(path string, old []byte) {
 	if atomicReplace(path, old, 0o640) == nil {
 		_ = os.Chown(path, 0, adminContainerUID)
 	}
+}
+
+// activeCredentialPath prefers the mutable admin-data credential created by
+// the web password-change flow, and otherwise keeps the original config file
+// as the source for older installations.
+func activeCredentialPath(installRoot string) (string, error) {
+	override := filepath.Join(installRoot, "data", "admin-credential.json")
+	info, err := os.Lstat(override)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", errors.New("administrator credential override is unsafe")
+		}
+		return override, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect administrator credential override: %w", err)
+	}
+	return filepath.Join(installRoot, "config", "admin.json"), nil
 }

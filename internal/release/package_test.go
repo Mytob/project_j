@@ -91,9 +91,11 @@ func makePackageArchive(t *testing.T, version string, tamper bool) string {
 	}
 	manifest := Manifest{SchemaVersion: 1, Version: version, Platform: "linux/amd64", Images: []Image{
 		{Reference: "jellyfin-proxy/admin:" + version, ImageID: "sha256:" + strings.Repeat("a", 64)},
-		{Reference: "jellyfin-proxy/wireguard:" + version, ImageID: "sha256:" + strings.Repeat("b", 64)},
-		{Reference: "caddy:2.10.2-alpine", ImageID: "sha256:" + strings.Repeat("c", 64)},
-		{Reference: "alpine:3.22", ImageID: "sha256:" + strings.Repeat("d", 64)},
+		{Reference: "jellyfin-proxy/hostmetrics:" + version, ImageID: "sha256:" + strings.Repeat("b", 64)},
+		{Reference: "jellyfin-proxy/containerhealth:" + version, ImageID: "sha256:" + strings.Repeat("f", 64)},
+		{Reference: "jellyfin-proxy/wireguard:" + version, ImageID: "sha256:" + strings.Repeat("c", 64)},
+		{Reference: "jellyfin-proxy/caddy:" + version, ImageID: "sha256:" + strings.Repeat("d", 64)},
+		{Reference: "alpine:3.24.2", ImageID: "sha256:" + strings.Repeat("e", 64)},
 	}}
 	for path, content := range files {
 		full := filepath.Join(root, filepath.FromSlash(path))

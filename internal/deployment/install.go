@@ -238,10 +238,24 @@ func Install(ctx context.Context, options InstallOptions) (manifest release.Mani
 	if err := os.Chmod(peerFiles.ServerPath, 0o600); err != nil {
 		return manifest, fmt.Errorf("set WireGuard server permissions: %w", err)
 	}
-	if err := os.Chown(peerFiles.ClientPath, 0, adminContainerUID); err != nil {
+	clientConfigDir := filepath.Join(options.InstallRoot, "data", "wireguard-client")
+	if err := os.MkdirAll(clientConfigDir, 0o2770); err != nil {
+		return manifest, fmt.Errorf("create one-time Windows configuration directory: %w", err)
+	}
+	if err := os.Chown(clientConfigDir, 0, adminContainerUID); err != nil {
+		return manifest, fmt.Errorf("set Windows configuration directory ownership: %w", err)
+	}
+	if err := os.Chmod(clientConfigDir, 0o2770); err != nil {
+		return manifest, fmt.Errorf("set Windows configuration directory permissions: %w", err)
+	}
+	clientConfigPath := filepath.Join(clientConfigDir, "windows.conf")
+	if err := os.Rename(peerFiles.ClientPath, clientConfigPath); err != nil {
+		return manifest, fmt.Errorf("move Windows peer config into persistent one-time storage: %w", err)
+	}
+	if err := os.Chown(clientConfigPath, 0, adminContainerUID); err != nil {
 		return manifest, fmt.Errorf("set Windows peer ownership: %w", err)
 	}
-	if err := os.Chmod(peerFiles.ClientPath, 0o640); err != nil {
+	if err := os.Chmod(clientConfigPath, 0o640); err != nil {
 		return manifest, fmt.Errorf("set Windows peer permissions: %w", err)
 	}
 	if err := os.Chown(filepath.Join(options.InstallRoot, "config", "wireguard"), 0, adminContainerUID); err != nil {

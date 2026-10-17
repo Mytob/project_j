@@ -37,46 +37,139 @@ async function waitForStep(page, step) {
   while (Math.floor(Date.now() / 1000 / 30) < step) await page.waitForTimeout(100);
 }
 
-test('administrator can reauthenticate, cancel and complete rendered TOTP enrollment', async ({ page }) => {
-  test.setTimeout(90000);
+test('administrator can authenticate, manage TOTP, change password, and use the admin SPA', async ({ page, browser }) => {
+  test.setTimeout(180000);
+  page.on('pageerror', (error) => console.log(`Browser page error: ${error.stack || error.message}`));
+  const anonymousHistory = await page.request.get('/statistics/history?range=24h');
+  expect(anonymousHistory.status()).toBe(401);
+  const anonymousEvents = await page.request.get('/statistics/events');
+  expect(anonymousEvents.status()).toBe(401);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Jellyfin Proxy' })).toBeVisible();
+  await expect(page.getByText('Use your administrator credentials to continue.')).toHaveCount(0);
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+  await expect(page.locator('.overview-status')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Health details' })).toBeVisible();
+  await expect(page.locator('.stat-grid, .chart-grid')).toHaveCount(0);
+  await expect(page.getByText('Signed in', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('STREAMING LIVE', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Live measurements update as they arrive')).toHaveCount(0);
+  await expect(page.getByText('Version integration-test · Build browser-test')).toBeVisible();
+  await expect(page.getByText(/^Version integration-test · Build browser-test$/)).toHaveCount(1);
+  const overview = await page.locator('.overview-components li').allTextContents();
+  for (const component of ['Admin backend', 'Access control', 'Caddy / proxy', 'WireGuard interface', 'Windows peer', 'Jellyfin endpoint', 'Host metrics', 'Proxy metrics', 'Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container']) {
+    expect(overview.join(' ')).toContain(component);
+  }
+  for (const container of ['Admin container', 'Host metrics container', 'Caddy container', 'WireGuard container']) {
+    expect(overview.join(' ')).toContain(`${container}Healthy`);
+  }
+  await page.getByRole('link', { name: 'Access control' }).click();
+  await expect(page).toHaveURL(/\/access-control$/);
+  await expect(page.locator('body')).toContainText('Allowed addresses');
+  await expect(page.getByRole('heading', { name: 'Allowed addresses' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Current status' })).toHaveCount(0);
+  await page.getByLabel('IP address or CIDR').fill('203.0.113.44');
+  await page.getByLabel('Friendly name (optional)').fill('Home laptop');
+  await page.getByRole('button', { name: 'Add address' }).click();
+  const namedAddress = page.locator('.address-row').filter({ hasText: '203.0.113.44/32' });
+  await expect(namedAddress).toContainText('Home laptop');
+  await namedAddress.getByText('Edit name').click();
+  await namedAddress.getByLabel('Friendly name for 203.0.113.44/32').fill('Travel laptop');
+  await namedAddress.getByRole('button', { name: 'Save name' }).click();
+  await expect(page.locator('.address-row').filter({ hasText: '203.0.113.44/32' })).toContainText('Travel laptop');
+  await page.getByRole('button', { name: 'Remove 203.0.113.44/32' }).click();
+  await expect(page.getByText('203.0.113.44/32')).toHaveCount(0);
+  await page.getByRole('link', { name: 'WireGuard' }).click();
+  await expect(page).toHaveURL(/\/wireguard$/);
+  await expect(page.getByRole('heading', { name: 'WireGuard configuration' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Health' }).click();
+  await expect(page).toHaveURL(/\/health$/);
+  await expect(page.getByRole('heading', { name: 'Detailed status' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Current status' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page).toHaveURL(/\/security$/);
   await expect(page.getByRole('heading', { name: 'Administrator authenticator' })).toBeVisible();
-  const software = page.locator('section[aria-labelledby="software-heading"]');
-  await expect(software.getByRole('heading', { name: 'Software' })).toBeVisible();
-  await expect(software.getByText('Version: integration-test')).toBeVisible();
-  await expect(software.getByText('Build number: browser-test')).toBeVisible();
+  await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page).toHaveScreenshot('security-desktop.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page).toHaveScreenshot('security-mobile.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015 });
+  await page.setViewportSize({ width: 1440, height: 1000 });
 
+  const visualPages = [
+    ['/dashboard', 'overview', 'Overview'],
+    ['/statistics', 'statistics', 'Statistics'],
+    ['/health', 'health', 'Health'],
+    ['/access-control', 'access-control', 'Access control'],
+    ['/wireguard', 'wireguard', 'WireGuard'],
+  ];
+  const dynamicVisualRegions = [
+    page.locator('.build-tag'),
+    page.locator('.top-status .live-indicator'),
+    page.locator('.page-footer span:last-child'),
+    page.locator('.stat-card > strong'),
+    page.locator('.stat-card > small'),
+    page.locator('.component-card small'),
+    page.locator('.component-card .state-pill'),
+    page.locator('.chart polyline'),
+    page.locator('.chart-crosshair'),
+    page.locator('.chart-selected'),
+    page.locator('.chart-range'),
+    page.locator('.chart-output'),
+    page.locator('.health-events time'),
+  ];
+  for (const [path, name, heading] of visualPages) {
+    await page.goto(path);
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    if (name === 'health') await page.addStyleTag({ content: '.health-events { display: none !important; }' });
+    if (name === 'wireguard') {
+      const tunnelStatus = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Current tunnel status' }) });
+      await expect(tunnelStatus.locator('.stat-card')).toHaveCount(3);
+      await expect(tunnelStatus).not.toContainText('Health response unavailable');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(page).toHaveScreenshot(`admin-${name}-desktop.png`, { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.02, mask: dynamicVisualRegions, maskColor: '#102238' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page).toHaveScreenshot(`admin-${name}-mobile.png`, { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.02, mask: dynamicVisualRegions, maskColor: '#102238' });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBeTruthy();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+  await page.goto('/security');
   await page.getByLabel('Administrator password').fill('incorrect-password');
   const badPassword = page.waitForResponse((response) => response.url().endsWith('/totp/enroll/start') && response.status() === 401);
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
   await badPassword;
   await expect(page.getByText('The password was not accepted.')).toBeVisible();
 
-  await page.goto('/dashboard');
+  await page.goto('/security');
   await page.getByLabel('Administrator password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/security$/);
   const qr = page.getByRole('img', { name: 'Authenticator setup QR code' });
   await expect(qr).toBeVisible();
   expect(await qr.evaluate((image) => image.complete && image.naturalWidth === 256)).toBeTruthy();
 
-  const secretText = await page.locator('section[aria-labelledby="authenticator-heading"] code').textContent();
+  const secretText = await page.locator('.setup-card code').textContent();
   const secret = decodeBase32(secretText.trim());
   const step = Math.floor(Date.now() / 1000 / 30);
   const accepted = acceptedCodes(secret, step);
   let incorrect = '000000';
   while (accepted.has(incorrect)) incorrect = String((Number(incorrect) + 1) % 1_000_000).padStart(6, '0');
-  await page.getByLabel('Six-digit authenticator code').fill(incorrect);
+  await page.getByLabel('Six-digit code').fill(incorrect);
   const rejected = page.waitForResponse((response) => response.url().endsWith('/totp/enroll/confirm') && response.status() === 400);
-  await page.getByRole('button', { name: 'Verify and enable' }).click();
+  await page.getByRole('button', { name: 'Confirm authenticator' }).click();
   await rejected;
   await expect(page.getByText('The authenticator code was not accepted.')).toBeVisible();
 
-  await page.goto('/dashboard');
+  await page.goto('/security');
   await expect(page.getByRole('img', { name: 'Authenticator setup QR code' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel setup' }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -85,13 +178,15 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page).toHaveURL(/\/security$/);
   await page.getByLabel('Administrator password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Set up authenticator' }).click();
   await expect(page.getByRole('img', { name: 'Authenticator setup QR code' })).toBeVisible();
-  const finalSecret = decodeBase32((await page.locator('section[aria-labelledby="authenticator-heading"] code').textContent()).trim());
+  const finalSecret = decodeBase32((await page.locator('.setup-card code').textContent()).trim());
   const currentStep = Math.floor(Date.now() / 1000 / 30);
-  await page.getByLabel('Six-digit authenticator code').fill(codeAt(finalSecret, currentStep));
-  await page.getByRole('button', { name: 'Verify and enable' }).click();
+  await page.getByLabel('Six-digit code').fill(codeAt(finalSecret, currentStep));
+  await page.getByRole('button', { name: 'Confirm authenticator' }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByLabel('Password')).toBeVisible();
   await expect(page.getByLabel('Authenticator code')).toBeVisible();
@@ -126,14 +221,175 @@ test('administrator can reauthenticate, cancel and complete rendered TOTP enroll
   await page.getByLabel('Authenticator code').fill(codeAt(finalSecret, disableLoginStep));
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByText('Two-factor authentication is enabled for the administrator account.')).toBeVisible();
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page).toHaveURL(/\/security$/);
+  await expect(page.getByText('Two-factor authentication is enabled for administrator sign-in.')).toBeVisible();
+  await expect(page.getByLabel('Current six-digit authenticator code for password change')).toBeVisible();
   await page.getByText('Disable two-factor authentication').click();
   await expect(page.getByLabel('Administrator password')).toBeVisible();
   await page.getByLabel('Administrator password').fill('integration-test-admin-password');
   const disableCodeStep = Math.max(Math.floor(Date.now() / 1000 / 30), disableLoginStep + 1);
-  await page.getByLabel('Current six-digit authenticator code').fill(codeAt(finalSecret, disableCodeStep));
+  await page.getByLabel('Current six-digit authenticator code', { exact: true }).fill(codeAt(finalSecret, disableCodeStep));
   await page.getByRole('button', { name: 'Disable authenticator' }).click();
   await expect(page).toHaveURL(/\?totp=disabled$/);
   await expect(page.getByText('Authenticator disabled. Sign in with your administrator password.')).toBeVisible();
   await expect(page.getByLabel('Authenticator code')).toHaveCount(0);
+
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  const otherContext = await browser.newContext({ ignoreHTTPSErrors: true });
+  const otherPage = await otherContext.newPage();
+  await otherPage.goto('/');
+  await otherPage.getByLabel('Password').fill('integration-test-admin-password');
+  await otherPage.getByRole('button', { name: 'Sign in' }).click();
+  await expect(otherPage).toHaveURL(/\/dashboard$/);
+  await page.getByRole('link', { name: 'Security' }).click();
+  await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
+  await page.getByLabel('Current password').fill('integration-test-admin-password');
+  await page.getByLabel('New password', { exact: true }).fill('new-integration-admin-password');
+  await page.getByLabel('Confirm new password').fill('new-integration-admin-password');
+  await page.getByRole('button', { name: 'Change password' }).click();
+  await expect(page).toHaveURL(/\?password=changed$/);
+  await expect(page.getByText('Password changed. Sign in again with the new password.')).toBeVisible();
+  expect((await otherPage.request.get('/api/initial')).status()).toBe(401);
+  await otherPage.close();
+  await otherContext.close();
+  await page.getByLabel('Password').fill('integration-test-admin-password');
+  const oldPasswordRejected = page.waitForResponse((response) => response.url().endsWith('/login') && response.status() === 401);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await oldPasswordRejected;
+  await page.getByLabel('Password').fill('new-integration-admin-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('link', { name: 'Statistics' }).click();
+  await expect(page).toHaveURL(/\/statistics$/);
+  await expect(page.getByRole('heading', { name: 'Statistics' })).toBeVisible();
+  await expect(page.getByText('Live via SSE')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText('Active requests', { exact: true })).toBeVisible();
+  await expect(page.getByText('Allowed / blocked', { exact: true })).toBeVisible();
+  await expect(page.getByText('HTTP requests in flight')).toHaveCount(1);
+  await expect(page.locator('.stat-card').filter({ hasText: 'Memory' }).first().locator('strong')).not.toHaveText('—', { timeout: 15000 });
+  await expect(page.locator('.stat-card').filter({ hasText: 'Active requests' }).locator('strong')).not.toHaveText('—', { timeout: 15000 });
+
+  for (const range of ['24h', '7d', '30d', '90d']) {
+    const response = await page.request.get(`/statistics/history?range=${range}`);
+    expect(response.status()).toBe(200);
+    expect(Array.isArray(await response.json())).toBeTruthy();
+    await page.getByLabel('History range').selectOption(range);
+  }
+  await expect(page.locator('.chart').first()).toBeVisible();
+
+  const accessOrigin = 'https://access.domain.test';
+  const ranged = await page.request.get(`${accessOrigin}/__stream?bytes=128`, { headers: { Range: 'bytes=2-5' } });
+  expect(ranged.status()).toBe(206);
+  expect(ranged.headers()['content-range']).toBe('bytes 2-5/128');
+  expect(Array.from(await ranged.body())).toEqual([2, 3, 4, 5]);
+
+  const concurrent = [0, 1].map(() => page.request.get(`${accessOrigin}/__stream?bytes=1048576&slow=1`));
+  const activeValue = page.locator('.stat-card').filter({ hasText: 'Active requests' }).locator('strong');
+  await expect.poll(async () => Number((await activeValue.textContent()).replaceAll(',', '')), { timeout: 10000 }).toBeGreaterThan(0);
+  const streamed = await Promise.all(concurrent);
+  for (const response of streamed) {
+    expect(response.status()).toBe(200);
+    expect((await response.body()).length).toBe(1048576);
+  }
+  await expect.poll(async () => Number((await activeValue.textContent()).replaceAll(',', '')), { timeout: 10000 }).toBe(0);
+
+  page.on('websocket', (socket) => {
+    console.log(`WebSocket connected: ${socket.url()}`);
+    socket.on('socketerror', (error) => console.log(`WebSocket socket error: ${error}`));
+    socket.on('close', () => console.log(`WebSocket closed: ${socket.url()}`));
+  });
+  await page.goto(accessOrigin);
+  const websocketEcho = await page.evaluate((url) => new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const timeout = setTimeout(() => { socket.close(); reject(new Error('WebSocket echo timed out')); }, 10000);
+    socket.onopen = () => socket.send('streaming-proxy-check');
+    socket.onmessage = (event) => { clearTimeout(timeout); socket.close(); resolve(event.data); };
+    socket.onerror = () => { clearTimeout(timeout); reject(new Error('WebSocket proxy connection failed')); };
+  }), 'wss://access.domain.test/__ws');
+  expect(websocketEcho).toBe('streaming-proxy-check');
+  await page.goto('https://admin.domain.test/statistics');
+  await expect(page.getByRole('heading', { name: 'Statistics' })).toBeVisible();
+
+  await page.evaluate((url) => new Promise((resolve) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 300);
+    fetch(url, { mode: 'no-cors', signal: controller.signal }).catch(() => {}).finally(() => { clearTimeout(timer); resolve(); });
+  }), `${accessOrigin}/__stream?bytes=1048576&slow=1`);
+  await expect.poll(async () => Number((await activeValue.textContent()).replaceAll(',', '')), { timeout: 10000 }).toBe(0);
+
+  let abortedConnections = 0;
+  await page.route('**/statistics/events', (route) => {
+    if (abortedConnections++ === 0) return route.abort();
+    return route.continue();
+  });
+  const reconnected = page.waitForResponse((response) => response.url().includes('/statistics/events') && response.status() === 200, { timeout: 15000 });
+  await page.reload();
+  await reconnected;
+  await expect(page.getByText('Live via SSE')).toBeVisible({ timeout: 15000 });
+  await page.unroute('**/statistics/events');
+
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused();
+
+  for (const width of [320, 390, 430, 768, 1024, 1440, 1920, 2560]) {
+    await page.setViewportSize({ width, height: 900 });
+    const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    expect(pageWidth, `page must not overflow at ${width}px`).toBeLessThanOrEqual(width);
+  }
+  await page.setViewportSize({ width: 844, height: 390 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(844);
+
+  const mobileContext = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const mobilePage = await mobileContext.newPage();
+  await mobilePage.goto('/');
+  await mobilePage.getByLabel('Password').fill('new-integration-admin-password');
+  await mobilePage.getByRole('button', { name: 'Sign in' }).tap();
+  await expect(mobilePage).toHaveURL(/\/dashboard$/);
+  const mobileMenu = mobilePage.getByRole('button', { name: 'Toggle navigation' });
+  await mobileMenu.tap();
+  const healthLink = mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Health' });
+  await expect(healthLink).toBeVisible();
+  await healthLink.tap();
+  await expect(mobilePage).toHaveURL(/\/health$/);
+  expect(await mobilePage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await mobilePage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  expect(await mobilePage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await mobilePage.evaluate(() => { document.documentElement.style.fontSize = ''; });
+
+  await mobileMenu.tap();
+  await mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Security' }).tap();
+  await mobilePage.getByLabel('Current password').fill('new-integration-admin-password');
+  await mobilePage.getByLabel('New password', { exact: true }).fill('final-mobile-admin-password');
+  await mobilePage.getByLabel('Confirm new password').fill('final-mobile-admin-password');
+  await mobilePage.getByRole('button', { name: 'Change password' }).tap();
+  await expect(mobilePage).toHaveURL(/\?password=changed$/);
+  await mobilePage.getByLabel('Password').fill('final-mobile-admin-password');
+  await mobilePage.getByRole('button', { name: 'Sign in' }).tap();
+  await expect(mobilePage).toHaveURL(/\/dashboard$/);
+
+  await mobileMenu.tap();
+  await mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'WireGuard' }).tap();
+  await mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' }).tap();
+  await expect(mobilePage).toHaveURL(/\/wireguard$/);
+  await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toHaveCount(0);
+  await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toBeVisible();
+  await mobilePage.route('**/wireguard/config', (route) => route.fulfill({ status: 503, body: 'temporary test failure' }));
+  await mobilePage.getByRole('button', { name: 'Download configuration' }).tap();
+  await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toBeEnabled();
+  await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toHaveCount(0);
+  await mobilePage.unroute('**/wireguard/config');
+  const mobileDownload = mobilePage.waitForEvent('download');
+  await mobilePage.getByRole('button', { name: 'Download configuration' }).tap();
+  expect((await mobileDownload).suggestedFilename()).toBe('jellyfin-proxy.conf');
+  await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
+  await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
+  await expect(mobilePage.getByText(/No downloadable copy|Peer rotated|configuration response|Generating a new peer revokes/)).toHaveCount(0);
+  await expect.poll(async () => {
+    const response = await mobilePage.request.get('/api/initial');
+    return (await response.json()).wireguard_config_available;
+  }, { timeout: 10000 }).toBe(false);
+  await mobileContext.close();
 });
