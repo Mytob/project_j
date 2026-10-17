@@ -976,7 +976,7 @@ these limits explicitly and use VPS preflight checks.
   was fixed to parse image lines without matching across line endings; the
   package-only run and final complete release gate then passed.
 - **Package:** `dist/jellyfin-proxy-1.4.0-dev-linux-amd64.tar.gz`, SHA-256
-  `55648c2deb5854dc25df7d3163763e264787601daecfcca04fbcbccb2f3d2459`.
+  `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`.
   Report: `dist/release-validation-1.4.0-dev.json` (`local_gate: passed`,
   `release_readiness: blocked_host_checks_pending`).
 - **Host checks:** Actual Ubuntu journald access, host-level SSH nftables,
