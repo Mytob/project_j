@@ -1,0 +1,16 @@
+{
+	admin off
+}
+
+:8080 {
+	route /admin* {
+		jp_admin_bans socket /run/caddy-security/control.sock
+		respond "admin ok" 200
+	}
+	route /System/Info/Public {
+		respond "jellyfin ok" 200
+	}
+	route {
+		respond "not found" 404
+	}
+}

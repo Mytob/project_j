@@ -170,7 +170,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if environment.Version != current.Version {
 		return manifest, errors.New("active release metadata changed while update was being prepared")
 	}
-	newEnvironment := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\n", environment.Domain, manifest.Version, environment.WireGuardPort)
+	newEnvironment := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\nSYSTEMD_JOURNAL_GID=%s\n", environment.Domain, manifest.Version, environment.WireGuardPort, environment.JournalGID)
 	progress(5, true, "Existing configuration captured")
 	progress(6, false, "Activating the new release files")
 	changed := false
@@ -437,6 +437,7 @@ type activeEnvironment struct {
 	Domain        string
 	Version       string
 	WireGuardPort uint16
+	JournalGID    string
 }
 
 func readEnvironment(data []byte) (activeEnvironment, error) {
@@ -447,7 +448,7 @@ func readEnvironment(data []byte) (activeEnvironment, error) {
 			continue
 		}
 		key, value, ok := strings.Cut(line, "=")
-		if !ok || (key != "BASE_DOMAIN" && key != "RELEASE_VERSION" && key != "WIREGUARD_PORT") || values[key] != "" {
+		if !ok || (key != "BASE_DOMAIN" && key != "RELEASE_VERSION" && key != "WIREGUARD_PORT" && key != "SYSTEMD_JOURNAL_GID") || values[key] != "" {
 			return activeEnvironment{}, errors.New("active deployment environment is invalid")
 		}
 		values[key] = value
@@ -460,7 +461,14 @@ func readEnvironment(data []byte) (activeEnvironment, error) {
 	if err != nil || port == 0 || !release.ValidVersion(values["RELEASE_VERSION"]) {
 		return activeEnvironment{}, errors.New("active deployment version or WireGuard port is invalid")
 	}
-	return activeEnvironment{Domain: domain, Version: values["RELEASE_VERSION"], WireGuardPort: uint16(port)}, nil
+	journalGID := values["SYSTEMD_JOURNAL_GID"]
+	if journalGID == "" {
+		journalGID = systemdJournalGroupID()
+	}
+	if _, err := strconv.ParseUint(journalGID, 10, 32); err != nil {
+		return activeEnvironment{}, errors.New("deployment environment systemd journal group ID is invalid")
+	}
+	return activeEnvironment{Domain: domain, Version: values["RELEASE_VERSION"], WireGuardPort: uint16(port), JournalGID: journalGID}, nil
 }
 
 func validateInstalledLayout(root string) error {

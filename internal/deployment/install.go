@@ -395,7 +395,7 @@ func composeServicesHealthy(output string) bool {
 }
 
 func writeEnvironment(root, domain, version string, wireGuardPort uint16) error {
-	value := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\n", domain, version, wireGuardPort)
+	value := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\nSYSTEMD_JOURNAL_GID=%s\n", domain, version, wireGuardPort, systemdJournalGroupID())
 	path := filepath.Join(root, ".env")
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {
@@ -413,6 +413,26 @@ func writeEnvironment(root, domain, version string, wireGuardPort uint16) error 
 		return fmt.Errorf("close deployment environment: %w", err)
 	}
 	return nil
+}
+
+func systemdJournalGroupID() string {
+	if value := strings.TrimSpace(os.Getenv("SYSTEMD_JOURNAL_GID")); value != "" {
+		if _, err := strconv.ParseUint(value, 10, 32); err == nil {
+			return value
+		}
+	}
+	data, err := os.ReadFile("/etc/group")
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Split(line, ":")
+			if len(fields) == 4 && fields[0] == "systemd-journal" {
+				if _, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
+					return fields[2]
+				}
+			}
+		}
+	}
+	return "0"
 }
 
 func copyTree(source, destination string) error {

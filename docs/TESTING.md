@@ -915,3 +915,33 @@ these limits explicitly and use VPS preflight checks.
   `e6175e8b4b46f76fb76835dffaacc6b843bfc6900273eac227be661328caa3b3`.
   The admin image build number is `a8a7937cd68b`. The test VPS was not updated
   for this change.
+
+### v1.4.0-dev Fail2ban and security management — 2026-10-17
+
+- **Focused package command:** `pwsh -NoProfile -File
+  packaging/package.ps1 -Version 1.4.0-dev` — PASS, exit 0. The archive loaded
+  all seven images into an isolated Docker daemon without registry access.
+  Install, namespace firewalls, security/monitoring startup, v1.3 data
+  preservation, update, rollback, retention, and password recovery passed.
+  Its expected port-collision scenario verified failed-start cleanup.
+- **Full release command:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.4.0-dev` — PASS, exit 0. Go tests, all M1–M6 integration checks,
+  Chromium/Firefox/WebKit admin checks (4 tests), frontend typecheck, six
+  frontend tests, production build, isolated Fail2ban/nftables IPv4/IPv6
+  enforcement, signed admin-event processing/recovery, Caddy admin-only
+  blocking and Jellyfin isolation, streaming/range/WebSocket regressions, and
+  offline package/install/update/rollback gates passed.
+- **Corrected attempts:** The initial full release attempt failed because the
+  package check assumed two Alpine utility image references after v1.4 added
+  init services. A follow-up exposed CRLF parsing in that check. The validator
+  was fixed to parse image lines without matching across line endings; the
+  package-only run and final complete release gate then passed.
+- **Package:** `dist/jellyfin-proxy-1.4.0-dev-linux-amd64.tar.gz`, SHA-256
+  `55648c2deb5854dc25df7d3163763e264787601daecfcca04fbcbccb2f3d2459`.
+  Report: `dist/release-validation-1.4.0-dev.json` (`local_gate: passed`,
+  `release_readiness: blocked_host_checks_pending`).
+- **Host checks:** Actual Ubuntu journald access, host-level SSH nftables,
+  reboot recovery, public ACME/provider firewall, and native Windows
+  WireGuard/firewall checks remain BLOCKED; this run did not use an actual VPS
+  or Windows client.
+- **Deployment/publication:** Neither was performed.

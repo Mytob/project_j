@@ -30,6 +30,7 @@ $imageReferences = @(
     "jellyfin-proxy/containerhealth:$Version",
     "jellyfin-proxy/wireguard:$Version",
     "jellyfin-proxy/caddy:$Version",
+    "jellyfin-proxy/security:$Version",
     'alpine:3.24.2'
 )
 
@@ -73,6 +74,7 @@ try {
     $containerHealthImage = $imageReferences[2]
     $wireguardImage = $imageReferences[3]
     $caddyImage = $imageReferences[4]
+    $securityImage = $imageReferences[5]
     Invoke-Checked 'docker' @('build', '--file', 'deploy/admin/Dockerfile', '--build-arg', "VERSION=$Version", '--build-arg', "BUILD_NUMBER=$buildNumber", '--tag', $adminImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/hostmetrics/Dockerfile', '--tag', $hostMetricsImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/containerhealth/Dockerfile', '--tag', $containerHealthImage, '.')
@@ -82,6 +84,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or [string]$builtRevision -ne $buildNumber) { throw 'Packaged admin image does not contain the expected source build number.' }
     Invoke-Checked 'docker' @('build', '--file', 'deploy/wireguard/Dockerfile', '--tag', $wireguardImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/caddy/Dockerfile', '--tag', $caddyImage, '.')
+    Invoke-Checked 'docker' @('build', '--file', 'deploy/security/Dockerfile', '--tag', $securityImage, '.')
     Invoke-Checked 'docker' @('pull', 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6')
     # Pulling by digest keeps the selected bits immutable, but Docker does not
     # create the human-readable tag used by Compose and the package manifest.
@@ -94,8 +97,16 @@ try {
     # the exact pinned digest above and recorded by the package image manifest.
     $composeText = Get-Content -LiteralPath $packageComposePath -Raw
     $pinnedAlpine = 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6'
-    $alpineReferences = ([regex]::Matches($composeText, [regex]::Escape($pinnedAlpine))).Count
-    if ($alpineReferences -ne 2) { throw "Expected two pinned Alpine utility image references in Compose; found $alpineReferences." }
+    $alpineImageReferences = @(
+        foreach ($match in [regex]::Matches($composeText, '(?m)^[ \t]*image:[ \t]*([^\r\n]*)\r?$')) {
+            $reference = $match.Groups[1].Value.Trim()
+            if ($reference.StartsWith('alpine:')) { $reference }
+        }
+    )
+    $unpinnedAlpineReferences = @($alpineImageReferences | Where-Object { $_ -cne $pinnedAlpine })
+    if ($alpineImageReferences.Count -eq 0 -or $unpinnedAlpineReferences.Count -gt 0) {
+        throw "Every Alpine utility image in Compose must use the tested digest $pinnedAlpine; found: $($alpineImageReferences -join ', ')."
+    }
     $composeText.Replace($pinnedAlpine, 'alpine:3.24.2') | Set-Content -LiteralPath $packageComposePath -Encoding utf8NoBOM
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/PACKAGE-ENV.example') -Destination (Join-Path $packageDirectory '.env.example')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/caddy/Caddyfile') -Destination (Join-Path $packageDirectory 'config/Caddyfile')

@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Mytob/project_j/internal/admin"
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/monitoring"
+	"github.com/Mytob/project_j/internal/security"
 	"github.com/Mytob/project_j/internal/whitelist"
 )
 
@@ -37,6 +39,10 @@ func main() {
 	containerHealthURL := flag.String("container-health-url", "http://containerhealth:8282", "private read-only Docker container health observer origin")
 	proxyMetricsPath := flag.String("proxy-metrics", "/run/proxy-metrics/current.json", "read-only current Caddy metrics snapshot")
 	statisticsPath := flag.String("statistics-history", "/opt/jellyfin-proxy/data/statistics", "persistent 90-day statistics directory")
+	securityEventsDir := flag.String("security-events", "/opt/jellyfin-proxy/data/security-events", "private administrator authentication event spool")
+	securityEventKeyPath := flag.String("security-event-key", "/opt/jellyfin-proxy/config/security-event.key", "private HMAC key for administrator authentication events")
+	trustedProxyCIDRs := flag.String("trusted-proxy-cidrs", os.Getenv("ADMIN_TRUSTED_PROXY_CIDRS"), "explicit private networks allowed to provide the client IP header")
+	securityControlSocket := flag.String("security-control-socket", "/run/jellyfin-proxy-security/control.sock", "private security daemon control socket")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -87,6 +93,27 @@ func main() {
 		os.Exit(1)
 	}
 	application := admin.New(credential, logger, manager)
+	if err := application.ConfigureSecurityControl(*securityControlSocket); err != nil {
+		logger.Error("configure private security management", "error", err)
+	}
+	if eventKey, keyErr := os.ReadFile(*securityEventKeyPath); keyErr != nil {
+		logger.Error("administrator authentication events are unavailable", "error", keyErr)
+	} else {
+		trustedNetworks := make([]string, 0)
+		for _, value := range strings.Split(*trustedProxyCIDRs, ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				trustedNetworks = append(trustedNetworks, value)
+			}
+		}
+		if configureErr := application.ConfigureSecurityEventWriter(*securityEventsDir, eventKey, trustedNetworks); configureErr != nil {
+			logger.Error("configure administrator authentication events", "error", configureErr)
+		} else {
+			security.StartEventWriterHealth(context.Background(), *securityEventsDir, eventKey, application.SecurityEventWriterHealthy, func(err error) {
+				logger.Error("publish administrator authentication event-writer health", "error", err)
+			})
+		}
+		clear(eventKey)
+	}
 	if err := application.ConfigureCredentialPath(*credentialOverride); err != nil {
 		logger.Error("configure administrator credential changes", "error", err)
 		os.Exit(1)

@@ -22,8 +22,8 @@ if ($Target -eq 'release') {
     $reportPath = Join-Path $outputDirectory "release-validation-$Version.json"
     $checks = @(
         [ordered]@{ id = 'go-tests'; status = 'not_run'; evidence = 'Go unit tests and compilation.' }
-        [ordered]@{ id = 'integration-browser-monitoring'; status = 'not_run'; evidence = 'M1–M6 regressions plus Chromium/Firefox/WebKit admin, host collector, authenticated live/history statistics, and real Caddy streaming/range/WebSocket checks.' }
-        [ordered]@{ id = 'package-install-update-rollback'; status = 'not_run'; evidence = 'Release archive, offline image loading, install, firewall, monitoring image, statistics history preservation, update, rollback, retention, and password reset.' }
+        [ordered]@{ id = 'integration-browser-monitoring-security'; status = 'not_run'; evidence = 'M1–M6 regressions, Chromium/Firefox/WebKit admin and responsive security dashboard, isolated Fail2ban SSH nftables IPv4/IPv6 bans, signed admin auth events and recovery, Caddy admin-only 403 enforcement with Jellyfin unaffected, unban/expiry/SSE, and streaming/range/WebSocket checks.' }
+        [ordered]@{ id = 'package-install-update-rollback'; status = 'not_run'; evidence = 'Release archive, offline loading of all seven images, install, namespace firewalls, monitoring and security services, v1.3 data preservation, update, rollback, retention, and password recovery.' }
     )
     $hostChecks = [ordered]@{
         status = 'blocked'
@@ -31,11 +31,13 @@ if ($Target -eq 'release') {
         preflight = @(
             [ordered]@{ check = 'Ubuntu 26.04 LTS, x86_64, root privileges'; implemented = 'proxyctl install validates OS, release, architecture, codename, and effective UID before deployment.' }
             [ordered]@{ check = 'Docker Engine and Compose'; implemented = 'proxyctl install checks daemon and Compose availability and offers the official Ubuntu APT installation path when missing.' }
+            [ordered]@{ check = 'Host SSH journal and nftables enforcement'; implemented = 'Local container tests prove exact-IP nftables behavior; run the packaged stack on an isolated Ubuntu host to verify the read-only systemd journal mount and NET_ADMIN chain against the host kernel.' }
             [ordered]@{ check = 'Public DNS'; implemented = 'proxyctl install resolves the base, admin, and access hostnames and asks the operator to confirm their VPS target.' }
             [ordered]@{ check = 'Windows WireGuard client and Firewall'; implemented = 'Installation and firewall guidance is documented; actual native client and firewall results are reported in the host-specific checks below.' }
         )
         checks = @(
             [ordered]@{ id = 'ubuntu-vps-kernel-wireguard'; status = 'blocked'; detail = 'Ubuntu 26.04 VPS kernel and WireGuard runtime require an actual target VPS.' }
+            [ordered]@{ id = 'ubuntu-host-journal-nftables-fail2ban'; status = 'blocked'; detail = 'The isolated Docker integration exercises real container nftables rules with a fake journal; host journald access, host-level SSH enforcement, and reboot recovery require an authorized isolated Ubuntu host.' }
             [ordered]@{ id = 'public-acme-provider-firewall'; status = 'blocked'; detail = 'Public DNS target, ACME issuance, and provider firewall ingress require production network access.' }
             [ordered]@{ id = 'native-windows-client-firewall'; status = 'blocked'; detail = 'Native Windows WireGuard client import and Windows Firewall behavior require a Windows client host.' }
         )
@@ -125,7 +127,7 @@ if ($Target -eq 'release') {
         Write-Host 'Release readiness is READY: local gates and all required actual-host checks passed.'
     }
     else {
-        Write-Warning 'Release readiness is BLOCKED pending actual Ubuntu VPS/provider-firewall and native Windows client checks. See the JSON report and docs/DEPLOYMENT.md.'
+        Write-Warning 'Release readiness is BLOCKED pending actual Ubuntu VPS/provider-firewall, host journal/nftables Fail2ban, and native Windows client checks. See the JSON report and docs/DEPLOYMENT.md.'
     }
     exit 0
 }

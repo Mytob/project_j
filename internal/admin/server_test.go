@@ -25,6 +25,7 @@ import (
 
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/monitoring"
+	"github.com/Mytob/project_j/internal/security"
 	"github.com/Mytob/project_j/internal/totp"
 	"github.com/Mytob/project_j/internal/wireguard"
 )
@@ -262,6 +263,73 @@ func request(handler http.Handler, method, target string, body url.Values, cooki
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
 	return response
+}
+
+func TestClientIPTrustsOnlyExplicitPrivateProxyNetwork(t *testing.T) {
+	server := New(nil, nil)
+	if err := server.ConfigureSecurityEventWriter(t.TempDir(), []byte("01234567890123456789012345678901"), []string{"172.30.253.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "203.0.113.8:443"
+	request.Header.Set(clientIPHeader, "198.51.100.10")
+	if got, err := server.clientIP(request); err != nil || got != "203.0.113.8" {
+		t.Fatalf("untrusted peer forwarded header = %q, %v", got, err)
+	}
+	request.RemoteAddr = "172.30.253.11:8080"
+	if got, err := server.clientIP(request); err != nil || got != "198.51.100.10" {
+		t.Fatalf("trusted proxy source = %q, %v", got, err)
+	}
+	request.Header.Set(clientIPHeader, "198.51.100.10, 203.0.113.8")
+	if _, err := server.clientIP(request); err == nil {
+		t.Fatal("accepted an ambiguous forwarded address list")
+	}
+	request.RemoteAddr = "172.30.254.11:8080"
+	request.Header.Set(clientIPHeader, "198.51.100.10")
+	if got, err := server.clientIP(request); err != nil || got != "172.30.254.11" {
+		t.Fatalf("peer outside trusted network used forwarded address: %q, %v", got, err)
+	}
+}
+
+func TestAdminLoginWritesSignedFailureAndSuccessEvents(t *testing.T) {
+	server, handler, _, _ := newTOTPTestServer(t)
+	eventDir := filepath.Join(t.TempDir(), "events")
+	key := []byte("01234567890123456789012345678901")
+	if err := server.ConfigureSecurityEventWriter(eventDir, key, []string{"172.30.253.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	server.now = func() time.Time { return time.Date(2026, 10, 17, 15, 0, 0, 0, time.UTC) }
+	cookie, csrf := newAnonymousLogin(t, handler)
+	login := func(password string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{"csrf": {csrf}, "password": {password}}.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.RemoteAddr = "172.30.253.11:8080"
+		request.Header.Set(clientIPHeader, "198.51.100.88")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	if response := login("incorrect password"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("failed login status = %d", response.Code)
+	}
+	if response := login("correct test administrator password"); response.Code != http.StatusSeeOther {
+		t.Fatalf("successful login status = %d", response.Code)
+	}
+	items, rejected, err := security.ReadSpool(eventDir, key)
+	if err != nil || len(rejected) != 0 || len(items) != 2 {
+		t.Fatalf("auth spool has %d valid and %d rejected events: %v", len(items), len(rejected), err)
+	}
+	kinds := map[security.EventKind]bool{}
+	for _, item := range items {
+		kinds[item.Event.Kind] = true
+		if item.Event.Service != security.Admin || item.Event.IP != "198.51.100.88" {
+			t.Fatalf("wrong service or client identity in event: %+v", item.Event)
+		}
+	}
+	if !kinds[security.LoginFailure] || !kinds[security.LoginSuccess] {
+		t.Fatalf("missing failed or successful login events: %+v", items)
+	}
 }
 
 func TestAuthenticationSessionCSRFAndLogout(t *testing.T) {
