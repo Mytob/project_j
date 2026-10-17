@@ -869,13 +869,21 @@ these limits explicitly and use VPS preflight checks.
   Refreshed only the WireGuard desktop and mobile visual baselines. The first
   runs caught an obsolete state-badge assertion and stale mobile baseline;
   both were corrected before the passing run.
-- **Validation:** `pwsh -NoProfile -File .\build.ps1 release -Version
-  1.3.5-dev` — PASS, exit 0. Go tests, frontend typecheck/six unit tests/build,
+- **Validation:** On clean merged `dev` commit `f4803a4474b1`,
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.5-dev` — PASS,
+  exit 0. Go tests, frontend typecheck/six unit tests/build,
   Chromium/Firefox/WebKit browser coverage, monitoring/streaming integration,
   and offline package install/update/rollback/retention/password-reset checks
   passed. `dist/release-validation-1.3.5-dev.json` records
   `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
 - **Package:** `dist/jellyfin-proxy-1.3.5-dev-linux-amd64.tar.gz`, SHA-256
-  `f9814d439c2ab3f3934ef5ee1c81198a61f79d22d57f424fedbad86cd6762d8d`.
-- **Limits:** This candidate has not yet been deployed. Native Windows client,
-  firewall, and playback checks remain unverified for this build.
+  `17ce10b37348c4a92e4be68100248f1e198a28b885e622774cbe2971c28ff70e`.
+- **VPS update:** The updater completed successfully on the authorized Ubuntu
+  test VPS and reports version `1.3.5-dev`. All five services report healthy;
+  the active and previous releases are retained. The WireGuard config endpoint
+  was not invoked during the update.
+- **Public routes:** `darkcry.com` returned 200, `admin.darkcry.com` returned
+  200, and `access.darkcry.com` returned 403. All three had TLS verification
+  result 0.
+- **Limits:** Native Windows client import, firewall, and playback checks were
+  not performed for this build.
