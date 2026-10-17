@@ -946,3 +946,10 @@ these limits explicitly and use VPS preflight checks.
   1.3.6 release is recorded in
   [release-host-checks-v1.3.6.json](release-host-checks-v1.3.6.json). The
   stable-version release command remains to be run.
+### v1.3.6 stable release gate — 2026-10-17
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6 -HostCheckEvidence dist/release-host-checks-v1.3.6.json` — PASS. The first attempt could not access Docker Desktop from the sandbox; the retry with Docker engine access completed the gate.
+- Go tests, frontend type-check and six unit tests, Chromium/Firefox/WebKit browser coverage, monitoring and streaming integration, and isolated offline package install/update/rollback/retention/password-recovery checks passed.
+- `dist/release-validation-1.3.6.json` records `local_gate: passed`, `release_readiness: ready`, and all required actual-host checks passed using the version-matched evidence in `docs/release-host-checks-v1.3.6.json`.
+- The package was built from product source commit `0bb612060b2b`: `dist/jellyfin-proxy-1.3.6-linux-amd64.tar.gz`, 71,554,425 bytes, SHA-256 `0cf95dd64657a0d1f8f7a731600a7dea66b132fdd7a04c3c30f4c3c6c8848fba`. A matching `.sha256` file was generated. Subsequent `dev` commits through this record changed documentation only.
+- Stable promotion to `main` is the remaining publication step.
