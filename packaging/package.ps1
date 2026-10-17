@@ -169,6 +169,10 @@ try {
         $logs = & docker logs $daemonName 2>&1
         throw "Isolated Docker daemon did not become ready:`n$($logs -join "`n")"
     }
+    # The Docker-in-Docker image has no machine-id file by default. Compose
+    # would otherwise create a directory at the bind source, which cannot be
+    # mounted over securityd's /etc/machine-id file during the install check.
+    Invoke-Checked 'docker' @('exec', $daemonName, 'sh', '-c', "printf '%s\n' '00000000000000000000000000000001' > /etc/machine-id && chmod 0444 /etc/machine-id")
     Invoke-Checked 'docker' @('exec', $daemonName, 'docker', 'image', 'load', '--input', '/package/images.tar')
     foreach ($reference in $imageReferences) {
         $loaded = & docker exec $daemonName docker image inspect --format '{{.Id}}' $reference

@@ -195,6 +195,10 @@ services:
         source: /var/log/journal
         target: /var/log/journal
         read_only: true
+      - type: bind
+        source: /etc/machine-id
+        target: /etc/machine-id
+        read_only: true
       - type: tmpfs
         target: /tmp
         tmpfs:
