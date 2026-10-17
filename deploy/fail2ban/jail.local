@@ -1,0 +1,27 @@
+[DEFAULT]
+usedns = no
+dbfile = /var/lib/fail2ban/fail2ban.sqlite3
+dbpurgeage = 30d
+maxretry = 100000
+findtime = 10m
+bantime = 15m
+
+[sshd]
+enabled = false
+
+[jp-ssh]
+enabled = true
+filter = jp-manual
+backend = systemd
+journalmatch = _COMM=jp-auth-events-disabled
+port = 22
+protocol = tcp
+chain = jp_ssh_input
+banaction = nftables-multiport[blocktype=drop, port="22", protocol="tcp", table="jp_fail2ban"]
+
+[jp-admin]
+enabled = true
+filter = jp-manual
+backend = polling
+logpath = /var/lib/fail2ban/admin-events-disabled.log
+action = jp-noop

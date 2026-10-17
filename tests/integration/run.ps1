@@ -17,12 +17,29 @@ $subnetPrefix = "172.29.$subnetOctet"
 $trustedIP = "$subnetPrefix.10"
 $untrustedIP = "$subnetPrefix.20"
 $browserIP = "$subnetPrefix.30"
+$wireguardIP = "$subnetPrefix.2"
+$securitydIP = "$subnetPrefix.40"
+$adminIP = "$subnetPrefix.50"
+$hostMetricsIP = "$subnetPrefix.60"
+$homePeerIP = "$subnetPrefix.70"
+$securityBaseImage = "jellyfin-proxy/security-integration-base:$PID"
+$securityTestImage = "jellyfin-proxy/security-integration:$PID"
 
 function Invoke-Compose {
     & docker compose --project-name $projectName --file $composeFile @args
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose failed with exit code $LASTEXITCODE"
     }
+}
+
+function Invoke-Docker([string[]]$Arguments) {
+    & docker @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "docker $($Arguments -join ' ') failed with exit code $LASTEXITCODE" }
+}
+
+function Invoke-IntegrationGate([string]$ScriptPath) {
+    & pwsh -NoProfile -File $ScriptPath
+    if ($LASTEXITCODE -ne 0) { throw "Integration gate $ScriptPath failed with exit code $LASTEXITCODE" }
 }
 
 function Assert-Equal([string]$Expected, [string]$Actual, [string]$Message) {
@@ -108,6 +125,19 @@ function Invoke-AdminRequest([string]$Path, [string]$Method, [string]$CookieJar,
     [pscustomobject]@{ StatusCode = $code; Body = [System.IO.File]::ReadAllText($bodyPath); Headers = [System.IO.File]::ReadAllText($headersPath) }
 }
 
+function Invoke-AdminJSON([string]$Path, [string]$CookieJar, [string]$CSRF, [string]$Body) {
+    $uri = "https://admin.domain.test:${HttpsPort}${Path}"
+    $resolve = "admin.domain.test:${HttpsPort}:127.0.0.1"
+    $headersPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.headers')
+    $bodyPath = Join-Path $adminTempDir ([guid]::NewGuid().ToString() + '.body')
+    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-timeout', '3', '--max-time', '8', '--resolve', $resolve, '--cookie', $CookieJar, '--cookie-jar', $CookieJar, '--dump-header', $headersPath, '--output', $bodyPath, '--request', 'POST', '--header', 'Content-Type: application/json', '--header', "X-CSRF-Token: $CSRF", '--data-raw', $Body, '--write-out', '%{http_code}', $uri)
+    $status = & curl.exe @curlArgs
+    if ($LASTEXITCODE -ne 0) { throw "curl failed for $uri with exit code $LASTEXITCODE" }
+    $code = 0
+    if (-not [int]::TryParse([string]$status, [ref]$code)) { throw "curl returned an invalid status for $uri" }
+    [pscustomobject]@{ StatusCode = $code; Body = [System.IO.File]::ReadAllText($bodyPath); Headers = [System.IO.File]::ReadAllText($headersPath) }
+}
+
 function Get-AdminInitial([string]$CookieJar) {
     $response = Invoke-AdminRequest -Path '/api/initial' -Method 'GET' -CookieJar $CookieJar
     Assert-Equal '200' ([string][int]$response.StatusCode) 'Authenticated admin state API was unavailable.'
@@ -126,6 +156,29 @@ function Get-ClientResponse([string]$Service, [string]$Path, [string]$ForwardedF
         throw "curl from $Service failed for $uri with exit code $LASTEXITCODE"
     }
     Parse-CurlOutput -Output $output -Request "$Service $uri"
+}
+
+function Get-ClientAdminResponse([string]$Service, [string]$Path) {
+    $uri = "https://admin.domain.test$Path"
+    $curlArgs = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-timeout', '3', '--max-time', '8', '--connect-to', 'admin.domain.test:443:wireguard:443', '--write-out', "`n%{http_code}", $uri)
+    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY $Service curl @curlArgs
+    if ($LASTEXITCODE -ne 0) { throw "Admin request from $Service failed for $uri with exit code $LASTEXITCODE" }
+    Parse-CurlOutput -Output $output -Request "$Service $uri"
+}
+
+function Invoke-ClientLogin([string]$Service, [string]$Password, [string]$CookieName) {
+    $cookiePath = "/tmp/jp-security-$CookieName.cookies"
+    $uri = 'https://admin.domain.test/'
+    $common = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-timeout', '3', '--max-time', '8', '--connect-to', 'admin.domain.test:443:wireguard:443')
+    $page = & docker compose --project-name $projectName --file $composeFile exec --no-TTY $Service curl @common --cookie-jar $cookiePath $uri
+    if ($LASTEXITCODE -ne 0) { throw "Could not start the direct admin login test for $Service." }
+    $csrf = [regex]::Match(([string]($page -join "`n")), 'name="csrf" value="([^"]+)"').Groups[1].Value
+    if (-not $csrf) { throw "Admin sign-in page did not provide a CSRF token to $Service." }
+    $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY $Service curl @common --cookie $cookiePath --cookie-jar $cookiePath --request POST --data-urlencode "csrf=$csrf" --data-urlencode "password=$Password" --output /dev/null --write-out '%{http_code}' https://admin.domain.test/login
+    if ($LASTEXITCODE -ne 0) { throw "Direct admin login request from $Service failed." }
+    $status = 0
+    if (-not [int]::TryParse([string]($output -join '').Trim(), [ref]$status)) { throw "Direct admin login from $Service returned an invalid status." }
+    $status
 }
 
 function Get-MockRequestCount {
@@ -161,12 +214,23 @@ try {
     $env:TRUSTED_CLIENT_IP = $trustedIP
     $env:UNTRUSTED_CLIENT_IP = $untrustedIP
     $env:BROWSER_TEST_IP = $browserIP
+    $env:WIREGUARD_IP = $wireguardIP
+    $env:SECURITYD_IP = $securitydIP
+    $env:ADMIN_IP = $adminIP
+    $env:HOSTMETRICS_IP = $hostMetricsIP
+    $env:HOME_PEER_IP = $homePeerIP
+    $env:SECURITY_TEST_IMAGE = $securityTestImage
     $env:BROWSER_SNAPSHOT_MODE = if ($UpdateBrowserSnapshots) { 'all' } else { 'missing' }
     Set-WhitelistPolicy -Entries @()
     $script:adminTempDir = Join-Path $env:TEMP "jellyfin-proxy-admin-test-$PID"
     New-Item -ItemType Directory -Path $adminTempDir -Force | Out-Null
     New-TestCredential
     New-WireGuardTestConfigs
+
+    Invoke-IntegrationGate (Join-Path $PSScriptRoot 'security-caddy.ps1')
+    Invoke-IntegrationGate (Join-Path $PSScriptRoot 'security-firewall.ps1')
+    Invoke-Docker @('build', '--file', (Join-Path $repoRoot 'deploy/security/Dockerfile'), '--tag', $securityBaseImage, $repoRoot)
+    Invoke-Docker @('build', '--file', (Join-Path $PSScriptRoot 'Dockerfile.security-test'), '--build-arg', "BASE_IMAGE=$securityBaseImage", '--tag', $securityTestImage, $repoRoot)
 
     Invoke-Compose up --build --detach
 
@@ -269,6 +333,127 @@ try {
         Assert-Equal 'Healthy' $entry.state "$component did not report its Docker healthcheck state."
         if ($entry.detail -notmatch 'health healthy' -or $entry.detail -notmatch 'restarts') { throw "$component did not include Docker health and restart evidence." }
     }
+    $securityReadyDeadline = (Get-Date).AddSeconds(35)
+    $securityReady = $false
+    while ((Get-Date) -lt $securityReadyDeadline) {
+        $adminState = Get-AdminInitial -CookieJar $adminJar
+        $securityHealth = $adminState.security.health
+        if ($securityHealth.fail2ban -eq 'healthy' -and $securityHealth.ssh_journal -eq 'healthy' -and $securityHealth.firewall -eq 'healthy' -and $securityHealth.admin_events -eq 'healthy' -and $securityHealth.caddy_sync -eq 'healthy') { $securityReady = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $securityReady) { throw "Security services did not become healthy: $($adminState.security.health | ConvertTo-Json -Compress)" }
+
+    $trustedPeerEntry = "$trustedIP/32"
+    $securityCsrf = $adminState.csrf
+    $trustedPeerAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $securityCsrf -Entry $trustedPeerEntry -Name 'Security integration peer'
+    Assert-Equal '303' ([string][int]$trustedPeerAdd.StatusCode) 'Could not allow the isolated test client for the Jellyfin isolation check.'
+
+    foreach ($attempt in 1..2) {
+        $result = Invoke-ClientLogin -Service 'untrusted-client' -Password 'wrong-security-test-password' -CookieName 'reset-check'
+        Assert-Equal '401' ([string]$result) "Admin source success-reset failure $attempt returned an unexpected status."
+    }
+    $resetObserved = $false
+    $resetDeadline = (Get-Date).AddSeconds(12)
+    while ((Get-Date) -lt $resetDeadline) {
+        $state = Get-AdminInitial -CookieJar $adminJar
+        if ($state.security.pending_failures -ge 2) { $resetObserved = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $resetObserved) { throw 'Two failed logins from the independent test source were not processed.' }
+    $successStatus = Invoke-ClientLogin -Service 'untrusted-client' -Password 'integration-test-admin-password' -CookieName 'reset-check'
+    Assert-Equal '303' ([string]$successStatus) 'Valid admin login did not complete after the source-reset failures.'
+    $resetDeadline = (Get-Date).AddSeconds(12)
+    $resetObserved = $false
+    while ((Get-Date) -lt $resetDeadline) {
+        $state = Get-AdminInitial -CookieJar $adminJar
+        $untrustedBan = @($state.security.active_bans | Where-Object { $_.service -eq 'admin' -and $_.ip -eq $untrustedIP })
+        if ($state.security.pending_failures -eq 0 -and $untrustedBan.Count -eq 0) { $resetObserved = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $resetObserved) { throw 'A valid login did not clear only that source IP pending admin failures.' }
+
+    foreach ($attempt in 1..3) {
+        $result = Invoke-ClientLogin -Service 'trusted-client' -Password 'wrong-security-test-password' -CookieName 'admin-ban'
+        Assert-Equal '401' ([string]$result) "Admin ban source failure $attempt returned an unexpected status."
+    }
+    $banDeadline = (Get-Date).AddSeconds(15)
+    $trustedBan = @()
+    while ((Get-Date) -lt $banDeadline) {
+        $state = Get-AdminInitial -CookieJar $adminJar
+        $trustedBan = @($state.security.active_bans | Where-Object { $_.service -eq 'admin' -and $_.ip -eq $trustedIP })
+        if ($trustedBan.Count -eq 1) { break }
+        Start-Sleep -Milliseconds 300
+    }
+    if ($trustedBan.Count -ne 1) { throw "Three signed admin failures did not create a ban for $trustedIP." }
+    # Signed auth events are consumed asynchronously by securityd. Wait for its
+    # event-driven Caddy snapshot update before asserting the network-visible
+    # effect, while keeping the propagation bound small and explicit.
+    $adminBanDeadline = (Get-Date).AddSeconds(3)
+    $blockedAdmin = $null
+    do {
+        $blockedAdmin = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+        if ([int]$blockedAdmin.StatusCode -eq 403) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $adminBanDeadline)
+    Assert-Equal '403' ([string]$blockedAdmin.StatusCode) 'Caddy did not block the banned source from the admin hostname.'
+    if ($blockedAdmin.Content -notmatch 'Access Denied') { throw 'Banned administrator response did not contain Access Denied.' }
+    $unaffectedJellyfin = Get-ClientResponse -Service 'trusted-client' -Path '/System/Info/Public'
+    Assert-Equal '200' ([string]$unaffectedJellyfin.StatusCode) 'An admin ban also blocked the Jellyfin access route.'
+    $mockRequestBaseline = [int](Get-MockRequestCount)
+    $securityHistory = Invoke-AdminRequest -Path '/security/history?range=24h&service=admin' -Method 'GET' -CookieJar $adminJar
+    Assert-Equal '200' ([string][int]$securityHistory.StatusCode) 'Authenticated admin security history was unavailable.'
+    $securityRows = @($securityHistory.Body | ConvertFrom-Json)
+    if (@($securityRows | Where-Object { $_.ip -eq $trustedIP -and $_.type -eq 'failure' }).Count -lt 3 -or @($securityRows | Where-Object { $_.ip -eq $trustedIP -and $_.type -eq 'ban' }).Count -ne 1) { throw 'Security history did not retain the source failures and ban event.' }
+    if (@($securityRows | Where-Object { $_.type -eq 'login_success' }).Count -ne 0) { throw 'Successful administrator sign-ins appeared in retained security history.' }
+
+    Invoke-Compose restart securityd
+    $recoveryDeadline = (Get-Date).AddSeconds(25)
+    $securityRecovered = $false
+    while ((Get-Date) -lt $recoveryDeadline) {
+        $state = Get-AdminInitial -CookieJar $adminJar
+        $securityHealth = $state.security.health
+        $trustedBan = @($state.security.active_bans | Where-Object { $_.service -eq 'admin' -and $_.ip -eq $trustedIP })
+        if ($trustedBan.Count -eq 1 -and $securityHealth.fail2ban -eq 'healthy' -and $securityHealth.firewall -eq 'healthy' -and $securityHealth.admin_events -eq 'healthy' -and $securityHealth.caddy_sync -eq 'healthy') { $securityRecovered = $true; break }
+        Start-Sleep -Milliseconds 400
+    }
+    if (-not $securityRecovered) { throw "Persisted security state did not recover after restarting securityd: $($state.security.health | ConvertTo-Json -Compress)" }
+    Invoke-Compose restart caddy
+    $caddyRecovered = $false
+    $recoveryDeadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $recoveryDeadline) {
+        $state = Get-AdminInitial -CookieJar $adminJar
+        if ($state.security.health.caddy_sync -eq 'healthy') { $caddyRecovered = $true; break }
+        Start-Sleep -Milliseconds 400
+    }
+    if (-not $caddyRecovered) { throw 'Caddy did not resynchronize the persisted administrator ban after restart.' }
+    if ($state.security.health.last_error) { throw "Recovered security services still report a stale error: $($state.security.health.last_error)" }
+    $blockedAfterRestart = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+    Assert-Equal '403' ([string]$blockedAfterRestart.StatusCode) 'Caddy restart lost the active administrator blocklist.'
+
+    $securityCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $unbanBody = @{ service = 'admin'; ip = $trustedIP } | ConvertTo-Json -Compress
+    $securityUnban = Invoke-AdminJSON -Path '/security/unban' -CookieJar $adminJar -CSRF $securityCsrf -Body $unbanBody
+    Assert-Equal '200' ([string]$securityUnban.StatusCode) 'Admin could not manually remove the integration ban.'
+    $unblockedAdmin = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+    Assert-Equal '200' ([string]$unblockedAdmin.StatusCode) 'Manual unban did not restore admin access without a Caddy restart.'
+    $untrustedLoginAfterUnban = Invoke-ClientLogin -Service 'trusted-client' -Password 'integration-test-admin-password' -CookieName 'admin-ban'
+    Assert-Equal '303' ([string]$untrustedLoginAfterUnban) 'Unbanned administrator source could not sign in successfully.'
+    $securityCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $trustedPeerRemove = Invoke-AdminRequest -Path '/whitelist/remove' -Method 'POST' -CookieJar $adminJar -CSRF $securityCsrf -Entry $trustedPeerEntry
+    Assert-Equal '303' ([string][int]$trustedPeerRemove.StatusCode) 'Could not restore the initially empty test allowlist.'
+
+    $securityState = Get-AdminInitial -CookieJar $adminJar
+    $securityConfig = $securityState.security.config
+    $securityConfig.admin.threshold = 100
+    $updateConfigBody = $securityConfig | ConvertTo-Json -Depth 10 -Compress
+    $securityConfigUpdate = Invoke-AdminJSON -Path '/security/config' -CookieJar $adminJar -CSRF $securityState.csrf -Body $updateConfigBody
+    Assert-Equal '200' ([string]$securityConfigUpdate.StatusCode) 'Valid security configuration could not be saved through the authenticated API.'
+    $securityConfig.admin.threshold = 0
+    $invalidConfig = Invoke-AdminJSON -Path '/security/config' -CookieJar $adminJar -CSRF $securityState.csrf -Body ($securityConfig | ConvertTo-Json -Depth 10 -Compress)
+    Assert-Equal '400' ([string]$invalidConfig.StatusCode) 'Security API accepted an out-of-range failure threshold.'
+    $savedConfig = Get-AdminInitial -CookieJar $adminJar
+    Assert-Equal '100' ([string]$savedConfig.security.config.admin.threshold) 'Invalid security configuration changed the active threshold.'
+
     $wireguardPage = Invoke-AdminRequest -Path '/wireguard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$wireguardPage.StatusCode) 'Authenticated administrator could not open the WireGuard page.'
     if ($wireguardPage.Body -notmatch '/app-assets/assets/') { throw 'WireGuard route did not serve the embedded React application.' }
@@ -305,7 +490,7 @@ try {
     Assert-Equal '403' ([string][int]$emptyAllowedClient.StatusCode) 'Empty whitelist did not deny the trusted test client.'
     $emptyUntrustedClient = Get-ClientResponse -Service 'untrusted-client' -Path '/System/Info/Public'
     Assert-Equal '403' ([string][int]$emptyUntrustedClient.StatusCode) 'Empty whitelist did not deny the untrusted test client.'
-    Assert-Equal '0' (Get-MockRequestCount) 'An empty whitelist forwarded an unauthorized request to mock Jellyfin.'
+    Assert-Equal ([string]$mockRequestBaseline) (Get-MockRequestCount) 'An empty whitelist forwarded an unauthorized request to mock Jellyfin.'
 
     $allowedNetwork = "$subnetPrefix.8/29"
     Set-WhitelistPolicy -Entries @($allowedNetwork)
@@ -321,7 +506,7 @@ try {
     Assert-Equal '403' ([string][int]$spoofed.StatusCode) 'Spoofed X-Forwarded-For bypassed the whitelist.'
     $hostClient = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'access.domain.test' -Path '/System/Info/Public'
     Assert-Equal '403' ([string][int]$hostClient.StatusCode) 'An unlisted host client reached Jellyfin.'
-    Assert-Equal '1' (Get-MockRequestCount) 'A denied request was unexpectedly forwarded to mock Jellyfin.'
+    Assert-Equal ([string]($mockRequestBaseline + 1)) (Get-MockRequestCount) 'A denied request was unexpectedly forwarded to mock Jellyfin.'
 
     $freshLoginPage = Invoke-AdminRequest -Path '/' -Method 'GET' -CookieJar $adminJar
     $freshCsrf = [regex]::Match($freshLoginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
@@ -329,6 +514,25 @@ try {
     Assert-Equal '303' ([string][int]$freshLogin.StatusCode) 'Admin could not sign in after service restart.'
     $wireguardAfterRestart = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '503' ([string][int]$wireguardAfterRestart.StatusCode) 'Admin restart unexpectedly restored a consumed one-time WireGuard config.'
+    $restoredSecurity = Get-AdminInitial -CookieJar $adminJar
+    $defaultSecurityConfig = $restoredSecurity.security.config
+    $defaultSecurityConfig.admin.threshold = 3
+    $restoreThreshold = Invoke-AdminJSON -Path '/security/config' -CookieJar $adminJar -CSRF $restoredSecurity.csrf -Body ($defaultSecurityConfig | ConvertTo-Json -Depth 10 -Compress)
+    Assert-Equal '200' ([string]$restoreThreshold.StatusCode) 'Admin protection default threshold could not be restored after rate-limit coverage.'
+
+    foreach ($attempt in 1..3) {
+        $result = Invoke-ClientLogin -Service 'untrusted-client' -Password 'wrong-security-test-password' -CookieName 'ui-ban'
+        Assert-Equal '401' ([string]$result) "Security UI ban setup failure $attempt returned an unexpected status."
+    }
+    $uiBanDeadline = (Get-Date).AddSeconds(15)
+    $uiBan = @()
+    while ((Get-Date) -lt $uiBanDeadline) {
+        $state = Get-AdminInitial -CookieJar $adminJar
+        $uiBan = @($state.security.active_bans | Where-Object { $_.service -eq 'admin' -and $_.ip -eq $untrustedIP })
+        if ($uiBan.Count -eq 1) { break }
+        Start-Sleep -Milliseconds 300
+    }
+    if ($uiBan.Count -ne 1) { throw 'Could not create an isolated active admin ban for browser unban coverage.' }
     $emptyAccessPage = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$emptyAccessPage.StatusCode) 'Whitelist management page was unavailable.'
     $emptyState = Get-AdminInitial -CookieJar $adminJar
@@ -372,7 +576,7 @@ try {
     $emptyAccessPageAgain = Invoke-AdminRequest -Path '/access-control' -Method 'GET' -CookieJar $adminJar
     $remainingEntries = @((Get-AdminInitial -CookieJar $adminJar).whitelist | ForEach-Object { [string]$_ } | Where-Object { $_.Length -gt 0 })
     if ($remainingEntries.Count -gt 0) { throw "Removed whitelist entry remains in the admin list: $($remainingEntries -join ', ')." }
-    Assert-Equal '3' (Get-MockRequestCount) 'Denied post-removal request was unexpectedly forwarded to mock Jellyfin.'
+    Assert-Equal ([string]($mockRequestBaseline + 3)) (Get-MockRequestCount) 'Denied post-removal request was unexpectedly forwarded to mock Jellyfin.'
 
     $addIPv6 = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $removeCsrf -Entry '2001:db8::/64'
     Assert-Equal '303' ([string][int]$addIPv6.StatusCode) 'Admin could not add an IPv6 CIDR entry.'
@@ -471,7 +675,7 @@ try {
     $postEnrollmentAdmin = Get-LocalResponse -Scheme 'https' -Port $HttpsPort -HostName 'admin.domain.test'
     Assert-Equal '200' ([string][int]$postEnrollmentAdmin.StatusCode) 'Admin service did not recover with active TOTP after restart.'
 
-    Write-Host 'M6 and v1.1-v1.3 integration checks passed: Chromium auth workflows, Chromium/Firefox/WebKit admin navigation and chart controls, responsive admin UI, health diagnostics, authenticated metrics/history, host collector, Caddy stream/WebSocket instrumentation, one-time WireGuard config download, peer rotation/revocation, encrypted tunnel recovery, and isolated test resources.'
+    Write-Host 'M6 and v1.1-v1.4 integration checks passed: browser authentication/TOTP, responsive admin navigation, security policy/SSE/history/ban UI, real Caddy admin enforcement and recovery, isolated Fail2ban/nftables IPv4/IPv6 enforcement, Jellyfin-route isolation, metrics/history, Caddy streaming, and WireGuard lifecycle/tunnel recovery.'
 }
 catch {
     $failureLogs = & docker compose --project-name $projectName --file $composeFile logs --no-color --tail 80 2>&1
@@ -495,7 +699,14 @@ finally {
         Remove-Item Env:TRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
         Remove-Item Env:UNTRUSTED_CLIENT_IP -ErrorAction SilentlyContinue
         Remove-Item Env:BROWSER_TEST_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:WIREGUARD_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:SECURITYD_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:ADMIN_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:HOSTMETRICS_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:HOME_PEER_IP -ErrorAction SilentlyContinue
+        Remove-Item Env:SECURITY_TEST_IMAGE -ErrorAction SilentlyContinue
         Remove-Item Env:BROWSER_SNAPSHOT_MODE -ErrorAction SilentlyContinue
+        & docker image rm $securityTestImage $securityBaseImage 2>&1 | Out-Null
         Pop-Location
     }
 }

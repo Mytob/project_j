@@ -224,10 +224,11 @@ func validateImages(manifest Manifest) error {
 		"jellyfin-proxy/containerhealth:" + manifest.Version: false,
 		"jellyfin-proxy/wireguard:" + manifest.Version:   false,
 		"jellyfin-proxy/caddy:" + manifest.Version:       false,
+		"jellyfin-proxy/security:" + manifest.Version:    false,
 		"alpine:3.24.2": false,
 	}
 	if len(manifest.Images) != len(want) {
-		return errors.New("package must contain exactly the six supported deployment images")
+		return errors.New("package must contain exactly the seven supported deployment images")
 	}
 	for _, image := range manifest.Images {
 		if _, ok := want[image.Reference]; !ok || want[image.Reference] {

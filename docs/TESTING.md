@@ -954,3 +954,33 @@ these limits explicitly and use VPS preflight checks.
 - The package was built from product source commit `0bb612060b2b`: `dist/jellyfin-proxy-1.3.6-linux-amd64.tar.gz`, 71,554,425 bytes, SHA-256 `0cf95dd64657a0d1f8f7a731600a7dea66b132fdd7a04c3c30f4c3c6c8848fba`. A matching `.sha256` file was generated. Subsequent `dev` commits through this record changed documentation only.
 - PR #63 promoted the tested `dev` tree to `main` at merge commit `659ad837e9daa07608dbae4556930f81a26c8ad8`. The packaged product source is `0bb612060b2b`; the later changes through promotion were documentation-only.
 - The `v1.3.6` GitHub tag and release assets have not yet been published. The archive and matching `.sha256` are available locally under `dist/`.
+
+### v1.4.0-dev Fail2ban and security management — 2026-10-17
+
+- **Focused package command:** `pwsh -NoProfile -File
+  packaging/package.ps1 -Version 1.4.0-dev` — PASS, exit 0. The archive loaded
+  all seven images into an isolated Docker daemon without registry access.
+  Install, namespace firewalls, security/monitoring startup, v1.3 data
+  preservation, update, rollback, retention, and password recovery passed.
+  Its expected port-collision scenario verified failed-start cleanup.
+- **Full release command:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.4.0-dev` — PASS, exit 0. Go tests, all M1–M6 integration checks,
+  Chromium/Firefox/WebKit admin checks (4 tests), frontend typecheck, six
+  frontend tests, production build, isolated Fail2ban/nftables IPv4/IPv6
+  enforcement, signed admin-event processing/recovery, Caddy admin-only
+  blocking and Jellyfin isolation, streaming/range/WebSocket regressions, and
+  offline package/install/update/rollback gates passed.
+- **Corrected attempts:** The initial full release attempt failed because the
+  package check assumed two Alpine utility image references after v1.4 added
+  init services. A follow-up exposed CRLF parsing in that check. The validator
+  was fixed to parse image lines without matching across line endings; the
+  package-only run and final complete release gate then passed.
+- **Package:** `dist/jellyfin-proxy-1.4.0-dev-linux-amd64.tar.gz`, SHA-256
+  `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`.
+  Report: `dist/release-validation-1.4.0-dev.json` (`local_gate: passed`,
+  `release_readiness: blocked_host_checks_pending`).
+- **Host checks:** Actual Ubuntu journald access, host-level SSH nftables,
+  reboot recovery, public ACME/provider firewall, and native Windows
+  WireGuard/firewall checks remain BLOCKED; this run did not use an actual VPS
+  or Windows client.
+- **Deployment/publication:** Neither was performed.

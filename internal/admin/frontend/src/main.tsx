@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { chartPoints, formatBytes as bytes, formatNumber as number, formatPercent as pct, formatRate as rate, nearestChartPoint } from "./metrics";
+import { SecurityOverview, SecurityProtection, type SecuritySnapshot } from "./security-dashboard";
 
 type Component = { name: string; state: string; class: string; detail: string; checked_at?: string; last_success_at?: string; last_failure_at?: string };
 type HealthEvent = { at: string; name: string; from?: string; to: string; detail: string };
@@ -10,7 +11,7 @@ type WireGuardStatus = { peer_public_key: string; server_address: string; client
 type WhitelistEntry = { address: string; name?: string };
 type HostMetrics = { cpu_percent?: number; memory_used_bytes?: number; memory_total_bytes?: number; disk_used_bytes?: number; disk_total_bytes?: number; network_in_bytes_per_second?: number; network_out_bytes_per_second?: number; load_1?: number; load_5?: number; load_15?: number; uptime_seconds?: number };
 type ProxyMetrics = { active_requests?: number; requests_per_second?: number; allowed_requests?: number; blocked_requests?: number; http_error_count?: number; error_rate_percent?: number; incoming_bytes_per_second?: number; outgoing_bytes_per_second?: number; total_transferred_bytes?: number };
-type Initial = { csrf: string; version: string; build_number: string; whitelist_enabled: boolean; whitelist: string[]; whitelist_entries?: WhitelistEntry[]; wireguard_enabled: boolean; wireguard_config_available: boolean; wireguard_status?: WireGuardStatus; totp_status: string; totp_setup_visible: boolean; totp_secret?: string; totp_qr_code?: string; components: Component[]; health_events: HealthEvent[]; current: Metrics };
+type Initial = { csrf: string; version: string; build_number: string; whitelist_enabled: boolean; whitelist: string[]; whitelist_entries?: WhitelistEntry[]; wireguard_enabled: boolean; wireguard_config_available: boolean; wireguard_status?: WireGuardStatus; totp_status: string; totp_setup_visible: boolean; totp_secret?: string; totp_qr_code?: string; components: Component[]; health_events: HealthEvent[]; current: Metrics; security?: SecuritySnapshot; security_error?: string };
 type HistoryPoint = { captured_at: string; host?: HostMetrics; proxy?: ProxyMetrics };
 
 const pages = [
@@ -36,7 +37,7 @@ async function getInitial(): Promise<Initial> {
   return response.json() as Promise<Initial>;
 }
 
-function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { components: Component[]; health_events: HealthEvent[] }) => void, onAuthRequired: () => void) {
+function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { components: Component[]; health_events: HealthEvent[] }) => void, onSecurity: (data: SecuritySnapshot) => void, onAuthRequired: () => void) {
   useEffect(() => {
     const source = new EventSource("/statistics/events", { withCredentials: true });
     source.addEventListener("metrics", (event) => {
@@ -45,9 +46,12 @@ function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { comp
     source.addEventListener("health", (event) => {
       try { onHealth(JSON.parse((event as MessageEvent<string>).data) as { components: Component[]; health_events: HealthEvent[] }); } catch { /* reconnect will deliver the next health snapshot */ }
     });
+    source.addEventListener("security", (event) => {
+      try { onSecurity(JSON.parse((event as MessageEvent<string>).data) as SecuritySnapshot); } catch { /* reconnect will deliver the next security snapshot */ }
+    });
     source.addEventListener("auth-required", () => { source.close(); onAuthRequired(); });
     return () => source.close();
-  }, [onData, onHealth, onAuthRequired]);
+  }, [onData, onHealth, onSecurity, onAuthRequired]);
 }
 
 function App() {
@@ -72,8 +76,9 @@ function App() {
   }, []);
   const onLive = useCallback((value: Metrics) => setMetrics(value), []);
   const onHealth = useCallback((value: { components: Component[]; health_events: HealthEvent[] }) => setInitial((prior) => prior ? { ...prior, ...value } : prior), []);
+  const onSecurity = useCallback((value: SecuritySnapshot) => setInitial((prior) => prior ? { ...prior, security: value, security_error: undefined } : prior), []);
   const onAuthRequired = useCallback(() => setError("Your administrator session has ended. Sign in again."), []);
-  useLiveMetrics(onLive, onHealth, onAuthRequired);
+  useLiveMetrics(onLive, onHealth, onSecurity, onAuthRequired);
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 30_000); const pop = () => setPath(window.location.pathname); window.addEventListener("popstate", pop); return () => { window.clearInterval(timer); window.removeEventListener("popstate", pop); }; }, [refresh]);
   const navigate = (to: string) => { window.history.pushState({}, "", to); setPath(to); document.body.classList.remove("nav-open"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const available = useMemo(() => pages.filter(([href]) => href !== "/access-control" || initial?.whitelist_enabled).filter(([href]) => href !== "/wireguard" || initial?.wireguard_enabled), [initial]);
@@ -95,7 +100,7 @@ function App() {
       {page === "/health" && <Health data={initial} refresh={refresh}/>}
       {page === "/access-control" && <Access data={initial}/>}
       {page === "/wireguard" && <WireGuard data={initial} refresh={refresh}/>}
-      {page === "/security" && <Security data={initial}/>}
+      {page === "/security" && <Security data={initial} onSecurity={onSecurity}/>}
       <footer className="page-footer"><span>Version {initial.version} · Build {initial.build_number}</span></footer>
     </main>
   </div>;
@@ -107,6 +112,7 @@ function Dashboard({ data, go }: { data: Initial; go: (path: string) => void }) 
   const healthyCount = data.components.filter((component) => component.state === "Healthy").length;
   return <>
     <section className="panel overview-status"><div className="overview-summary"><div><p className="eyebrow">SYSTEM HEALTH</p><h2>{worst(data.components)}</h2><p>{healthyCount} of {data.components.length} components healthy</p></div><button className="button secondary" onClick={() => go("/health")}>Health details →</button></div><ul className="overview-components" aria-label="Component status">{data.components.map((component) => <li key={component.name}><span>{component.name}</span><span className={`state-pill ${component.class}`}><i/>{component.state}</span></li>)}</ul></section>
+    <SecurityOverview snapshot={data.security} error={data.security_error} open={() => go("/security")}/>
   </>;
 }
 function worst(items: Component[]) { const states = items.map((item) => item.state); return states.includes("Down") ? "Down" : states.includes("Degraded") ? "Degraded" : states.includes("Unknown") ? "Unknown" : "Healthy"; }
@@ -192,7 +198,7 @@ function WireGuard({ data, refresh }: { data: Initial; refresh: () => Promise<In
     {configurationAvailable ? <button className="button download-button" type="button" onClick={downloadConfiguration} disabled={downloading}>Download configuration</button> : <form action="/wireguard/rotate" method="post"><input type="hidden" name="csrf" value={data.csrf}/><button className="button danger" type="submit">Regenerate and revoke current peer</button></form>}
   </section>{status && <section className="panel"><div className="panel-title"><div><p className="eyebrow">LIVE DIAGNOSTICS</p><h2>Current tunnel status</h2></div></div><div className="stat-grid"><Stat title="Windows peer" value={status.peer_state} detail={status.peer_last_handshake ? `Handshake ${displayTime(status.peer_last_handshake)}` : "No handshake recorded"} color="blue"/><Stat title="Received" value={bytes(status.peer_rx_bytes)} detail="Peer traffic received by VPS" color="cyan"/><Stat title="Sent" value={bytes(status.peer_tx_bytes)} detail="Peer traffic sent by VPS" color="purple"/></div><p className="muted">{status.peer_detail}</p></section>}</>;
 }
-function Security({ data }: { data: Initial }) { return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">ADMINISTRATOR ACCOUNT</p><h2>Change password</h2></div></div><p className="muted">Use at least 12 characters. Changing the password signs out all administrator sessions. Authenticator protection remains enabled.</p><form className="form-grid" action="/password/change" method="post"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Current password" name="current_password" autocomplete="current-password"/><Field label="New password" name="new_password" autocomplete="new-password"/><Field label="Confirm new password" name="confirm_password" autocomplete="new-password"/>{data.totp_status === "enabled" && <div className="form-field"><label htmlFor="password-change-code">Current six-digit authenticator code for password change</label><input id="password-change-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" maxLength={6} required/></div>}<button className="button" type="submit">Change password</button></form><p className="muted">Root recovery remains available with <code>proxyctl reset-password</code>.</p></section><TOTP data={data}/></>; }
+function Security({ data, onSecurity }: { data: Initial; onSecurity: (snapshot: SecuritySnapshot) => void }) { return <><section className="panel"><div className="panel-title"><div><p className="eyebrow">ADMINISTRATOR ACCOUNT</p><h2>Change password</h2></div></div><p className="muted">Use at least 12 characters. Changing the password signs out all administrator sessions. Authenticator protection remains enabled.</p><form className="form-grid" action="/password/change" method="post"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Current password" name="current_password" autocomplete="current-password"/><Field label="New password" name="new_password" autocomplete="new-password"/><Field label="Confirm new password" name="confirm_password" autocomplete="new-password"/>{data.totp_status === "enabled" && <div className="form-field"><label htmlFor="password-change-code">Current six-digit authenticator code for password change</label><input id="password-change-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" maxLength={6} required/></div>}<button className="button" type="submit">Change password</button></form><p className="muted">Root recovery remains available with <code>proxyctl reset-password</code>.</p></section><TOTP data={data}/><SecurityProtection csrf={data.csrf} snapshot={data.security} error={data.security_error} onSnapshot={onSecurity}/></>; }
 function Field({ label, name, autocomplete }: { label: string; name: string; autocomplete: string }) { return <div className="form-field"><label htmlFor={name}>{label}</label><input id={name} name={name} type="password" autoComplete={autocomplete} minLength={12} maxLength={1024} required/></div>; }
 function TOTP({ data }: { data: Initial }) { return <section className="panel"><div className="panel-title"><div><p className="eyebrow">TWO-FACTOR AUTHENTICATION</p><h2>Administrator authenticator</h2></div><span className={`state-pill ${data.totp_status === "enabled" ? "healthy" : "unknown"}`}><i/>{data.totp_status === "enabled" ? "Enabled" : data.totp_status}</span></div>{data.totp_status === "enabled" ? <><p>Two-factor authentication is enabled for administrator sign-in.</p><details className="details"><summary>Disable two-factor authentication</summary><p className="muted">Both your administrator password and a current authenticator code are required. All administrator sessions will be signed out.</p><form action="/totp/disable" method="post" className="form-grid"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Administrator password" name="password" autocomplete="current-password"/><div className="form-field"><label htmlFor="disable-code">Current six-digit authenticator code</label><input id="disable-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" maxLength={6} required/></div><button className="button danger" type="submit">Disable authenticator</button></form></details></> : <><p className="muted">Add a second factor to protect administrator sign-in.</p><form action="/totp/enroll/start" method="post" className="inline-form"><input type="hidden" name="csrf" value={data.csrf}/><Field label="Administrator password" name="password" autocomplete="current-password"/><button className="button" type="submit">Set up authenticator</button></form>{data.totp_setup_visible && <div className="setup-card"><p>Scan the QR code or enter the secret in your authenticator app.</p>{data.totp_qr_code && <img src={data.totp_qr_code} alt="Authenticator setup QR code" width="256" height="256"/>}<code>{data.totp_secret}</code><form action="/totp/enroll/confirm" method="post" className="inline-form"><input type="hidden" name="csrf" value={data.csrf}/><label htmlFor="confirm-code">Six-digit code</label><input id="confirm-code" name="code" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code" required/><button className="button" type="submit">Confirm authenticator</button></form><form action="/totp/enroll/cancel" method="post"><input type="hidden" name="csrf" value={data.csrf}/><button className="button secondary" type="submit">Cancel setup</button></form></div>}</>}</section>; }
 

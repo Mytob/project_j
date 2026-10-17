@@ -246,6 +246,7 @@ the follow-up changes below require their own package validation.
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
 | M11 — Version 1.0.0 release | Complete | PR #20 promoted the validated tree to `main` at `350a69f`; tag `v1.0.0` and the GitHub release are published with the self-contained package, SHA-256 checksum, and ready validation report. |
+| M12 — v1.4 Fail2ban and security management | Local release gate complete; host checks blocked | Go, browser, isolated security/streaming integration, and offline package install/update/rollback passed on 2026-10-17. Ubuntu host journald/nftables/reboot, public ACME/provider firewall, and native Windows checks remain blocked. No v1.4 VPS deployment or release publication was performed. |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -522,6 +523,29 @@ merge commit `7470ef3`.
   includes the Linux amd64 deployment package, its SHA-256 checksum, and the
   release validation report.
 
+### M12 — v1.4 Fail2ban and security management
+
+- **Status:** Implementation and local release gate complete; release readiness
+  remains blocked pending actual-host checks.
+- **Scope:** Protect SSH authentication and administrator login with isolated
+  Fail2ban jails, dedicated IPv4/IPv6 nftables SSH enforcement, signed admin
+  authentication events, Caddy-only admin bans, and authenticated admin
+  configuration, history, unban, and live updates. Administrator bans do not
+  block Jellyfin access.
+- **Local gate:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.4.0-dev` — PASS, exit 0 on 2026-10-17. Go tests, M1–M6 integration,
+  three-browser admin checks, isolated Fail2ban/nftables and Caddy enforcement,
+  streaming regressions, and offline package install/update/rollback passed.
+- **Package:** `dist/jellyfin-proxy-1.4.0-dev-linux-amd64.tar.gz`, SHA-256
+  `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`. The
+  release report is `dist/release-validation-1.4.0-dev.json` and records
+  `local_gate: passed`, `release_readiness: blocked_host_checks_pending`.
+- **Blocked host gate:** Actual Ubuntu host journald, host-level nftables SSH
+  enforcement, reboot recovery, public ACME/provider-firewall behavior, and
+  native Windows WireGuard/firewall checks require operator-controlled hosts.
+  Docker Desktop integration does not claim those checks passed.
+- **Deployment/publication:** Not performed.
+
 ## Change and test log
 
 | Date (UTC) | Change | Commit / PR | Tests and result |
@@ -557,4 +581,4 @@ merge commit `7470ef3`.
 | 2026-10-16 | Dismiss transient WireGuard rotation/download notices after five seconds and deploy `1.3.4-dev` to the test VPS. | [PR #54](https://github.com/Mytob/project_j/pull/54), merged to `dev` at `f8d530a`; package built from clean commit `f8d530a70abf`. | Clean-tree `.\build.ps1 release -Version 1.3.4-dev` — PASS, exit 0; local release gate passed. VPS update passed; all five containers healthy and public HTTPS routes verified 200/200/403 with valid TLS. Native Windows checks remain pending. See [TESTING.md](TESTING.md). |
 | 2026-10-17 | Replace Windows peer status and notices with a single state-driven download/regenerate button; deploy `1.3.5-dev` to the test VPS. | [PR #56](https://github.com/Mytob/project_j/pull/56), merged to `dev` at `f4803a4`; package built from clean commit `f4803a4474b1`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.5-dev` — PASS, exit 0; local release gate passed. VPS update passed; all five services healthy and public HTTPS routes verified 200/200/403 with TLS verification. Native Windows checks remain pending. See [TESTING.md](TESTING.md). |
 | 2026-10-17 | Add optional friendly names to allowed addresses, remove the redundant Jellyfin health-response tile, and deploy `1.3.6-dev` to the test VPS. | Code commit `a8a7937cd68b`; [PR #58](https://github.com/Mytob/project_j/pull/58) into `dev`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6-dev` — PASS, exit 0; Go, four browser tests, frontend, monitoring/streaming integration, and offline package install/update/rollback passed. VPS updater passed after resolving severe memory pressure with temporary swap; the swap and interrupted-attempt files were removed. All five services healthy, WireGuard handshake recovered, HTTPS routes verified 200/200/403 with TLS verification. The operator subsequently confirmed native Windows playback. The stable 1.3.6 release gate passed with readiness READY and the package was built. PR #63 promoted `dev` to `main` at `659ad83`; GitHub tag and release-asset publication remain pending. See [TESTING.md](TESTING.md). |
-
+| 2026-10-17 | v1.4 Fail2ban and security management implementation. | `feature/v1.4-fail2ban-security`; [PR #66](https://github.com/Mytob/project_j/pull/66) into `dev`. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.4.0-dev` — PASS, exit 0 on synced branch commit `8505699`; Go, M1–M6 integration, four browser tests, isolated Fail2ban/nftables and Caddy checks, and offline package install/update/rollback passed. Report records `local_gate: passed`, host checks blocked. Package SHA-256: `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`. No v1.4 VPS deployment or publication. |

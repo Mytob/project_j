@@ -14,6 +14,7 @@ COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
 COPY internal/totp ./internal/totp
 COPY internal/admin ./internal/admin
+COPY internal/security ./internal/security
 COPY internal/containerhealth ./internal/containerhealth
 COPY --from=frontend /frontend/dist ./internal/admin/frontend/dist
 COPY internal/monitoring ./internal/monitoring

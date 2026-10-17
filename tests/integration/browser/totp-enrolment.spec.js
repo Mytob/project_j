@@ -94,12 +94,34 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await page.getByRole('link', { name: 'Security' }).click();
   await expect(page).toHaveURL(/\/security$/);
   await expect(page.getByRole('heading', { name: 'Administrator authenticator' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Fail2ban and firewall' })).toBeVisible();
+  for (const item of await page.locator('.security-health-item').all()) await expect(item).toContainText('Healthy');
+  const activeSecurityBan = page.locator('.security-ban').filter({ hasText: process.env.SECURITY_TEST_BAN_IP });
+  await expect(activeSecurityBan).toBeVisible();
+  await expect(activeSecurityBan).toContainText('ADMIN');
   await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
+  const securityActivity = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Failures and bans over time' }) });
+  await securityActivity.getByLabel('Time range').selectOption('7d');
+  await securityActivity.getByLabel('Service').selectOption('admin');
+  await expect(securityActivity.getByLabel('Time range')).toHaveValue('7d');
+  await securityActivity.getByLabel('Time range').selectOption('24h');
+  await securityActivity.getByLabel('Service').selectOption('all');
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect(page).toHaveScreenshot('security-desktop.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015 });
+  const dynamicSecurityRegions = [page.locator('.security-overview-grid'), page.locator('.security-health-grid'), page.locator('.security-chart-wrap'), page.locator('.security-ban-list'), page.locator('.security-history-list')];
+  await expect(page).toHaveScreenshot('security-desktop.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015, mask: dynamicSecurityRegions, maskColor: '#102238' });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page).toHaveScreenshot('security-mobile.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015 });
+  await expect(page).toHaveScreenshot('security-mobile.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015, mask: dynamicSecurityRegions, maskColor: '#102238' });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await activeSecurityBan.getByRole('button', { name: 'Unban' }).click();
+  await expect(activeSecurityBan).toHaveCount(0);
+  const attacker = await browser.newContext({ ignoreHTTPSErrors: true });
+  const attackerPage = await attacker.newPage();
+  await attackerPage.goto('https://admin.domain.test/');
+  await attackerPage.getByLabel('Password').fill('wrong-security-test-password');
+  await attackerPage.getByRole('button', { name: 'Sign in' }).click();
+  await expect(attackerPage.getByRole('alert')).toContainText('password was not accepted');
+  await expect(page.locator('.security-history-list')).toContainText(process.env.SECURITY_TEST_CLIENT_IP, { timeout: 15000 });
+  await attacker.close();
 
   const visualPages = [
     ['/dashboard', 'overview', 'Overview'],
