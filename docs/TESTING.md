@@ -887,3 +887,31 @@ these limits explicitly and use VPS preflight checks.
   result 0.
 - **Limits:** Native Windows client import, firewall, and playback checks were
   not performed for this build.
+
+### v1.3.6-dev friendly IP names and simplified WireGuard diagnostics — 2026-10-17
+
+- **Behavior:** Administrators can add an optional friendly name to each
+  allowlisted IP/CIDR and edit or clear it later. Names are persisted as
+  display metadata and never enter the Caddy access policy. Address-only v1
+  whitelist files migrate on their next write. The redundant Jellyfin
+  health-response tile was removed from the WireGuard tunnel status panel;
+  Overview and Health still report component health.
+- **Browser coverage:** The Chromium flow adds, renames, and removes a named
+  address, and checks that tunnel diagnostics contain only the peer and byte
+  counters. Updated the Access Control and WireGuard desktop and mobile visual
+  baselines. The first integrated browser run exposed a fixture issue: removing
+  its temporary IP left the mock streaming route denied. The fixture now seeds
+  the browser test IP into the admin allowlist; the rerun passed all four
+  browser tests, including Firefox and WebKit smoke checks and Caddy streaming,
+  range, and WebSocket coverage.
+- **Release gate:** Clean-tree
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6-dev` on commit
+  `a8a7937cd68b` — PASS, exit 0. Go tests, frontend typecheck, six frontend
+  tests, production build, four browser tests, monitoring and streaming
+  integration, and isolated offline install/update/rollback, retention, and
+  password-recovery checks passed. The report records
+  `local_gate: passed`; host-specific v1.3 checks remain blocked.
+- **Package:** `dist/jellyfin-proxy-1.3.6-dev-linux-amd64.tar.gz`, SHA-256
+  `e6175e8b4b46f76fb76835dffaacc6b843bfc6900273eac227be661328caa3b3`.
+  The admin image build number is `a8a7937cd68b`. The test VPS was not updated
+  for this change.
