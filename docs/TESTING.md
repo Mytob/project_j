@@ -985,7 +985,7 @@ these limits explicitly and use VPS preflight checks.
   or Windows client.
 - **Deployment/publication:** Neither was performed.
 
-### v1.4.1-dev VPS deployment and host checks — 2026-10-18
+### v1.4.1-dev initial VPS deployment and restart bug reproduction — 2026-10-18
 
 - **Local gate:** `pwsh -NoProfile -File .\build.ps1 release
   -Version 1.4.1-dev` passed on product commit `8a758f2` before PR #68 was
@@ -1052,6 +1052,38 @@ these limits explicitly and use VPS preflight checks.
   ban/unban behavior continues to work. The focused `security-firewall.ps1`,
   `build.ps1 test`, and `build.ps1 release -Version 1.4.1-dev` all passed on the
   working tree. The preliminary package had a `-dirty` revision label and was
-  not deployed. A clean `1.4.2-dev` release gate and VPS retest are pending;
-  the version-matched VPS restart test must confirm exactly one IPv4/IPv6
-  rule pair after repeated container restarts and a fresh SSH login.
+  not deployed. The clean 1.4.2-dev gate and host retest are recorded below.
+
+### v1.4.2-dev restart fix release and VPS verification — 2026-10-18
+
+- **Source:** Commit `1b1f6ab5d4d8b3deb61158d60fa1cd1b26cb213c` on
+  `fix/securityd-nftables-restart-idempotence`.
+- **Release gate:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.4.2-dev` — PASS, exit 0. Go tests, Firefox/WebKit/Chromium browser checks,
+  full v1.4 integration including Jellyfin streaming and WireGuard recovery,
+  restart-idempotent isolated nftables regression, and offline package
+  install/update/rollback/retention/password-recovery checks passed. The
+  generated report records the local gate as passed and host checks as blocked;
+  it was not regenerated with the subsequent VPS results or native Windows
+  evidence.
+- **Package:** `dist/jellyfin-proxy-1.4.2-dev-linux-amd64.tar.gz`, 124,849,163
+  bytes, SHA-256
+  `b1b518f426e19b36271dce50fbc0edd662a003516d51bca06b6d6bc661c0fee4`.
+  The uploaded package checksum matched before installation. The standalone
+  updater checksum also matched the local artifact.
+- **VPS update:** The documented `proxyctl update` completed successfully to
+  `1.4.2-dev`; all six services were healthy afterward. Persistent data and the
+  previous release were retained by the updater.
+- **Host restart regression:** Before restart, the live host chain had one
+  IPv4 and one IPv6 TCP/22 drop rule (handles 3 and 5). After each of two
+  consecutive `docker restart jellyfin-proxy-securityd-1` operations, the
+  chain still contained exactly those two rules, with counts IPv4=1 and IPv6=1.
+  Both `jp-ssh` and `jp-admin` jails were active after the restarts. A separate
+  new SSH connection succeeded; all six containers remained healthy.
+- **Public routes:** From the VPS after the restarts, normal certificate
+  verification returned `darkcry.com` HTTP 200, `admin.darkcry.com` HTTP 200,
+  and `access.darkcry.com` HTTP 403, all with `ssl_verify_result=0`.
+- **Windows streaming:** The operator confirmed streaming on 1.4.1-dev. This
+  change is limited to Fail2ban/nftables startup; native Windows playback was
+  not repeated on 1.4.2-dev.
+- **Publication:** No stable v1.4 release was created or published.
