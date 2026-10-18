@@ -25,6 +25,17 @@ function Get-HttpStatus([string]$ClientName, [string]$ServerIP) {
     [pscustomobject]@{ ExitCode = $exitCode; Status = [string]($output -join '').Trim() }
 }
 
+function Assert-SshRulePair([string]$Name) {
+    $rules = & docker exec $security nft list chain inet jp_fail2ban jp_ssh_input
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the SSH firewall chain $Name." }
+    $text = [string]($rules -join "`n")
+    $ipv4 = [regex]::Matches($text, 'tcp dport.*ip saddr @addr-set-jp-ssh').Count
+    $ipv6 = [regex]::Matches($text, 'tcp dport.*ip6 saddr @addr6-set-jp-ssh').Count
+    if ($ipv4 -ne 1 -or $ipv6 -ne 1) {
+        throw "Expected one IPv4 and one IPv6 SSH drop rule $Name; got IPv4=$ipv4 IPv6=$ipv6."
+    }
+}
+
 try {
     foreach ($name in @($security, $client, $otherClient)) {
         $existing = & docker container ls -a --filter "name=^/$name$" --format '{{.ID}}'
@@ -58,8 +69,32 @@ try {
         $action = & docker exec $security fail2ban-client --socket /tmp/fail2ban.sock get jp-ssh actions
         $startMode = & docker exec $security fail2ban-client --socket /tmp/fail2ban.sock get jp-ssh action nftables-multiport actionstart_on_demand
         $startCommand = & docker exec $security fail2ban-client --socket /tmp/fail2ban.sock get jp-ssh action nftables-multiport actionstart
-        throw "Fail2ban did not install its TCP/22 SSH enforcement chain when the jail started. Actions=$($action -join ','); actionstart_on_demand=$($startMode -join ','); actionstart=$($startCommand -join ' ')"
+        $logs = & docker logs --tail 100 $security 2>&1
+        throw "Fail2ban did not install its TCP/22 SSH enforcement chain when the jail started. Actions=$($action -join ','); actionstart_on_demand=$($startMode -join ','); actionstart=$($startCommand -join ' '); logs=$($logs -join "`n")"
     }
+    Assert-SshRulePair 'on initial startup'
+
+    # Simulate an abrupt security-container restart: the process dies without
+    # running Fail2ban's actionstop, while the shared network namespace keeps
+    # its nftables table, chain, sets, and rules.
+    $pidFile = & docker exec $security cat /tmp/fail2ban.pid
+    if ($LASTEXITCODE -ne 0 -or -not $pidFile) { throw 'Fail2ban did not write its process ID.' }
+    $fail2banPid = ([string]$pidFile).Trim()
+    if ($fail2banPid -notmatch '^\d+$') { throw 'Fail2ban wrote an invalid process ID.' }
+    Invoke-Docker @('exec', $security, 'sh', '-c', ('kill -KILL {0}' -f $fail2banPid))
+    Invoke-Docker @('exec', '--detach', $security, 'fail2ban-server', '-xf', '--socket', '/tmp/fail2ban.sock', '--pidfile', '/tmp/fail2ban.pid', '--logtarget=stdout', '--loglevel=INFO', 'start')
+    $restarted = $false
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        & docker exec $security fail2ban-client --socket /tmp/fail2ban.sock ping 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $restarted = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $restarted) {
+        $logs = & docker logs --tail 100 $security 2>&1
+        throw "Fail2ban did not recover after an abrupt restart: $($logs -join "`n")"
+    }
+    Assert-SshRulePair 'after abrupt restart'
 
     Invoke-Docker @('run', '--detach', '--name', $client, '--network', $network, '--entrypoint', '/bin/sh', $curlImage, '-c', 'sleep 600')
     Invoke-Docker @('run', '--detach', '--name', $otherClient, '--network', $network, '--entrypoint', '/bin/sh', $curlImage, '-c', 'sleep 600')
@@ -102,7 +137,7 @@ try {
     $adminBan = & docker exec $security fail2ban-client --socket /tmp/fail2ban.sock get jp-admin banned $clientIP
     if ($LASTEXITCODE -ne 0 -or ([string]($adminBan -join '').Trim() -ne '1')) { throw 'Fail2ban did not retain the admin-jail ban state.' }
 
-    Write-Host 'Isolated Fail2ban enforcement passed: exactly two jails, TCP/22 IPv4/IPv6 blocking, per-IP scope, unban recovery, and unrelated nftables preservation.'
+    Write-Host 'Isolated Fail2ban enforcement passed: exactly two jails, restart-idempotent SSH rules, TCP/22 IPv4/IPv6 blocking, per-IP scope, unban recovery, and unrelated nftables preservation.'
 }
 finally {
     & docker rm --force $client $otherClient $security 2>&1 | Out-Null

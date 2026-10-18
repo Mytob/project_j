@@ -984,3 +984,106 @@ these limits explicitly and use VPS preflight checks.
   WireGuard/firewall checks remain BLOCKED; this run did not use an actual VPS
   or Windows client.
 - **Deployment/publication:** Neither was performed.
+
+### v1.4.1-dev initial VPS deployment and restart bug reproduction — 2026-10-18
+
+- **Local gate:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.4.1-dev` passed on product commit `8a758f2` before PR #68 was
+  merged. PR #68 changed only integration-test fixtures and timing. The
+  post-merge `build.ps1 package` rerun on `418d981` stopped at a Playwright
+  desktop screenshot height mismatch (expected 1440x3241, received 1440x3287);
+  this is not recorded as a passing rerun. The deployed admin image reports
+  source revision `418d981f477a`.
+- **Package:** `dist/jellyfin-proxy-1.4.1-dev-linux-amd64.tar.gz`,
+  124,850,758 bytes, SHA-256
+  `28006722b800f04a8fe50ad286d27ce0ba09d48c623dbd1b2540c4ecee81efce`. The
+  transferred checksum matched on the VPS.
+- **VPS update:** `proxyctl update` completed successfully to `1.4.1-dev`; the
+  updater verified persistent TOTP storage, loaded all seven images, validated
+  configuration, activated the release, and reported healthy services. The
+  active and previous releases are retained. All six containers (admin,
+  Caddy, WireGuard, hostmetrics, securityd, and containerhealth) were healthy
+  after update and after a full VPS reboot. Image labels report version
+  `1.4.1-dev` and revision `418d981f477a`.
+- **Swap and resource recovery:** Before adding swap, the host reported 833 MiB
+  RAM, no swap, and 3.4 GiB free on `/`. The first Docker image import remained
+  at 37% for about 15 minutes and was stopped before release activation. A
+  2 GiB `/swapfile` was created with `fallocate`, `mkswap`, and `swapon`; the
+  `/etc/fstab` entry `/swapfile none swap sw 0 0` and
+  `/etc/sysctl.d/99-local-swap.conf` (`vm.swappiness=10`) make it persistent.
+  The retry completed successfully. After reboot, `swapon --show` confirmed
+  2 GiB active with about 84 MiB used; later checks showed about 96 MiB used.
+  The root filesystem had 1.5 GiB available after deployment.
+- **Host journal and Fail2ban:** From `securityd`,
+  `journalctl --no-pager --output=short-iso -n 5 _COMM=sshd` returned actual
+  host sshd records, including the post-reboot listener. Fail2ban reported
+  exactly `jp-admin` and `jp-ssh`; `jp-admin` uses `jp-noop`. The host nftables
+  chain `inet jp_fail2ban jp_ssh_input` contained the exact TCP/22 IPv4 and
+  IPv6 drop rules. Reserved documentation addresses `192.0.2.123` and
+  `2001:db8::123` were added to their corresponding SSH sets and then unbanned;
+  both sets were empty afterward. After reboot the chain had one rule per
+  address family. Before reboot, duplicate identical rule pairs were observed
+  after service replacement; the clean reboot recreated one pair. Restart
+  idempotence was later checked directly; the restart reproduced a duplicate
+  pair as detailed below.
+- **Public routes and reboot:** After reboot, ordinary DNS resolution reached
+  `77.68.102.105`; normal TLS verification returned `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403, each with
+  `ssl_verify_result=0`. `systemctl reboot` returned successfully; swap,
+  services, host journal access, Fail2ban, and the SSH nftables chain recovered.
+- **Restart idempotence check:** Before the restart, the host chain contained
+  one IPv4/IPv6 TCP/22 drop-rule pair. `docker restart
+  jellyfin-proxy-securityd-1` returned the container to healthy status within
+  10 seconds, but added a second identical pair (nftables handles 6 and 7).
+  Those two new rules were deleted by handle, leaving original handles 3 and 5
+  in place. A new authenticated SSH connection succeeded; the container was
+  healthy and the chain still contained exactly one pair. This reproduced the
+  restart idempotence defect on 1.4.1-dev.
+- **Windows and report status:** The peer's latest-handshake value was `0`
+  immediately after reboot. The operator subsequently confirmed that streaming
+  works after this deployment. The machine-readable full-release report
+  predates this deployment and still contains the earlier blocked host-check
+  results; it was not regenerated.
+- **Restart fix and local gates:** `nftables-common.local` now lists each
+  nftables object before adding it and adds each address-family rule only when
+  absent. `security-firewall.ps1` asserts one IPv4 and one IPv6 rule at startup,
+  kills the Fail2ban process without its cleanup action, restarts Fail2ban in
+  the same network namespace, and asserts the rule pair remains singular while
+  ban/unban behavior continues to work. The focused `security-firewall.ps1`,
+  `build.ps1 test`, and `build.ps1 release -Version 1.4.1-dev` all passed on the
+  working tree. The preliminary package had a `-dirty` revision label and was
+  not deployed. The clean 1.4.2-dev gate and host retest are recorded below.
+
+### v1.4.2-dev restart fix release and VPS verification — 2026-10-18
+
+- **Source:** Commit `1b1f6ab5d4d8b3deb61158d60fa1cd1b26cb213c` on
+  `fix/securityd-nftables-restart-idempotence`.
+- **Release gate:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.4.2-dev` — PASS, exit 0. Go tests, Firefox/WebKit/Chromium browser checks,
+  full v1.4 integration including Jellyfin streaming and WireGuard recovery,
+  restart-idempotent isolated nftables regression, and offline package
+  install/update/rollback/retention/password-recovery checks passed. The
+  generated report records the local gate as passed and host checks as blocked;
+  it was not regenerated with the subsequent VPS results or native Windows
+  evidence.
+- **Package:** `dist/jellyfin-proxy-1.4.2-dev-linux-amd64.tar.gz`, 124,849,163
+  bytes, SHA-256
+  `b1b518f426e19b36271dce50fbc0edd662a003516d51bca06b6d6bc661c0fee4`.
+  The uploaded package checksum matched before installation. The standalone
+  updater checksum also matched the local artifact.
+- **VPS update:** The documented `proxyctl update` completed successfully to
+  `1.4.2-dev`; all six services were healthy afterward. Persistent data and the
+  previous release were retained by the updater.
+- **Host restart regression:** Before restart, the live host chain had one
+  IPv4 and one IPv6 TCP/22 drop rule (handles 3 and 5). After each of two
+  consecutive `docker restart jellyfin-proxy-securityd-1` operations, the
+  chain still contained exactly those two rules, with counts IPv4=1 and IPv6=1.
+  Both `jp-ssh` and `jp-admin` jails were active after the restarts. A separate
+  new SSH connection succeeded; all six containers remained healthy.
+- **Public routes:** From the VPS after the restarts, normal certificate
+  verification returned `darkcry.com` HTTP 200, `admin.darkcry.com` HTTP 200,
+  and `access.darkcry.com` HTTP 403, all with `ssl_verify_result=0`.
+- **Windows streaming:** The operator confirmed streaming on 1.4.1-dev. This
+  change is limited to Fail2ban/nftables startup; native Windows playback was
+  not repeated on 1.4.2-dev.
+- **Publication:** No stable v1.4 release was created or published.

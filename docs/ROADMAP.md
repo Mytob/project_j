@@ -246,7 +246,7 @@ the follow-up changes below require their own package validation.
 | M9 — Updater, recovery, retention | Complete | `build.ps1 package -Version 1.0.0-dev` passed on 2026-10-13 with actual offline update, data preservation, forced-failure recovery, two-release retention, and password-reset checks. |
 | M10 — Full automated release validation | Complete | PR #10 merged as `da9d281`; `build.ps1 release -Version 1.0.0-dev` passed all local gates on 2026-10-13 and explicitly blocks readiness pending production-host checks. |
 | M11 — Version 1.0.0 release | Complete | PR #20 promoted the validated tree to `main` at `350a69f`; tag `v1.0.0` and the GitHub release are published with the self-contained package, SHA-256 checksum, and ready validation report. |
-| M12 — v1.4 Fail2ban and security management | Local release gate complete; host checks blocked | Go, browser, isolated security/streaming integration, and offline package install/update/rollback passed on 2026-10-17. Ubuntu host journald/nftables/reboot, public ACME/provider firewall, and native Windows checks remain blocked. No v1.4 VPS deployment or release publication was performed. |
+| M12 — v1.4 Fail2ban and security management | Local release gate and Ubuntu host restart fix passed; latest native Windows client check not repeated | Clean package `1.4.2-dev` was deployed to the authorized test VPS. Two security-container restarts retained exactly one IPv4/IPv6 SSH rule pair, all six services stayed healthy, a fresh SSH login succeeded, and public TLS routes remained 200/200/403. See [TESTING.md](TESTING.md). |
 
 Documentation commit `c8aedb7` is on `main`. M1 commits `613ff18` and
 `5c7217f` were merged into `dev` through [PR #1](https://github.com/Mytob/project_j/pull/1)
@@ -525,8 +525,10 @@ merge commit `7470ef3`.
 
 ### M12 — v1.4 Fail2ban and security management
 
-- **Status:** Implementation and local release gate complete; release readiness
-  remains blocked pending actual-host checks.
+- **Status:** Implementation, local release gate, and Ubuntu restart checks
+  passed on 1.4.2-dev. The operator-confirmed Windows playback check was on
+  1.4.1-dev and was not repeated after this security-only change. No stable
+  v1.4 release is claimed.
 - **Scope:** Protect SSH authentication and administrator login with isolated
   Fail2ban jails, dedicated IPv4/IPv6 nftables SSH enforcement, signed admin
   authentication events, Caddy-only admin bans, and authenticated admin
@@ -540,11 +542,46 @@ merge commit `7470ef3`.
   `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`. The
   release report is `dist/release-validation-1.4.0-dev.json` and records
   `local_gate: passed`, `release_readiness: blocked_host_checks_pending`.
-- **Blocked host gate:** Actual Ubuntu host journald, host-level nftables SSH
-  enforcement, reboot recovery, public ACME/provider-firewall behavior, and
-  native Windows WireGuard/firewall checks require operator-controlled hosts.
-  Docker Desktop integration does not claim those checks passed.
-- **Deployment/publication:** Not performed.
+- **1.4.1-dev package:** `dist/jellyfin-proxy-1.4.1-dev-linux-amd64.tar.gz`,
+  SHA-256 `28006722b800f04a8fe50ad286d27ce0ba09d48c623dbd1b2540c4ecee81efce`,
+  built for source revision `418d981f477a`. The local full release gate passed
+  on product-identical source before PR #68's test-only merge; a post-merge
+  wrapper rerun hit a Playwright screenshot-height mismatch, recorded in
+  `docs/TESTING.md` rather than reported as passing.
+- **VPS deployment:** `proxyctl update` passed on the authorized Ubuntu VPS.
+  Six containers were healthy after update and reboot. The actual host journal
+  was readable, two Fail2ban jails were active, reserved IPv4/IPv6 ban/unban
+  checks updated the host SSH nftables sets, and the clean post-reboot chain
+  contained only the expected TCP/22 rules. Public TLS/DNS returned 200/200/403
+  with certificate verification. A 2 GiB swap file is persistent and active.
+- **Restart check:** `docker restart jellyfin-proxy-securityd-1` returned the
+  container to healthy status. The SSH chain grew from one IPv4/IPv6 TCP/22
+  rule pair to two identical pairs. The newly added rules (handles 6 and 7)
+  were deleted individually; a fresh SSH login then succeeded, the security
+  container remained healthy, and exactly the original pair remained. This
+  reproduced the restart bug on 1.4.1-dev.
+- **Restart fix:** The Fail2ban nftables startup action now checks for the
+  existing table, chain, sets, and per-family rule before adding anything.
+  `security-firewall.ps1` simulates abrupt daemon death in a retained network
+  namespace and asserts one IPv4/IPv6 TCP/22 rule after restart. The focused
+  check, `build.ps1 test`, and `build.ps1 release -Version 1.4.1-dev` passed
+  with this working-tree fix; that preliminary package was dirty and is not
+  suitable for deployment. The clean `1.4.2-dev` release gate and VPS retest
+  passed; details are recorded below and in `docs/TESTING.md`. The operator
+  confirmed streaming works on 1.4.1-dev; native Windows playback was not
+  repeated on 1.4.2-dev. The generated machine-readable report still marks
+  host checks blocked because it predates the VPS evidence. No stable v1.4
+  release was published.
+
+- **1.4.2-dev fix package and VPS check:** Clean release gate passed on commit
+  `1b1f6ab5d4d8`; package SHA-256 is recorded in `docs/TESTING.md`. The package
+  updater completed successfully on the authorized VPS. Two consecutive
+  `docker restart jellyfin-proxy-securityd-1` checks each retained exactly one
+  IPv4 and one IPv6 TCP/22 drop rule (handles 3 and 5), with both Fail2ban
+  jails active. All six containers remained healthy, a new SSH connection
+  succeeded, and verified TLS checks returned 200/200/403. The release report
+  continues to show host checks blocked because it was generated before
+  operator-host evidence was supplied; no stable release was published.
 
 ## Change and test log
 
@@ -582,3 +619,6 @@ merge commit `7470ef3`.
 | 2026-10-17 | Replace Windows peer status and notices with a single state-driven download/regenerate button; deploy `1.3.5-dev` to the test VPS. | [PR #56](https://github.com/Mytob/project_j/pull/56), merged to `dev` at `f4803a4`; package built from clean commit `f4803a4474b1`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.5-dev` — PASS, exit 0; local release gate passed. VPS update passed; all five services healthy and public HTTPS routes verified 200/200/403 with TLS verification. Native Windows checks remain pending. See [TESTING.md](TESTING.md). |
 | 2026-10-17 | Add optional friendly names to allowed addresses, remove the redundant Jellyfin health-response tile, and deploy `1.3.6-dev` to the test VPS. | Code commit `a8a7937cd68b`; [PR #58](https://github.com/Mytob/project_j/pull/58) into `dev`. | Clean-tree `pwsh -NoProfile -File .\build.ps1 release -Version 1.3.6-dev` — PASS, exit 0; Go, four browser tests, frontend, monitoring/streaming integration, and offline package install/update/rollback passed. VPS updater passed after resolving severe memory pressure with temporary swap; the swap and interrupted-attempt files were removed. All five services healthy, WireGuard handshake recovered, HTTPS routes verified 200/200/403 with TLS verification. The operator subsequently confirmed native Windows playback. The stable 1.3.6 release gate passed with readiness READY and the package was built. PR #63 promoted `dev` to `main` at `659ad83`; GitHub tag and release-asset publication remain pending. See [TESTING.md](TESTING.md). |
 | 2026-10-17 | v1.4 Fail2ban and security management implementation. | `feature/v1.4-fail2ban-security`; [PR #66](https://github.com/Mytob/project_j/pull/66) into `dev`. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.4.0-dev` — PASS, exit 0 on synced branch commit `8505699`; Go, M1–M6 integration, four browser tests, isolated Fail2ban/nftables and Caddy checks, and offline package install/update/rollback passed. Report records `local_gate: passed`, host checks blocked. Package SHA-256: `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`. No v1.4 VPS deployment or publication. |
+| 2026-10-18 | Deploy v1.4.1-dev, add persistent swap, and exercise Ubuntu host/reboot checks. | Product revision `418d981f477a`; PR #67/#68 already merged to `dev`. | Package SHA-256 verified; `proxyctl update` passed. 2 GiB `/swapfile` persisted through reboot. Six containers healthy; real sshd journal, two Fail2ban jails, IPv4/IPv6 SSH set ban/unban, host nftables chain, and public HTTPS 200/200/403 with valid TLS passed. The operator subsequently confirmed streaming works. A direct security-container restart added a duplicate IPv4/IPv6 SSH rule pair; the extra pair was removed, and a fresh SSH login passed. The fix and repeat-restart retest are recorded in the following entries. See [TESTING.md](TESTING.md). |
+| 2026-10-18 | Make Fail2ban SSH rules idempotent across abrupt security-container restarts. | Commit `1b1f6ab5d4d8` on `fix/securityd-nftables-restart-idempotence`; PR pending. | Isolated firewall test asserts one IPv4 and IPv6 SSH drop rule after startup and abrupt Fail2ban restart; full `build.ps1 release -Version 1.4.2-dev` passed. See deployment and two-restart Ubuntu verification below. |
+| 2026-10-18 | Deploy the restart fix and verify repeated restarts on Ubuntu. | Package from `1b1f6ab5d4d8`; PR pending. | `proxyctl update` passed. After each of two security-container restarts, the live host nftables chain had exactly one IPv4 and one IPv6 SSH rule; a fresh SSH connection succeeded, all six services were healthy, and public TLS routes returned 200/200/403. |
