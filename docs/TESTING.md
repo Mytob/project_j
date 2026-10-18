@@ -1087,3 +1087,5 @@ these limits explicitly and use VPS preflight checks.
   change is limited to Fail2ban/nftables startup; native Windows playback was
   not repeated on 1.4.2-dev.
 - **Publication:** No stable v1.4 release was created or published.
+- **Integration:** [PR #69](https://github.com/Mytob/project_j/pull/69) merged
+  the fix and verification records into `dev` at merge commit `eebe308`.
