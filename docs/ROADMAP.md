@@ -57,11 +57,14 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The clean dev.19 local release gate and exact-package Ubuntu CLI
-update passed on the disposable VM. The dev.19 startup migration created the
-four default public error pages and preserved the existing homepage. Dashboard
-update/rollback acceptance remains open pending a fresh admin sign-in; public
-network and native Windows evidence are also pending, so stable release
+**Status: The clean dev.19 local release gate, exact-package Ubuntu VM update,
+and fresh install/reboot on a user-authorized disposable public VPS passed.
+Public TLS routes, host security checks, backup verification, and five
+container health checks passed. Browser acceptance found that Health crashes
+on a fresh install and Settings returns 404 after reload; these findings are
+outside the frozen v1.6 change batch and remain unresolved. Dashboard
+update/rollback, provider-firewall review, ACME renewal, and native Windows
+checks also remain pending, so v1.6 is not complete and stable release
 readiness remains blocked.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
@@ -78,8 +81,14 @@ when an older `proxyctl` performed the upgrade. The clean dev.19 package passed
 the local release gate and exact CLI update on the disposable Ubuntu VM;
 `proxyctl doctor` and all five container health checks passed, the four default
 error pages appeared in the persistent active revision, and its existing
-homepage remained. Dashboard update/rollback remain unverified until the local
-test admin signs in again. PR #79 targets `dev`.
+homepage remained. The exact package was also installed on the user-authorized
+disposable public VPS and survived reboot. TLS 200/200/403, Fail2ban/journal/
+nftables, backup verification, installer readiness, and all five containers
+passed. The admin signed in and checked the dashboard: Health crashes when
+fresh history is empty, and Settings reload returns 404 although in-app
+navigation works. No product code was changed because v1.6 scope is frozen.
+Dashboard update/rollback and Windows acceptance remain unverified. PR #79
+targets `dev`.
 
 On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
 1.6.0-dev.19 -SupportedUpgradeSources 1.6.0-dev.18` passed from clean commit
@@ -90,13 +99,15 @@ retention, and password-recovery gates passed. The report records
 The focused admin and web-content package tests also passed afterward using
 the pinned Go container; no product-code changes followed the full gate. On
 the disposable VM, Caddy returned the built-in Not found page with HTTP 404
-and the Access denied page with HTTP 403; public TLS and 502/503 runtime
-behavior remain unverified.
+and the Access denied page with HTTP 403; public 502/503 runtime behavior
+remains unverified.
 The exact dev.19 package updated the disposable VM from dev.18 with a verified
 checksum and pre-update backup. The VM's `proxyctl doctor` passed; all five
 containers were healthy. The install-gate table in [TESTING.md](TESTING.md)
-records package sizes and hashes. Public DNS/provider firewall/ACME, internet
-WireGuard, and native Windows checks remain unverified.
+records package sizes and hashes. The public VPS install and reboot checks
+also passed as recorded there. Provider-firewall configuration, ACME renewal,
+internet WireGuard and native Windows checks remain unverified; live admin
+browser testing additionally found the Health and Settings issues above.
 
 On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
 1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` passed. Go tests,
@@ -803,3 +814,4 @@ merge commit `7470ef3`.
 | 2026-10-22 | v1.6.0-dev.12 complete disposable Ubuntu recovery acceptance. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | The full `build.ps1 release -Version 1.6.0-dev.12 -SupportedUpgradeSources 1.6.0-dev.11` local gate passed; report retains `blocked_host_checks_pending`. On disposable clones, fresh install and `install --resume` after reboot passed; alternate SSH login/sudo and contextual `PermitRootLogin no` passed; update process kills and forced guest reboots at all six durable stages recovered/finalized through `proxyctl repair`; interrupted restore rolled back; manual host updates passed post-health checks without a reboot requirement; a full 16 KiB tmpfs caused a safe backup failure. `proxyctl doctor`, five healthy services, both Fail2ban jails, and the expected SSH nftables table passed. Public DNS/ACME/provider networking and native Windows client checks remain open. No production VPS, original VM, merge, push, or stable release was used. See [TESTING.md](TESTING.md). |
 | 2026-10-22 | v1.6.0-dev.13 clean release gate and exact-package Ubuntu update. | Product implementation is PR #71; the release build used merged dev commit 432b0db7bc74. | Full clean-tree release gate passed with local_gate: passed; public/Windows checks remain blocked. The exact package updated the dev.12 disposable Ubuntu clone, passed readiness, retained active/previous releases, and proxyctl doctor passed with build 432b0db7bc74. Package SHA-256 2c72872dbc1cf5f3e100618fe8295e533b1387e1d859231758d09b4b6c9b4e9e; proxyctl SHA-256 db53f20494b826156adf545ab36f88cb80e4f1d70b76f52de947792afb496e6f. No production deployment or stable publication. |
 | 2026-10-22 | v1.6.0-dev.15 clean release gate and Ubuntu exact-package update/reboot check. | Clean dev commit `ebd767615ded1abc6fe776a7c229e8c0784c971b`; docs-only PR #77 was merged before the build. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0; local gate passed and public/Windows host checks remain blocked. Exact package updated the disposable Ubuntu 26.04.1 clone from dev.14; checksum, pre-update backup, all five healthy containers, doctor, verified 21-file backup, maintenance/backup units, actual SSH journal access, Fail2ban, and IPv4/IPv6 nftables ban/unban passed. Normal reboot recovered all five containers and host security state. WireGuard listens, but no peer handshake. Package SHA-256 `ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`; standalone proxyctl SHA-256 `69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`. No public VPS, production deployment, or stable publication. |
+| 2026-10-22 | v1.6.0-dev.19 fresh install and reboot on the user-authorized disposable public VPS. | `fix/v16-maintenance-self-restart`; dev.19 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79). | Installer, exact package checksums, `proxyctl doctor`, five healthy containers, maintenance/backup units, host journal, Fail2ban and IPv4/IPv6 nftables ban/unban, verified 25-file backup, 2 GiB persistent swap and reboot recovery passed. External TLS routes returned 200/200/403 with TLS verification; base missing route 404 and unauthenticated admin API 401. Admin browser: Overview, Statistics, System, Security, Access control, WireGuard, Web Content and About rendered. Health throws a null `.length` TypeError on fresh history; Settings reload returns 404. No WireGuard handshake or Windows playback, provider-firewall inspection, ACME renewal, or dashboard update/rollback. No production deployment, merge or stable release. See [TESTING.md](TESTING.md). |

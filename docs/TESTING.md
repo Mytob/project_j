@@ -1,5 +1,70 @@
 # Testing
 
+## v1.6.0-dev.19 disposable public VPS fresh install and browser acceptance — 2026-10-22
+
+- Target: user-authorized disposable Ubuntu 26.04.1 VPS on `darkcry.com`;
+  no production installation was used. The candidate remains dev.19 on
+  `fix/v16-maintenance-self-restart`, draft [PR #79](https://github.com/Mytob/project_j/pull/79).
+- Artifact transfer: `sha256sum -c jellyfin-proxy-1.6.0-dev.19.pkg.sha256`
+  and `sha256sum -c proxyctl-linux-amd64.sha256` — PASS for both files.
+  `TERM=dumb /root/proxyctl-linux-amd64 install /root/jellyfin-proxy-1.6.0-dev.19.pkg`
+  — PASS; installer completed after public HTTPS readiness. A separate
+  `jpadmin` SSH account authenticated and passed `sudo -v` and
+  `sudo -n id -u`. Root SSH remained enabled; it was not restricted.
+- Host checks: `./proxyctl-linux-amd64 doctor` — PASS for installation files,
+  release metadata (1.6.0-dev.19, build `dd026e4a2faa`), Compose
+  configuration, all app services, restore/update recovery, Docker Engine,
+  Compose and host storage. `docker ps --format '{{.Names}} {{.Status}}'`
+  showed admin, securityd, Caddy, WireGuard and hostmetrics all healthy.
+  `systemctl is-active docker jellyfin-proxy-maintenance.service` returned
+  `active` for both; the scheduled backup timer was enabled and active.
+  `docker exec jellyfin-proxy-securityd-1 sh -c 'journalctl --no-pager --output=json -n 1 _COMM=sshd + _COMM=sshd-session | wc -l'`
+  returned `1`. Fail2ban status via
+  `docker exec jellyfin-proxy-securityd-1 fail2ban-client --socket /tmp/fail2ban.sock status`
+  reported both `jp-admin` and `jp-ssh` jails.
+- Host firewall: `nft list table inet jp_fail2ban` showed the IPv4 and IPv6
+  SSH drop rules. Fail2ban ban/unban checks for reserved test addresses
+  `203.0.113.23` and `2001:db8::23` passed; both nftables sets were empty
+  after unban. The exact commands included
+  `docker exec jellyfin-proxy-securityd-1 fail2ban-client --socket /tmp/fail2ban.sock set jp-ssh banip 203.0.113.23`,
+  `nft list table inet jp_fail2ban`, and the matching
+  `set jp-ssh unbanip 203.0.113.23`; the same ban/show/unban sequence passed
+  for `2001:db8::23`. Host UFW remained inactive. The provider firewall
+  settings were not inspected after the VPS rebuild.
+- Backup: `./proxyctl-linux-amd64 backup /root/jp16-vps-acceptance.bak`
+  and `./proxyctl-linux-amd64 verify-backup /root/jp16-vps-acceptance.bak`
+  — PASS; 25 files verified, mode `600 root:root`, SHA-256
+  `86e5e246e751dd6f452ad0b1984a6e8d3ebe7eb635b1baaadcb0c971a43dd0be`.
+- Reboot: `systemctl reboot` — PASS. After reconnect, the 2 GiB
+  `/swapfile` was active and listed in `/etc/fstab`; `proxyctl doctor`
+  passed, all five containers returned healthy, the maintenance service and
+  Fail2ban jails were active, and the SSH nftables chain was restored.
+- External route checks used
+  `curl.exe --connect-timeout 8 --max-time 20 -sS -o NUL -w "%{http_code} TLS_verify=%{ssl_verify_result}\n"`
+  against `https://darkcry.com/`, `https://admin.darkcry.com/`, and
+  `https://access.darkcry.com/` — PASS with 200, 200 and 403 respectively;
+  TLS verification returned 0 for all three. A missing base-domain route
+  returned 404; unauthenticated `/api/initial` returned 401.
+  External TCP probes found 8096, 8080, 8181 and 2019 timed out; 8443 and
+  8447 refused connections. Docker published only TCP 80/443 and UDP 51820.
+  These observations do not verify the provider firewall configuration or
+  certificate renewal.
+- Browser smoke check: admin sign-in passed. Overview, Statistics, System,
+  Security, Access control, WireGuard, Web Content and About rendered; About
+  reported dev.19/build `dd026e4a2faa`. The fresh-install Health page rendered
+  blank and the browser console logged
+  `TypeError: Cannot read properties of null (reading 'length')`. Settings
+  worked through in-app navigation, but reloading `/settings` returned
+  `404 page not found`. These are newly observed admin UI defects outside
+  this frozen v1.6 change batch; no product code was changed.
+- Remaining acceptance: no Windows profile was downloaded or imported; no
+  WireGuard handshake, Windows firewall, Jellyfin health/playback, dashboard
+  update/rollback, authenticated backup download, scheduled backup execution,
+  provider-firewall review, ACME renewal, or equivalent-workload resource
+  comparison was performed. The one-time WireGuard profile remains available
+  for the operator's Windows test. No production deployment, merge, or stable
+  release is claimed.
+
 ## v1.6.0-dev.19 clean release gate and Ubuntu package update — 2026-10-22
 
 - Source: clean commit `dd026e4a2faa84285745c7cb63a05bf66174d6f4` on
@@ -40,10 +105,11 @@
   '\nSTATUS:%{http_code}\n' https://access.jp16.localhost/` returned the
   default Access denied page with HTTP 403. `-k` was used for the test-only
   local CA. This does not establish public TLS or 502/503 runtime behavior.
-- Dashboard update/rollback acceptance is still pending a fresh admin sign-in
-  in the local browser. Public DNS/provider firewall/ACME, internet WireGuard,
-  and native Windows client/firewall checks remain pending. No production VPS
-  or public release was used.
+- The disposable public VPS and browser results are recorded above.
+  Dashboard update/rollback, provider-firewall inspection, ACME renewal,
+  internet WireGuard, native Windows client/firewall/playback, and two admin
+  UI defects remain unresolved. No production deployment or public release
+  was used.
 
 ## v1.6.0-dev.17 maintenance self-restart fix — 2026-10-22
 
