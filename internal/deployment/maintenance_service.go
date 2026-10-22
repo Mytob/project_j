@@ -21,6 +21,25 @@ func ConfigureHostMaintenance(ctx context.Context, root, version, unitDir string
 }
 
 func configureHostMaintenance(ctx context.Context, root, version, unitDir, backupDir string, runner CommandRunner) error {
+	return configureHostMaintenanceMode(ctx, root, version, unitDir, backupDir, runner, true)
+}
+
+// configureHostMaintenanceForOperation updates the service definition without
+// restarting the currently running maintenance process. Dashboard operations
+// call it with a completion callback so the service can be refreshed only after
+// the operation result has been durably recorded.
+func configureHostMaintenanceForOperation(ctx context.Context, root, version, unitDir, backupDir string, runner CommandRunner, configured func()) error {
+	restartActive := configured == nil
+	if err := configureHostMaintenanceMode(ctx, root, version, unitDir, backupDir, runner, restartActive); err != nil {
+		return err
+	}
+	if configured != nil {
+		configured()
+	}
+	return nil
+}
+
+func configureHostMaintenanceMode(ctx context.Context, root, version, unitDir, backupDir string, runner CommandRunner, restartActive bool) error {
 	if runner == nil {
 		runner = ExecRunner{}
 	}
@@ -158,7 +177,7 @@ WantedBy=multi-user.target
 	if _, err := runner.Run(ctx, "systemctl", "enable", "--now", maintenanceServiceName); err != nil {
 		return rollback(fmt.Errorf("start restricted maintenance service: %w", err))
 	}
-	if wasActive {
+	if wasActive && restartActive {
 		if _, err := runner.Run(ctx, "systemctl", "restart", maintenanceServiceName); err != nil {
 			return rollback(fmt.Errorf("restart restricted maintenance service with its updated unit: %w", err))
 		}
@@ -190,6 +209,17 @@ func ensureMaintenanceWritableDirectory(path string, mode os.FileMode) error {
 // installed release while it is performing an update, so update invokes the
 // just-installed utility to reconcile unit templates after replacing it.
 func RefreshHostServices(ctx context.Context, root, unitDir, backupDir string, runner CommandRunner) error {
+	return refreshHostServices(ctx, root, unitDir, backupDir, runner, nil)
+}
+
+// RefreshHostServicesDeferred updates host unit files but leaves an active
+// maintenance process running. It is used only by the dashboard update worker,
+// which schedules the service restart after its job state is persisted.
+func RefreshHostServicesDeferred(ctx context.Context, root, unitDir, backupDir string, runner CommandRunner) error {
+	return refreshHostServices(ctx, root, unitDir, backupDir, runner, func() {})
+}
+
+func refreshHostServices(ctx context.Context, root, unitDir, backupDir string, runner CommandRunner, configured func()) error {
 	if root == "" {
 		root = DefaultInstallRoot
 	}
@@ -204,7 +234,7 @@ func RefreshHostServices(ctx context.Context, root, unitDir, backupDir string, r
 	if err != nil {
 		return fmt.Errorf("read backup policy before refreshing host services: %w", err)
 	}
-	if err := configureHostMaintenance(ctx, root, manifest.Version, unitDir, backupDir, runner); err != nil {
+	if err := configureHostMaintenanceForOperation(ctx, root, manifest.Version, unitDir, backupDir, runner, configured); err != nil {
 		return err
 	}
 	if err := ConfigureAutomaticBackups(ctx, root, manifest.Version, schedule, retention, unitDir, backupDir, runner); err != nil {

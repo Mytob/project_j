@@ -55,6 +55,33 @@ func TestConfigureHostMaintenanceWritesRestrictedOwnedUnit(t *testing.T) {
 	}
 }
 
+func TestDashboardMaintenanceUpdateDefersRestartUntilJobCompletion(t *testing.T) {
+	root := t.TempDir()
+	program := filepath.Join(root, "releases", "1.6.0-dev", "bin", "maintenance-linux-amd64")
+	if err := os.MkdirAll(filepath.Dir(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, []byte("test executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	configured := false
+	if err := configureHostMaintenanceForOperation(context.Background(), root, "1.6.0-dev", t.TempDir(), t.TempDir(), runner, func() { configured = true }); err != nil {
+		t.Fatal(err)
+	}
+	if !configured {
+		t.Fatal("maintenance completion callback was not notified after unit configuration")
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "systemctl restart "+maintenanceServiceName) {
+			t.Fatalf("dashboard update restarted its own maintenance service before job completion: %v", runner.commands)
+		}
+	}
+	if !strings.Contains(strings.Join(runner.commands, "\n"), "systemctl daemon-reload") {
+		t.Fatalf("updated unit was not loaded by systemd: %v", runner.commands)
+	}
+}
+
 func TestRefreshHostServicesReconcilesActiveReleaseUnits(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("installer filesystem fixture requires root in the isolated Linux test container")

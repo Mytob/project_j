@@ -34,6 +34,7 @@ type UpdateOptions struct {
 	BackupDirectory        string
 	ProxyctlDirectory      string
 	ProxyctlStateDirectory string
+	MaintenanceUpdated     func()
 	Progress               func(UpdateProgress)
 }
 
@@ -80,6 +81,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval,
 		WaitAttempts: options.WaitAttempts, ConfigureHostServices: options.ConfigureHostServices,
 		SystemdUnitDir: options.SystemdUnitDir, BackupDirectory: options.BackupDirectory,
+		MaintenanceUpdated: options.MaintenanceUpdated,
 	}); err != nil {
 		return manifest, fmt.Errorf("recover interrupted update before proceeding: %w", err)
 	}
@@ -235,7 +237,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 			}
 		}
 		if options.ConfigureHostServices {
-			if err := configureHostMaintenance(context.Background(), options.InstallRoot, current.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
+			if err := configureHostMaintenanceForOperation(context.Background(), options.InstallRoot, current.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 				restoreErrors = append(restoreErrors, fmt.Sprintf("restore previous maintenance service: %v", err))
 			}
 			if err := ConfigureAutomaticBackups(context.Background(), options.InstallRoot, current.Version, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
@@ -328,7 +330,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		changed = true
 	}
 	if options.ConfigureHostServices {
-		if err := configureHostMaintenance(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 			return manifest, fmt.Errorf("prepare restricted maintenance service for updated release: %w", err)
 		}
 	}
@@ -360,7 +362,7 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		return manifest, fmt.Errorf("updated release public HTTPS check failed; the previous release was restored: %w", err)
 	}
 	if options.ConfigureHostServices {
-		if err := configureHostMaintenance(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 			return manifest, fmt.Errorf("update restricted maintenance service: %w", err)
 		}
 		if err := ConfigureAutomaticBackups(ctx, options.InstallRoot, manifest.Version, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
@@ -373,7 +375,11 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		if proxyctlDirectory == "" {
 			proxyctlDirectory = defaultProxyctlDir
 		}
-		if _, err := options.Runner.Run(ctx, filepath.Join(proxyctlDirectory, "proxyctl"), "sync-host-services"); err != nil {
+		args := []string{"sync-host-services"}
+		if options.MaintenanceUpdated != nil {
+			args = append(args, "--defer-maintenance-restart")
+		}
+		if _, err := options.Runner.Run(ctx, filepath.Join(proxyctlDirectory, "proxyctl"), args...); err != nil {
 			return manifest, fmt.Errorf("refresh host service units with the updated proxyctl utility: %w", err)
 		}
 	}

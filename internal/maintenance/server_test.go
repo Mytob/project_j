@@ -3,6 +3,7 @@ package maintenance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -223,6 +224,48 @@ func TestMaintenanceCleanupJobUsesFixedNoArgumentAction(t *testing.T) {
 	completed, _ := server.jobs.Get(job.ID)
 	if !invoked || completed.State != "completed" || !strings.Contains(completed.Result, "Removed 2 unused") {
 		t.Fatalf("cleanup job did not finish through fixed callback: %+v, invoked=%v", completed, invoked)
+	}
+}
+
+func TestMaintenanceServiceRefreshRunsAfterPersistedJobCompletion(t *testing.T) {
+	server := NewServerWithDirectories(filepath.Join(t.TempDir(), "missing-docker.sock"), filepath.Join(t.TempDir(), "backups"), filepath.Join(t.TempDir(), "jobs"))
+	refreshed := make(chan string, 1)
+	server.ConfigureOperations(Operations{
+		Run: func(_ context.Context, operation OperationRequest, _ func(OperationProgress)) (string, error) {
+			if operation.Action != "update" || operation.MaintenanceUpdated == nil {
+				t.Fatalf("update did not receive the internal service refresh signal: %+v", operation)
+			}
+			operation.MaintenanceUpdated()
+			return "1.6.0-dev.7", nil
+		},
+		RestartMaintenance: func(_ context.Context, jobID string) error {
+			reloaded := NewJobManager(server.jobs.dir)
+			job, ok := reloaded.Get(jobID)
+			if !ok || job.State != "completed" || job.Result != "1.6.0-dev.7" {
+				return fmt.Errorf("service refresh ran before completed job was persisted: %+v, found=%v", job, ok)
+			}
+			refreshed <- jobID
+			return nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/system/jobs", strings.NewReader(`{"action":"update","upload_id":"0123456789abcdef0123456789abcdef","sha256":"`+strings.Repeat("a", 64)+`"}`))
+	request = request.WithContext(WithPeerUID(request.Context(), AuthorizedAdminUID))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("update job start = %d %q", response.Code, response.Body.String())
+	}
+	var started Job
+	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case jobID := <-refreshed:
+		if jobID != started.ID {
+			t.Fatalf("refresh scheduled for job %s, want %s", jobID, started.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("maintenance service refresh hook did not run")
 	}
 }
 
