@@ -34,6 +34,12 @@
   migration before the new binary was installed. The dev.19 admin startup
   migration created `403.html`, `404.html`, `502.html`, and `503.html` in the
   active persistent site revision. The preexisting `index.html` remained.
+- Local Caddy error rendering on the same disposable VM: `curl -ksS -w
+  '\nSTATUS:%{http_code}\n' https://jp16.localhost/not-a-real-page` returned
+  the default Not found page with HTTP 404; `curl -ksS -w
+  '\nSTATUS:%{http_code}\n' https://access.jp16.localhost/` returned the
+  default Access denied page with HTTP 403. `-k` was used for the test-only
+  local CA. This does not establish public TLS or 502/503 runtime behavior.
 - Dashboard update/rollback acceptance is still pending a fresh admin sign-in
   in the local browser. Public DNS/provider firewall/ACME, internet WireGuard,
   and native Windows client/firewall checks remain pending. No production VPS
