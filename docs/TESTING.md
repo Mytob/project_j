@@ -1,5 +1,39 @@
 # Testing
 
+## v1.6.0-dev.19 clean release gate and Ubuntu package update — 2026-10-22
+
+- Source: clean commit `dd026e4a2faa84285745c7cb63a05bf66174d6f4` on
+  `fix/v16-maintenance-self-restart`; draft [PR #79](https://github.com/Mytob/project_j/pull/79)
+  targets `dev`.
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.19 -SupportedUpgradeSources 1.6.0-dev.18` — PASS, exit 0. Go
+  tests, frontend typecheck/unit/build, four Chromium/Firefox/WebKit admin
+  checks, M1–M6 integration/security/streaming, and offline package
+  install/update/rollback/retention/password-recovery checks passed. The
+  release report records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Artifacts: `dist/jellyfin-proxy-1.6.0-dev.19.pkg`, 137,289,488 bytes,
+  SHA-256 `a1c656f95fe91f5cd8aab5319d0e7cbbdfb36847077b7d301bf027b578a002df`;
+  standalone `proxyctl-linux-amd64`, 14,307,488 bytes, SHA-256
+  `e0614bf43e5553b0557bda400941eff1b4c2e1c33f02b85fc3f748e94243abe1`.
+  Report: `dist/release-validation-1.6.0-dev.19.json`.
+- Exact-package Ubuntu update: Transferred the `.pkg` and sidecar checksum to
+  the disposable Ubuntu VM `D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx`,
+  already running dev.18. `sha256sum -c` passed and `proxyctl update` accepted
+  the independently entered expected hash, created its pre-update backup,
+  loaded the bundled images, and completed service and HTTPS readiness checks.
+  `proxyctl doctor` passed and reported version dev.19/build `dd026e4a2faa`;
+  `proxyctl --version` reported dev.19; all five containers were healthy.
+- Legacy content migration: Before this fix, the dev.18 upgrade path left the
+  default `errors/` directory absent because the old updater performed the
+  migration before the new binary was installed. The dev.19 admin startup
+  migration created `403.html`, `404.html`, `502.html`, and `503.html` in the
+  active persistent site revision. The preexisting `index.html` remained.
+- Dashboard update/rollback acceptance is still pending a fresh admin sign-in
+  in the local browser. Public DNS/provider firewall/ACME, internet WireGuard,
+  and native Windows client/firewall checks remain pending. No production VPS
+  or public release was used.
+
 ## v1.6.0-dev.17 maintenance self-restart fix — 2026-10-22
 
 - Source: commit `32c6bc15b01bb902bb22265e393f35da6ba08afe` on

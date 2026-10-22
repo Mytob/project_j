@@ -57,10 +57,12 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The clean dev.17 local release gate and exact-package Ubuntu CLI
-update, doctor, and maintenance-service refresh smoke passed. Dashboard
+**Status: The clean dev.19 local release gate and exact-package Ubuntu CLI
+update passed on the disposable VM. The dev.19 startup migration created the
+four default public error pages and preserved the existing homepage. Dashboard
 update/rollback acceptance remains open pending a fresh admin sign-in; public
-network and native Windows evidence are also pending.**
+network and native Windows evidence are also pending, so stable release
+readiness remains blocked.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
 432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
@@ -70,11 +72,26 @@ dev.15 candidate was built from dev commit
 
 The dashboard maintenance worker now saves its terminal job state before
 scheduling a delayed refresh of the restricted maintenance service, preventing
-the service from killing its own update process. The clean dev.17 package
-passed the local release gate and exact CLI update on a disposable Ubuntu
-26.04.1 clone; a delayed systemd refresh smoke also passed. Dashboard update
-and rollback remain unverified until the local test admin signs in again. The
-fix is in draft [PR #79](https://github.com/Mytob/project_j/pull/79).
+the service from killing its own update process. PR #79 also fixes built-in
+public error pages on fresh content stores and migrates them at admin startup
+when an older `proxyctl` performed the upgrade. The clean dev.19 package passed
+the local release gate and exact CLI update on the disposable Ubuntu VM;
+`proxyctl doctor` and all five container health checks passed, the four default
+error pages appeared in the persistent active revision, and its existing
+homepage remained. Dashboard update/rollback remain unverified until the local
+test admin signs in again. PR #79 targets `dev`.
+
+On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
+1.6.0-dev.19 -SupportedUpgradeSources 1.6.0-dev.18` passed from clean commit
+`dd026e4a2faa84285745c7cb63a05bf66174d6f4`. Go, frontend, four browser,
+integration/security/streaming, and offline package install/update/rollback,
+retention, and password-recovery gates passed. The report records
+`local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+The exact dev.19 package updated the disposable VM from dev.18 with a verified
+checksum and pre-update backup. The VM's `proxyctl doctor` passed; all five
+containers were healthy. The install-gate table in [TESTING.md](TESTING.md)
+records package sizes and hashes. Public DNS/provider firewall/ACME, internet
+WireGuard, and native Windows checks remain unverified.
 
 On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
 1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` passed. Go tests,
@@ -137,18 +154,18 @@ implementation audit and remaining work are tracked in
 
 | Area | Status | Remaining gate |
 | --- | --- | --- |
-| Go, frontend and browser regression checks | **Passed on clean dev.15** | Host-specific release checks remain open. |
-| Offline .pkg install/update/rollback | **Passed on clean dev.15 in local isolated Docker gate** | Six bundled images loaded without registry access. |
-| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install/reboot; dev.15 exact-package update, reboot, doctor, backup, and host security checks passed** | Full destructive failure matrix was not repeated against dev.15. |
+| Go, frontend and browser regression checks | **Passed on clean dev.19** | Authenticated dashboard update/rollback remains open; host-specific release checks remain open. |
+| Offline .pkg install/update/rollback | **Passed on clean dev.19 in local isolated Docker gate** | Six bundled images loaded without registry access. |
+| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install/reboot; dev.15 host checks; dev.19 exact-package update and migration passed** | Full destructive failure matrix was not repeated against dev.19. |
 | Public DNS, provider firewall and ACME | **Blocked** | Requires a separate disposable public VPS and test domain. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires Windows client and scoped firewall/playback verification. |
-| Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.15 as stable. |
+| Complete v1.6 stable release | **Not ready** | Dashboard update/rollback, public DNS/provider firewall/ACME/internet WireGuard, and Windows checks remain unverified. Do not promote or publish dev.19 as stable. |
 
-The clean dev.15 package SHA-256 is
-`ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`;
+The clean dev.19 package SHA-256 is
+`a1c656f95fe91f5cd8aab5319d0e7cbbdfb36847077b7d301bf027b578a002df`;
 standalone proxyctl SHA-256 is
-`69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`. The report
-is `dist/release-validation-1.6.0-dev.15.json`. Generated artifacts remain local
+`e0614bf43e5553b0557bda400941eff1b4c2e1c33f02b85fc3f748e94243abe1`. The report
+is `dist/release-validation-1.6.0-dev.19.json`. Generated artifacts remain local
 under dist; no stable release or production deployment is claimed. See
 [TESTING.md](TESTING.md) and [v1.6/VPS_ACCEPTANCE.md](v1.6/VPS_ACCEPTANCE.md)
 for evidence and remaining acceptance checks.

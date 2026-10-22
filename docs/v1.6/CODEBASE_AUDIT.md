@@ -3,7 +3,7 @@
 **Audit date:** 2026-10-22
 
 **Baseline commit:** `8562b23` (v1.6 branch start)
-**Current tested dev commit:** `78dfb7987946f011e88dc7cde4660c2d24b12142`
+**Current tested candidate commit:** `dd026e4a2faa84285745c7cb63a05bf66174d6f4`
 **Implementation PR:** #71 merged into dev at c8e279a.
 **Documentation PR:** #72 merged into dev at 432b0db.
 
@@ -658,3 +658,28 @@ absent.
   on the VM because the test browser session expired and needs a fresh admin
   sign-in. Public provider/DNS/ACME and Windows client checks remain pending;
   the production VPS was not touched. The change is draft PR #79 into `dev`.
+
+### v1.6.0-dev.19 release gate and content migration correction — 2026-10-22
+
+- The update test from dev.18 showed that the older `proxyctl` performs its
+  package migration before replacing itself, so error-page migration code
+  introduced in the new binary does not run during that update. Added an
+  idempotent migration at admin startup, while retaining the package/fresh
+  store initialization path. Tests cover migration of an existing content
+  revision and retention of the existing homepage/custom content.
+- Clean commit `dd026e4a2faa84285745c7cb63a05bf66174d6f4` passed
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.19
+  -SupportedUpgradeSources 1.6.0-dev.18`, exit 0. Go, frontend, four-browser
+  admin, M1–M6 integration/security/streaming, and offline package install,
+  update, rollback, retention and password recovery checks passed. The report
+  records local gate passed and host-specific readiness blocked.
+- The exact package updated the disposable Ubuntu VM from dev.18 after the
+  transferred SHA-256 matched. The CLI created its mandatory pre-update
+  backup, loaded packaged images, and passed service/HTTPS readiness. Doctor
+  reported dev.19/build `dd026e4a2faa`; all five services were healthy. The
+  active persistent content revision contained the existing `index.html` and
+  all four default error pages (403, 404, 502, 503) after admin startup.
+- Dashboard update/rollback is still awaiting a fresh local administrator
+  sign-in. Public provider/DNS/ACME, internet WireGuard, and native Windows
+  checks remain unverified. No production VPS was changed and no stable
+  release is claimed. Detailed evidence is in [`../TESTING.md`](../TESTING.md).
