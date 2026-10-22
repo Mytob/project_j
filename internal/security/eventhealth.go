@@ -17,6 +17,10 @@ import (
 
 const eventWriterHealthFile = "admin-writer.health"
 
+// EventWriterHealthFilename identifies the volatile liveness marker beside
+// signed security events. Fresh-host recovery deliberately does not restore it.
+const EventWriterHealthFilename = eventWriterHealthFile
+
 type eventWriterHealth struct {
 	At      time.Time `json:"at"`
 	Healthy bool      `json:"healthy"`

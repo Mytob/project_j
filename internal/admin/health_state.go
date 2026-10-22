@@ -37,6 +37,53 @@ type healthStateFile struct {
 	Events     []healthEvent           `json:"events"`
 }
 
+type cpuPressureState struct {
+	degraded    bool
+	initialized bool
+	high        int
+	low         int
+}
+
+func (h *cpuPressureState) Initialize(degraded bool) {
+	if h.initialized {
+		return
+	}
+	h.degraded = degraded
+	h.initialized = true
+}
+
+// Observe applies two-sample hysteresis to host CPU pressure. A single spike
+// does not change health; recovery uses a lower threshold to avoid flapping.
+func (h *cpuPressureState) Observe(value float64) (degraded bool, phase string) {
+	h.initialized = true
+	if h.degraded {
+		if value <= 85 {
+			h.low++
+			if h.low >= 2 {
+				h.degraded = false
+				h.low = 0
+				h.high = 0
+				return false, "recovered"
+			}
+			return true, "recovering"
+		}
+		h.low = 0
+		return true, "degraded"
+	}
+	if value >= 95 {
+		h.high++
+		if h.high >= 2 {
+			h.degraded = true
+			h.high = 0
+			h.low = 0
+			return true, "degraded"
+		}
+		return false, "confirming"
+	}
+	h.high = 0
+	return false, "healthy"
+}
+
 func (s *Server) loadHealthState(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -79,9 +126,11 @@ func (s *Server) loadHealthState(path string) error {
 func (s *Server) recordHealth(items []componentStatus, now time.Time) []componentStatus {
 	s.healthMu.Lock()
 	defer s.healthMu.Unlock()
+	changed := false
 	if s.healthRecords == nil {
 		s.healthRecords = make(map[string]healthRecord)
 	}
+	oldEventCount := len(s.healthEvents)
 	cutoff := now.Add(-healthEventLifetime)
 	retained := s.healthEvents[:0]
 	for _, event := range s.healthEvents {
@@ -90,6 +139,7 @@ func (s *Server) recordHealth(items []componentStatus, now time.Time) []componen
 		}
 	}
 	s.healthEvents = retained
+	changed = len(retained) != oldEventCount
 	for i := range items {
 		item := &items[i]
 		old, exists := s.healthRecords[item.Name]
@@ -104,6 +154,9 @@ func (s *Server) recordHealth(items []componentStatus, now time.Time) []componen
 			checkedAt := now
 			record.LastFailureAt = &checkedAt
 		}
+		if !exists || old.State != item.State {
+			changed = true
+		}
 		if exists && old.State != item.State {
 			s.healthEvents = append(s.healthEvents, healthEvent{At: now, Name: item.Name, From: old.State, To: item.State, Detail: item.Detail})
 		}
@@ -115,7 +168,7 @@ func (s *Server) recordHealth(items []componentStatus, now time.Time) []componen
 	if excess := len(s.healthEvents) - maxHealthEvents; excess > 0 {
 		s.healthEvents = append([]healthEvent(nil), s.healthEvents[excess:]...)
 	}
-	if s.healthStatePath != "" {
+	if s.healthStatePath != "" && changed {
 		if err := s.saveHealthStateLocked(); err != nil {
 			s.logger.Error("persist health history", "error", err)
 		}

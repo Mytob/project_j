@@ -11,6 +11,7 @@ ARG SYSTEMD_VERSION=257.13-1~deb13u1
 ARG NFTABLES_VERSION=1.1.3-1
 ARG PYTHON_SYSTEMD_VERSION=235-1+b6
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends fail2ban=${FAIL2BAN_VERSION} systemd=${SYSTEMD_VERSION} nftables=${NFTABLES_VERSION} python3-systemd=${PYTHON_SYSTEMD_VERSION} ca-certificates && rm -rf /var/lib/apt/lists/*
+LABEL jellyfin.proxy.component-version="${FAIL2BAN_VERSION}"
 COPY deploy/fail2ban/jail.local /etc/fail2ban/jail.local
 COPY deploy/fail2ban/filter.d/jp-manual.conf /etc/fail2ban/filter.d/jp-manual.conf
 COPY deploy/fail2ban/action.d/jp-noop.conf /etc/fail2ban/action.d/jp-noop.conf

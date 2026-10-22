@@ -3,8 +3,9 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('test', 'package', 'release')]
     [string]$Target = 'test',
-    [string]$Version = '1.0.0-dev',
-    [string]$HostCheckEvidence = ''
+    [string]$Version = '1.6.0-dev',
+    [string]$HostCheckEvidence = '',
+    [string[]]$SupportedUpgradeSources = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,7 +24,7 @@ if ($Target -eq 'release') {
     $checks = @(
         [ordered]@{ id = 'go-tests'; status = 'not_run'; evidence = 'Go unit tests and compilation.' }
         [ordered]@{ id = 'integration-browser-monitoring-security'; status = 'not_run'; evidence = 'M1–M6 regressions, Chromium/Firefox/WebKit admin and responsive security dashboard, isolated Fail2ban SSH nftables IPv4/IPv6 bans, signed admin auth events and recovery, Caddy admin-only 403 enforcement with Jellyfin unaffected, unban/expiry/SSE, and streaming/range/WebSocket checks.' }
-        [ordered]@{ id = 'package-install-update-rollback'; status = 'not_run'; evidence = 'Release archive, offline loading of all seven images, install, namespace firewalls, monitoring and security services, v1.3 data preservation, update, rollback, retention, and password recovery.' }
+        [ordered]@{ id = 'package-install-update-rollback'; status = 'not_run'; evidence = 'Release archive, offline loading of six container images, restricted host maintenance observer, install, namespace firewalls, monitoring and security services, v1.3 data preservation, update, rollback, retention, and password recovery.' }
     )
     $hostChecks = [ordered]@{
         status = 'blocked'
@@ -96,7 +97,12 @@ if ($Target -eq 'release') {
         $checks[1].status = 'passed'
 
         $checks[2].status = 'running'
-        Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
+        $packageArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
+        if ($SupportedUpgradeSources.Count -gt 0) {
+            $packageArguments += '-SupportedUpgradeSources'
+            $packageArguments += $SupportedUpgradeSources
+        }
+        Invoke-Checked 'pwsh' $packageArguments
         $checks[2].status = 'passed'
         $report.local_gate = 'passed'
     }
@@ -151,7 +157,12 @@ if ($Target -eq 'test') {
 
 if ($Target -eq 'package') {
     Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'tests/integration/run.ps1'))
-    Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
+    $packageArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
+    if ($SupportedUpgradeSources.Count -gt 0) {
+        $packageArguments += '-SupportedUpgradeSources'
+        $packageArguments += $SupportedUpgradeSources
+    }
+    Invoke-Checked 'pwsh' $packageArguments
     exit 0
 }
 

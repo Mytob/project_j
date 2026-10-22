@@ -71,14 +71,16 @@ that project):
 Build and validate a self-contained Linux/amd64 development package:
 
 ```powershell
-./build.ps1 package -Version 1.0.0-dev
+./build.ps1 package -Version 1.6.0-dev
 ```
 
-The archive and standalone `proxyctl-linux-amd64` installer are written under
-`dist/`. On a supported Ubuntu 26.04 x64 VPS, copy both files and run
-`sudo ./proxyctl-linux-amd64 install ./jellyfin-proxy-1.0.0-dev-linux-amd64.tar.gz`.
-The guided installer checks DNS, asks for the initial admin password, and
-deploys only the bundled images.
+The `.pkg` archive, independent `.pkg.sha256` checksum, standalone
+`proxyctl-linux-amd64` installer and its checksum are written under `dist/`.
+On a supported Ubuntu 26.04 x64 host, copy the package and utility with their
+checksum files, then run `sudo ./proxyctl-linux-amd64 install
+./jellyfin-proxy-1.6.0.pkg`. The installer asks you to enter the package
+checksum independently before validating or changing the host. v1.6 is a
+fresh-install release and does not migrate v1.5.1 state.
 
 Run the complete locally available release gate:
 

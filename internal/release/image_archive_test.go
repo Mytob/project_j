@@ -18,6 +18,15 @@ func TestVerifyImageArchiveMatchesConfigDigestsAndPlatforms(t *testing.T) {
 	}
 }
 
+func TestRegularTarTypeAcceptsLegacyZeroFlag(t *testing.T) {
+	if !isRegularTarType(legacyTarRegularTypeflag) || !isRegularTarType(tar.TypeReg) {
+		t.Fatal("regular tar type check rejected a supported regular-file flag")
+	}
+	if isRegularTarType(tar.TypeDir) || isRegularTarType(tar.TypeSymlink) {
+		t.Fatal("regular tar type check accepted a directory or symlink")
+	}
+}
+
 func TestVerifyImageArchiveRejectsDigestMismatch(t *testing.T) {
 	expected, archive := makeDockerArchiveFixture(t)
 	expected[0].ImageID = "sha256:" + strings.Repeat("f", 64)
@@ -39,7 +48,7 @@ func TestVerifyImageArchiveRejectsWrongPlatform(t *testing.T) {
 
 func makeDockerArchiveFixture(t *testing.T) ([]Image, string) {
 	t.Helper()
-	refs := []string{"jellyfin-proxy/admin:1.0.0-dev", "jellyfin-proxy/hostmetrics:1.0.0-dev", "jellyfin-proxy/containerhealth:1.0.0-dev", "jellyfin-proxy/wireguard:1.0.0-dev", "jellyfin-proxy/caddy:1.0.0-dev", "jellyfin-proxy/security:1.0.0-dev", "alpine:3.24.2"}
+	refs := []string{"jellyfin-proxy/admin:1.0.0-dev", "jellyfin-proxy/hostmetrics:1.0.0-dev", "jellyfin-proxy/wireguard:1.0.0-dev", "jellyfin-proxy/caddy:1.0.0-dev", "jellyfin-proxy/security:1.0.0-dev", "alpine:3.24.2"}
 	configs := make(map[string][]byte, len(refs))
 	expected := make([]Image, 0, len(refs))
 	for _, reference := range refs {

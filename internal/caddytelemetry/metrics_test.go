@@ -3,6 +3,7 @@ package caddytelemetry
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 func TestRecorderCountsInFlightStreamingBytesAndErrors(t *testing.T) {
@@ -55,10 +58,12 @@ func TestAllowlistDenyCountsOnlyExplicitHTTPDenials(t *testing.T) {
 	data := &counters{}
 	deny := Deny{data: data}
 	response := httptest.NewRecorder()
-	if err := deny.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil), nil); err != nil {
-		t.Fatal(err)
+	err := deny.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil), nil)
+	var handlerError caddyhttp.HandlerError
+	if !errors.As(err, &handlerError) || handlerError.StatusCode != http.StatusForbidden {
+		t.Fatalf("deny handler error = %#v, want a 403 Caddy error", err)
 	}
-	if response.Code != http.StatusForbidden || data.blocked.Load() != 1 {
+	if response.Code != http.StatusOK || data.blocked.Load() != 1 {
 		t.Fatalf("deny response=%d blocked=%d", response.Code, data.blocked.Load())
 	}
 }

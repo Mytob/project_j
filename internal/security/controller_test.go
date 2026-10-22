@@ -37,6 +37,13 @@ func TestParseSSHAuthenticationMessages(t *testing.T) {
 	}
 }
 
+func TestSSHJournalMatchArgsCoverLegacyAndSessionProcesses(t *testing.T) {
+	want := []string{"_COMM=sshd", "+", "_COMM=sshd-session"}
+	if got := sshJournalMatchArgs(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("SSH journal match arguments = %#v, want %#v", got, want)
+	}
+}
+
 func TestFail2banCommandsUseSupportedQueriesAndRestoreBanExpiry(t *testing.T) {
 	now := time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC)
 	var calls [][]string

@@ -15,6 +15,15 @@ import (
 
 const maxImageConfigBytes = 16 << 20
 
+// legacyTarRegularTypeflag is the zero-valued regular-file type flag written
+// by older tar producers. Go's archive/tar TypeRegA alias is deprecated, but
+// release archives must continue accepting that on-disk representation.
+const legacyTarRegularTypeflag = byte(0)
+
+func isRegularTarType(typeflag byte) bool {
+	return typeflag == tar.TypeReg || typeflag == legacyTarRegularTypeflag
+}
+
 type dockerArchiveImage struct {
 	Config   string   `json:"Config"`
 	RepoTags []string `json:"RepoTags"`
@@ -64,7 +73,7 @@ func VerifyImageArchive(archivePath string, expected []Image) error {
 			return fmt.Errorf("read Docker image archive: %w", err)
 		}
 		if header.Name == "manifest.json" {
-			if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			if !isRegularTarType(header.Typeflag) {
 				return errors.New("Docker image archive manifest is not a regular file")
 			}
 			if seenManifest || header.Size < 0 || header.Size > 1<<20 {
@@ -125,7 +134,7 @@ func VerifyImageArchive(archivePath string, expected []Image) error {
 		if !isConfig {
 			continue
 		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA || seenConfigs[header.Name] || header.Size < 0 || header.Size > maxImageConfigBytes {
+		if !isRegularTarType(header.Typeflag) || seenConfigs[header.Name] || header.Size < 0 || header.Size > maxImageConfigBytes {
 			return errors.New("Docker image archive has a non-regular, duplicate, or oversized image config")
 		}
 		seenConfigs[header.Name] = true

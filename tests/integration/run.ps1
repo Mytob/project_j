@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [int]$HttpPort = 18080,
-    [int]$HttpsPort = 18443,
+    [int]$HttpPort = 0,
+    [int]$HttpsPort = 0,
     [switch]$UpdateBrowserSnapshots
 )
 
@@ -24,6 +24,25 @@ $hostMetricsIP = "$subnetPrefix.60"
 $homePeerIP = "$subnetPrefix.70"
 $securityBaseImage = "jellyfin-proxy/security-integration-base:$PID"
 $securityTestImage = "jellyfin-proxy/security-integration:$PID"
+
+function Get-AvailableLoopbackPort {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    try {
+        $listener.Start()
+        return [int]$listener.LocalEndpoint.Port
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+if ($HttpPort -eq 0) { $HttpPort = Get-AvailableLoopbackPort }
+if ($HttpsPort -eq 0) {
+    do { $HttpsPort = Get-AvailableLoopbackPort } while ($HttpsPort -eq $HttpPort)
+}
+if ($HttpPort -lt 1 -or $HttpPort -gt 65535 -or $HttpsPort -lt 1 -or $HttpsPort -gt 65535 -or $HttpPort -eq $HttpsPort) {
+    throw 'HTTP and HTTPS integration ports must be distinct TCP ports in the range 1 through 65535.'
+}
 
 function Invoke-Compose {
     & docker compose --project-name $projectName --file $composeFile @args
@@ -90,6 +109,12 @@ function Set-WhitelistPolicy([string[]]$Entries) {
 
 function New-TestCredential {
     $password = 'integration-test-admin-password'
+    # A previous run can be interrupted before its finally block removes this
+    # generated fixture. Remove that stale file or bind-mount directory before
+    # atomically creating the new credential on Windows-backed Docker volumes.
+    if (Test-Path -LiteralPath $credentialFile) {
+        Remove-Item -LiteralPath $credentialFile -Force -Recurse
+    }
     if (Get-Command go -ErrorAction SilentlyContinue) {
         & go run ./tests/integration/credentialgen --output $credentialFile --password $password
     }
@@ -170,10 +195,19 @@ function Invoke-ClientLogin([string]$Service, [string]$Password, [string]$Cookie
     $cookiePath = "/tmp/jp-security-$CookieName.cookies"
     $uri = 'https://admin.domain.test/'
     $common = @('--noproxy', '*', '--silent', '--show-error', '--insecure', '--connect-timeout', '3', '--max-time', '8', '--connect-to', 'admin.domain.test:443:wireguard:443')
-    $page = & docker compose --project-name $projectName --file $composeFile exec --no-TTY $Service curl @common --cookie-jar $cookiePath $uri
+    $page = & docker compose --project-name $projectName --file $composeFile exec --no-TTY $Service curl @common --cookie-jar $cookiePath --write-out "`n%{http_code}" $uri
     if ($LASTEXITCODE -ne 0) { throw "Could not start the direct admin login test for $Service." }
-    $csrf = [regex]::Match(([string]($page -join "`n")), 'name="csrf" value="([^"]+)"').Groups[1].Value
-    if (-not $csrf) { throw "Admin sign-in page did not provide a CSRF token to $Service." }
+    $pageText = [string]($page -join "`n")
+    $statusBreak = $pageText.LastIndexOf("`n")
+    if ($statusBreak -lt 0) { throw "Direct admin sign-in page from $Service omitted its HTTP status." }
+    $pageStatus = $pageText.Substring($statusBreak + 1).Trim()
+    $pageBody = $pageText.Substring(0, $statusBreak)
+    $csrf = [regex]::Match($pageBody, 'name="csrf" value="([^"]+)"').Groups[1].Value
+    if (-not $csrf) {
+        $preview = ($pageBody -replace '\s+', ' ').Trim()
+        if ($preview.Length -gt 180) { $preview = $preview.Substring(0, 180) }
+        throw "Admin sign-in page did not provide a CSRF token to $Service (HTTP $pageStatus): $preview"
+    }
     $output = & docker compose --project-name $projectName --file $composeFile exec --no-TTY $Service curl @common --cookie $cookiePath --cookie-jar $cookiePath --request POST --data-urlencode "csrf=$csrf" --data-urlencode "password=$Password" --output /dev/null --write-out '%{http_code}' https://admin.domain.test/login
     if ($LASTEXITCODE -ne 0) { throw "Direct admin login request from $Service failed." }
     $status = 0
@@ -302,7 +336,7 @@ try {
         throw "Admin service returned 502. Container logs:`n$($adminLogs -join "`n")"
     }
     Assert-Equal '303' ([string][int]$unauthorized.StatusCode) 'Unauthenticated admin dashboard did not redirect to sign-in.'
-    $anonymousWireGuard = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    $anonymousWireGuard = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar
     Assert-Equal '303' ([string][int]$anonymousWireGuard.StatusCode) 'Unauthenticated request downloaded the WireGuard config.'
     $loginPage = Invoke-AdminRequest -Path '/' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$loginPage.StatusCode) 'Admin sign-in page was unavailable.'
@@ -347,6 +381,14 @@ try {
     $securityCsrf = $adminState.csrf
     $trustedPeerAdd = Invoke-AdminRequest -Path '/whitelist/add' -Method 'POST' -CookieJar $adminJar -CSRF $securityCsrf -Entry $trustedPeerEntry -Name 'Security integration peer'
     Assert-Equal '303' ([string][int]$trustedPeerAdd.StatusCode) 'Could not allow the isolated test client for the Jellyfin isolation check.'
+	$trustedAdminDeadline = (Get-Date).AddSeconds(8)
+	$trustedAdminPage = $null
+	do {
+		$trustedAdminPage = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+		if ([int]$trustedAdminPage.StatusCode -eq 200) { break }
+		Start-Sleep -Milliseconds 150
+	} while ((Get-Date) -lt $trustedAdminDeadline)
+	Assert-Equal '200' ([string]$trustedAdminPage.StatusCode) 'Caddy did not apply the newly added trusted test address before its admin authentication checks.'
 
     foreach ($attempt in 1..2) {
         $result = Invoke-ClientLogin -Service 'untrusted-client' -Password 'wrong-security-test-password' -CookieName 'reset-check'
@@ -427,7 +469,16 @@ try {
     }
     if (-not $caddyRecovered) { throw 'Caddy did not resynchronize the persisted administrator ban after restart.' }
     if ($state.security.health.last_error) { throw "Recovered security services still report a stale error: $($state.security.health.last_error)" }
-    $blockedAfterRestart = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+    # caddy_sync may still show the last successful observation while Caddy is
+    # restarting. Require the network-visible block to recover as well; the
+    # controller reconciles the persisted snapshot on its next one-second pass.
+    $blockedAfterRestart = $null
+    $blockRecoveryDeadline = (Get-Date).AddSeconds(5)
+    do {
+        $blockedAfterRestart = Get-ClientAdminResponse -Service 'trusted-client' -Path '/'
+        if ([int]$blockedAfterRestart.StatusCode -eq 403) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $blockRecoveryDeadline)
     Assert-Equal '403' ([string]$blockedAfterRestart.StatusCode) 'Caddy restart lost the active administrator blocklist.'
 
     $securityCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
@@ -463,7 +514,8 @@ try {
     $wireguardPage = Invoke-AdminRequest -Path '/wireguard' -Method 'GET' -CookieJar $adminJar
     Assert-Equal '200' ([string][int]$wireguardPage.StatusCode) 'Authenticated administrator could not open the WireGuard page.'
     if ($wireguardPage.Body -notmatch '/app-assets/assets/') { throw 'WireGuard route did not serve the embedded React application.' }
-    $wireguardDownload = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    $wireguardCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $wireguardDownload = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar -CSRF $wireguardCsrf
     Assert-Equal '200' ([string][int]$wireguardDownload.StatusCode) 'Authenticated administrator could not download the Windows WireGuard config.'
     if ($wireguardDownload.Headers -notmatch '(?i)Content-Disposition: attachment; filename="jellyfin-proxy.conf"') { throw 'WireGuard config response lacks an attachment filename.' }
     if ($wireguardDownload.Headers -notmatch '(?i)Content-Type: application/octet-stream') { throw 'WireGuard config response has an unexpected content type.' }
@@ -471,7 +523,7 @@ try {
     foreach ($expected in @('[Interface]', 'Address = 10.66.66.2/32', 'Endpoint = wireguard:51820', 'AllowedIPs = 10.66.66.1/32', 'PersistentKeepalive = 25')) {
         if ($wireguardDownload.Body -notmatch [regex]::Escape($expected)) { throw "WireGuard config download is missing '$expected'." }
     }
-    $wireguardDownloadAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    $wireguardDownloadAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar -CSRF $wireguardCsrf
     Assert-Equal '503' ([string][int]$wireguardDownloadAgain.StatusCode) 'A second one-time WireGuard download unexpectedly succeeded.'
     $logoutState = Get-AdminInitial -CookieJar $adminJar
     $logout = Invoke-AdminRequest -Path '/logout' -Method 'POST' -CookieJar $adminJar -CSRF $logoutState.csrf
@@ -518,7 +570,8 @@ try {
     $freshCsrf = [regex]::Match($freshLoginPage.Body, 'name="csrf" value="([^"]+)"').Groups[1].Value
     $freshLogin = Invoke-AdminRequest -Path '/login' -Method 'POST' -CookieJar $adminJar -CSRF $freshCsrf -Password 'integration-test-admin-password'
     Assert-Equal '303' ([string][int]$freshLogin.StatusCode) 'Admin could not sign in after service restart.'
-    $wireguardAfterRestart = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    $wireguardAfterRestartCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $wireguardAfterRestart = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar -CSRF $wireguardAfterRestartCsrf
     Assert-Equal '503' ([string][int]$wireguardAfterRestart.StatusCode) 'Admin restart unexpectedly restored a consumed one-time WireGuard config.'
     $restoredSecurity = Get-AdminInitial -CookieJar $adminJar
     $defaultSecurityConfig = $restoredSecurity.security.config
@@ -645,12 +698,13 @@ try {
     Assert-Equal '303' ([string][int]$rotation.StatusCode) 'Administrator could not rotate and revoke the Windows peer.'
     $revokedProbe = Get-WireGuardHealth -TimeoutSeconds 2
     if ($revokedProbe.Healthy) { throw 'The previously active Windows peer remained able to reach Jellyfin after rotation.' }
-    $replacementConfig = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    $replacementCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
+    $replacementConfig = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar -CSRF $replacementCsrf
     Assert-Equal '200' ([string][int]$replacementConfig.StatusCode) 'Rotated Windows peer configuration was unavailable.'
     if ($replacementConfig.Body -notmatch '(?m)^PrivateKey = [A-Za-z0-9+/]{43}=$') { throw 'Rotated config did not contain a valid private key.' }
     $replacementPath = Join-Path $adminTempDir 'replacement-windows.conf'
     [System.IO.File]::WriteAllText($replacementPath, $replacementConfig.Body, [System.Text.UTF8Encoding]::new($false))
-    $replacementAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'GET' -CookieJar $adminJar
+    $replacementAgain = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar -CSRF $replacementCsrf
     Assert-Equal '503' ([string][int]$replacementAgain.StatusCode) 'Rotated Windows configuration was not deleted after download.'
     $originalConfigPath = Join-Path $wireguardConfigDir 'windows.conf'
     & docker compose --project-name $projectName --file $composeFile cp $originalConfigPath home-peer:/tmp/windows.conf

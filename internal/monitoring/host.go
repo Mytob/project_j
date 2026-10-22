@@ -159,7 +159,14 @@ func readCPU(path string) (total, idle uint64, err error) {
 			}
 			values = append(values, value)
 		}
-		for _, value := range values {
+		// Linux reports guest and guest_nice again as part of user and nice.
+		// Include user through steal (the first eight counters) only, otherwise
+		// guest time is counted twice and CPU utilization is understated.
+		limit := len(values)
+		if limit > 8 {
+			limit = 8
+		}
+		for _, value := range values[:limit] {
 			total += value
 		}
 		idle = values[3]

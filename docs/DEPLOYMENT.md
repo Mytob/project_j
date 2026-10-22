@@ -23,17 +23,61 @@ Build or obtain the matching Linux/amd64 package and standalone installer. Copy
 both to the VPS, then run from an interactive terminal:
 
 ```sh
-sudo ./proxyctl-linux-amd64 install ./jellyfin-proxy-1.0.0.tar.gz
+sudo ./proxyctl-linux-amd64 install ./jellyfin-proxy-1.6.0.pkg
 ```
 
-The guided prompts collect the base domain, confirmation of the displayed DNS
-records, a password (hidden input, 12 or more characters), and the public UDP
-port (default 51820). The installer then validates the package, lays out
-`/opt/jellyfin-proxy/`, generates retained WireGuard peer configurations,
-loads only the package's verified images, starts the fixed Compose project and
-waits for healthy services and public HTTPS on the base domain. An empty
-whitelist is installed, so the Jellyfin access hostname denies all clients
-until an administrator adds allowlist entries.
+v1.6 uses a `.pkg` archive and a separate `.pkg.sha256` file. The CLI asks you
+to enter the checksum independently; it never trusts a checksum stored inside
+the package. The guided prompts collect the base domain, administrator IP
+allowlist, hidden application password, SSH administrator account and
+authentication method, WireGuard port, backup policy, and a final review. For
+password SSH, the SSH password is hidden; for public-key SSH, the supplied
+single public key is installed and the hidden password is used for sudo. The
+installer scopes the selected SSH authentication method to the new account and
+keeps the current SSH session and root policy intact while it is configured.
+
+Before installation continues, open a second SSH session as the new
+administrator and verify that `sudo` works, then confirm this in the installer.
+If that check fails or is declined, the application install stops and the
+installer removes only the new account and SSH policy it created. Disabling
+root SSH login is a separate optional step after the second-session check. The
+installer never changes host firewall rules.
+
+The installer validates the complete archive and its compatibility metadata
+before laying out `/opt/jellyfin-proxy/`, generating retained WireGuard peer
+configurations, loading only the package's verified images, starting the fixed
+Compose project, and waiting for healthy services and public HTTPS on the base
+domain. An empty whitelist is installed, so the Jellyfin access hostname
+denies all clients until an administrator adds allowlist entries.
+
+v1.6 is a fresh-install release. It intentionally does not migrate installations
+or state from v1.5.1.
+
+## Fresh-host disaster recovery
+
+To recover onto a new supported VPS, copy the compatible `.pkg`, its separate
+`.pkg.sha256` file, and a verified `.bak` archive to the new host, then run:
+
+```sh
+sudo ./proxyctl-linux-amd64 recover ./jellyfin-proxy-1.6.0.pkg ./backup.bak
+```
+
+The recovery flow independently verifies the package checksum and backup,
+checks database-schema compatibility, and asks for the new VPS domain, admin
+password, allowlist, WireGuard port, and backup policy. It restores the static
+site, validated statistics database, and security-event spool only when every
+event verifies against its archived HMAC key. It creates fresh administrator
+credentials, TOTP enrollment state, WireGuard server/client keys, allowlist,
+environment, and deployment settings. SSH and host firewall configuration are
+never restored. The command refuses v1.5.1 backups because that state migration
+is outside v1.6 scope.
+
+Before starting Compose, the installer enables the host-owned
+`jellyfin-proxy-maintenance.service`. The service exposes only its fixed health
+and container-status reads on `/run/jellyfin-proxy-maintenance/maintenance.sock`.
+The admin container receives that directory read-only and may connect only as
+UID 65532; no container receives `/var/run/docker.sock`. Application update,
+restore, or shell commands are not exposed through this observation API.
 
 The install is deliberately non-destructive: it refuses to reuse an existing
 install or project. If startup or readiness fails, it stops only the new
@@ -96,8 +140,12 @@ Copy the new self-contained package and `proxyctl-linux-amd64` to the VPS, then
 run:
 
 ```sh
-sudo ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.0.1.tar.gz
+sudo ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.6.1.pkg
 ```
+
+For v1.6, use a `.pkg` file and enter the expected SHA-256 from its separate
+`.pkg.sha256` file when prompted. Updates are accepted only when the manifest
+lists the active release version as a supported source.
 
 The updater reports its completed milestones as a percentage. A live spinner
 and elapsed time remain visible while Docker loads images or the health checks

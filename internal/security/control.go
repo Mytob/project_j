@@ -17,8 +17,10 @@ import (
 type ControlAPI struct {
 	Manager  *Manager
 	OnChange func(context.Context) error
-	OnUnban  func(context.Context, Service, string) error
+	OnUnban  func(context.Context, Service, string, func() error) error
 }
+
+var errNoActiveBan = errors.New("no active ban exists for that service and IP")
 
 func (a *ControlAPI) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -135,18 +137,30 @@ func (a *ControlAPI) unban(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No active ban exists for that service and IP", http.StatusNotFound)
 		return
 	}
+	removed := false
+	commit := func() error {
+		var err error
+		removed, err = a.Manager.Unban(request.Service, request.IP)
+		if err == nil && !removed {
+			return errNoActiveBan
+		}
+		return err
+	}
 	if a.OnUnban != nil {
-		if err := a.OnUnban(r.Context(), request.Service, request.IP); err != nil {
+		if err := a.OnUnban(r.Context(), request.Service, request.IP, commit); err != nil {
+			if errors.Is(err, errNoActiveBan) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
 			http.Error(w, "The enforcement layer could not remove this ban", http.StatusServiceUnavailable)
 			return
 		}
-	}
-	removed, err := a.Manager.Unban(request.Service, request.IP)
-	if err != nil {
-		if a.OnChange != nil {
-			_ = a.OnChange(r.Context())
+	} else if err := commit(); err != nil {
+		if errors.Is(err, errNoActiveBan) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		} else {
+			http.Error(w, "The ban state could not be saved", http.StatusInternalServerError)
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !removed {

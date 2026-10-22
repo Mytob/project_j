@@ -50,6 +50,13 @@ func ParseSSHAuthMessage(message string) (EventKind, string, bool) {
 	return kind, ip, true
 }
 
+// sshJournalMatchArgs covers both OpenSSH's long-standing sshd process name
+// and the sshd-session name used by newer releases. journalctl treats the
+// plus token as an OR between match groups.
+func sshJournalMatchArgs() []string {
+	return []string{"_COMM=sshd", "+", "_COMM=sshd-session"}
+}
+
 type commandRunner func(context.Context, string, ...string) (string, error)
 
 type Fail2banClient struct {
@@ -172,6 +179,7 @@ type Controller struct {
 	Logger         *slog.Logger
 	CaddyHTTP      *http.Client
 
+	enforcementMu    sync.Mutex
 	mu               sync.RWMutex
 	journalStatus    string
 	journalError     string
@@ -279,6 +287,8 @@ func (c *Controller) updateAdminEventHealth(spoolHealthy bool) {
 }
 
 func (c *Controller) reconcile(ctx context.Context) {
+	c.enforcementMu.Lock()
+	defer c.enforcementMu.Unlock()
 	snapshot := c.Manager.Snapshot()
 	health := snapshot.Health
 	// Health snapshots are rebuilt from current observations. Do not retain a
@@ -370,6 +380,8 @@ func (c *Controller) reconcile(ctx context.Context) {
 func (c *Controller) Reconcile(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
+	c.enforcementMu.Lock()
+	defer c.enforcementMu.Unlock()
 	var result error
 	if err := c.Fail2banClient.Ping(ctx); err != nil {
 		result = errors.Join(result, err)
@@ -386,19 +398,50 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	return result
 }
 
-func (c *Controller) PrepareUnban(ctx context.Context, service Service, ip string) error {
-	if service == SSH {
-		return c.Fail2banClient.Unban(ctx, service, ip)
+func (c *Controller) CommitUnban(ctx context.Context, service Service, ip string, commit func() error) error {
+	if commit == nil {
+		return errors.New("unban transaction requires a state commit")
 	}
+	c.enforcementMu.Lock()
+	defer c.enforcementMu.Unlock()
+
 	snapshot := c.Manager.Snapshot()
-	bans := make([]Ban, 0, len(snapshot.ActiveBans))
-	for _, ban := range snapshot.ActiveBans {
-		if ban.Service == Admin && ban.IP == ip {
-			continue
+	var enforcementErr error
+	if service == SSH {
+		enforcementErr = c.Fail2banClient.Unban(ctx, service, ip)
+	} else if service == Admin {
+		remaining := make([]Ban, 0, len(snapshot.ActiveBans))
+		for _, ban := range snapshot.ActiveBans {
+			if ban.Service == Admin && ban.IP == ip {
+				continue
+			}
+			remaining = append(remaining, ban)
 		}
-		bans = append(bans, ban)
+		enforcementErr = c.syncCaddy(ctx, remaining)
+	} else {
+		return errors.New("service must be ssh or admin")
 	}
-	return c.syncCaddy(ctx, bans)
+	if enforcementErr != nil {
+		return enforcementErr
+	}
+	if err := commit(); err != nil {
+		var rollbackErr error
+		if service == SSH {
+			for _, ban := range snapshot.ActiveBans {
+				if ban.Service == SSH && ban.IP == ip {
+					rollbackErr = c.Fail2banClient.EnsureBan(ctx, ban)
+					break
+				}
+			}
+		} else {
+			rollbackErr = c.syncCaddy(ctx, c.Manager.Snapshot().ActiveBans)
+		}
+		if rollbackErr != nil {
+			return errors.Join(fmt.Errorf("commit unban: %w", err), fmt.Errorf("restore enforcement after failed unban: %w", rollbackErr))
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Controller) syncCaddy(ctx context.Context, bans []Ban) error {
@@ -540,7 +583,7 @@ func (c *Controller) followSSHJournal(ctx context.Context) {
 		} else {
 			args = append(args, "--since=30 days ago")
 		}
-		args = append(args, "_COMM=sshd")
+		args = append(args, sshJournalMatchArgs()...)
 		command := exec.CommandContext(ctx, c.Journalctl, args...)
 		stdout, err := command.StdoutPipe()
 		if err != nil {

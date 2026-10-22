@@ -35,16 +35,6 @@ const minute = 60 * 1_000_000_000;
 const day = 24 * 60 * minute;
 const ranges = [{ value: "1h", label: "Last hour", buckets: 12 }, { value: "24h", label: "Last 24 hours", buckets: 24 }, { value: "7d", label: "Last 7 days", buckets: 7 }, { value: "30d", label: "Last 30 days", buckets: 30 }] as const;
 
-export function SecurityOverview({ snapshot, error, open }: { snapshot?: SecuritySnapshot; error?: string; open: () => void }) {
-  const warning = !snapshot || Object.values(snapshot.health).some((value) => value !== "healthy");
-  return <section className="panel security-overview"><div className="panel-title"><div><p className="eyebrow">SECURITY</p><h2>Protection status</h2></div><button className="button secondary" type="button" onClick={open}>Security details →</button></div>
-    {error && <p className="security-warning" role="status">{error}</p>}
-    <div className="security-overview-grid"><div><span>Active bans</span><strong>{snapshot?.active_bans.length ?? "—"}</strong></div><div><span>Failed attempts · 24h</span><strong>{snapshot?.failed_24h ?? "—"}</strong></div><div><span>Bans created · 24h</span><strong>{snapshot?.bans_24h ?? "—"}</strong></div><div><span>Fail2ban / firewall</span><strong className={warning ? "security-degraded" : "security-healthy"}>{snapshot ? `${labelStatus(snapshot.health.fail2ban)} / ${labelStatus(snapshot.health.firewall)}` : "Unknown"}</strong></div></div>
-    {snapshot?.health.last_error && <p className="security-warning" role="status">{snapshot.health.last_error}</p>}
-    {snapshot && <div className="security-recent"><b>Recent activity</b>{snapshot.recent_activity.length ? snapshot.recent_activity.slice(0, 3).map((event) => <span key={event.id}><time>{new Date(event.at).toLocaleTimeString()}</time>{event.ip} · {eventLabel(event.type)} · {event.service.toUpperCase()}</span>) : <span>No recent security events.</span>}</div>}
-  </section>;
-}
-
 export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initialError, onSnapshot }: { csrf: string; snapshot?: SecuritySnapshot; error?: string; onSnapshot: (snapshot: SecuritySnapshot) => void }) {
   const [range, setRange] = useState<(typeof ranges)[number]["value"]>("24h");
   const [service, setService] = useState("all");
@@ -57,7 +47,6 @@ export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initia
   const [busy, setBusy] = useState("");
   const [banFilter, setBanFilter] = useState("all");
   const [form, setForm] = useState(() => liveSnapshot ? toFields(liveSnapshot.config) : undefined);
-  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     let active = true;
@@ -70,7 +59,6 @@ export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initia
     return () => { active = false; controller.abort(); };
   }, [range, service, search, liveSnapshot?.recent_activity[0]?.id]);
 
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 5000); return () => window.clearInterval(timer); }, []);
   useEffect(() => { if (!form && liveSnapshot) setForm(toFields(liveSnapshot.config)); }, [form, liveSnapshot]);
 
   const visibleHistory = useMemo(() => eventType === "all" ? history : history.filter((event) => event.type === eventType), [history, eventType]);
@@ -100,19 +88,19 @@ export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initia
   if (!liveSnapshot) return <section className="panel"><div className="panel-title"><div><p className="eyebrow">SECURITY PROTECTION</p><h2>Status unavailable</h2></div></div><p className="security-warning" role="alert">{initialError ?? "The private security service has not supplied a status snapshot."}</p></section>;
 
   return <>
-    <section className="panel"><div className="panel-title"><div><p className="eyebrow">LIVE PROTECTION</p><h2>Fail2ban and firewall</h2></div><span className={`state-pill ${liveSnapshot.health.fail2ban === "healthy" ? "healthy" : "degraded"}`}><i/>{labelStatus(liveSnapshot.health.fail2ban)}</span></div>
+    <section className="panel"><div className="panel-title"><div><p className="eyebrow">LIVE PROTECTION</p><h2>Protection status</h2></div></div>
       <div className="security-health-grid">{[["Fail2ban", liveSnapshot.health.fail2ban], ["SSH journal", liveSnapshot.health.ssh_journal], ["SSH firewall", liveSnapshot.health.firewall], ["Admin auth events", liveSnapshot.health.admin_events], ["Caddy admin bans", liveSnapshot.health.caddy_sync]].map(([name, state]) => <div className="security-health-item" key={name}><span>{name}</span><b className={state === "healthy" ? "security-healthy" : "security-degraded"}>{labelStatus(state)}</b></div>)}</div>
       {liveSnapshot.health.last_error && <p className="security-warning" role="alert">{liveSnapshot.health.last_error}</p>}
     </section>
 
-    <section className="panel"><div className="panel-title"><div><p className="eyebrow">AUTHENTICATION ACTIVITY</p><h2>Failures and bans over time</h2></div><span className="live-indicator"><i/>Live via SSE</span></div>
+    <section className="panel"><div className="panel-title"><div><p className="eyebrow">AUTHENTICATION ACTIVITY</p><h2>Failures and bans over time</h2></div></div>
       <div className="security-filters"><label>Time range<select value={range} onChange={(event) => setRange(event.target.value as typeof range)}>{ranges.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label><label>Service<select value={service} onChange={(event) => setService(event.target.value)}><option value="all">All services</option><option value="ssh">SSH</option><option value="admin">Admin</option></select></label></div>
       <SecurityChart buckets={buckets} range={range}/>
     </section>
 
     <section className="panel"><div className="panel-title"><div><p className="eyebrow">ACTIVE BANS</p><h2>Blocked addresses</h2></div><span className="muted">{visibleBans.length} active</span></div>
       <div className="security-filters"><label>Service<select value={banFilter} onChange={(event) => setBanFilter(event.target.value)}><option value="all">All services</option><option value="ssh">SSH</option><option value="admin">Admin</option></select></label></div>
-      {visibleBans.length ? <div className="security-ban-list">{visibleBans.map((ban) => <article className="security-ban" key={`${ban.service}:${ban.ip}`}><div className="security-ban-address"><code>{ban.ip}</code><span className={`service-tag ${ban.service}`}>{ban.service.toUpperCase()}</span></div><dl><div><dt>Started</dt><dd>{new Date(ban.started_at).toLocaleString()}</dd></div><div><dt>Remaining</dt><dd>{remaining(ban.expires_at, now)}</dd></div><div><dt>Failed attempts</dt><dd>{ban.failed_attempts}</dd></div><div><dt>Escalation</dt><dd>Level {ban.escalation}</dd></div></dl><button type="button" className="button danger" disabled={busy === `unban:${ban.ip}`} onClick={() => void mutate("/security/unban", { service: ban.service, ip: ban.ip }, `unban:${ban.ip}`)}>Unban</button></article>)}</div> : <p className="empty-chart">No active bans for this filter.</p>}
+      {visibleBans.length ? <div className="security-ban-list">{visibleBans.map((ban) => <article className="security-ban" key={`${ban.service}:${ban.ip}`}><div className="security-ban-address"><code>{ban.ip}</code><span className={`service-tag ${ban.service}`}>{ban.service.toUpperCase()}</span></div><dl><div><dt>Started</dt><dd>{new Date(ban.started_at).toLocaleString()}</dd></div><div><dt>Remaining</dt><dd><BanRemaining expiresAt={ban.expires_at}/></dd></div><div><dt>Failed attempts</dt><dd>{ban.failed_attempts}</dd></div><div><dt>Escalation</dt><dd>Level {ban.escalation}</dd></div></dl><button type="button" className="button danger" disabled={busy === `unban:${ban.ip}`} onClick={() => void mutate("/security/unban", { service: ban.service, ip: ban.ip }, `unban:${ban.ip}`)}>Unban</button></article>)}</div> : <p className="empty-chart">No active bans for this filter.</p>}
     </section>
 
     <section className="panel"><div className="panel-title"><div><p className="eyebrow">SECURITY HISTORY</p><h2>Authentication and ban events</h2></div><span className="muted">Successes are not retained</span></div>
@@ -121,13 +109,13 @@ export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initia
       {visibleHistory.length ? <div className="security-history-list">{visibleHistory.map((event) => <article className="security-history-row" key={event.id}><time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time><code>{event.ip}</code><span className={`service-tag ${event.service}`}>{event.service.toUpperCase()}</span><b>{eventLabel(event.type)}</b><span>{event.details}{event.failed_attempts ? ` · ${event.failed_attempts} failures` : ""}{event.escalation ? ` · level ${event.escalation}` : ""}{event.blocked_requests ? ` · ${event.blocked_requests} requests` : ""}</span></article>)}</div> : <p className="empty-chart">No security events match the selected range and filters.</p>}
     </section>
 
-    <section className="panel"><div className="panel-title"><div><p className="eyebrow">PROTECTION POLICY</p><h2>SSH and admin settings</h2></div></div>
+    <section className="panel security-policy"><details className="security-policy-details"><summary><span><span className="eyebrow">PROTECTION POLICY</span><strong>SSH and admin settings</strong></span></summary>
       {form && <form className="security-config" onSubmit={saveConfig}>
         <ProtectionFields title="SSH protection" name="ssh" value={form.ssh} setForm={setForm}/>
         <ProtectionFields title="Admin protection" name="admin" value={form.admin} setForm={setForm}/>
-        <div className="security-retention"><label>Security history retention (days)<input type="number" min="1" max="365" required value={form.retentionDays} onChange={(event) => setForm({ ...form, retentionDays: Number(event.target.value) })}/></label></div>
         <button className="button" type="submit" disabled={busy === "config"}>{busy === "config" ? "Saving…" : "Save protection settings"}</button>
       </form>}
+    </details>
       {actionError && <p className="security-warning" role="alert">{actionError}</p>}{notice && <p className="security-saved" role="status">{notice}</p>}
     </section>
   </>;
@@ -172,3 +160,8 @@ function SecurityChart({ buckets, range }: { buckets: Bucket[]; range: string })
 function eventLabel(type: string) { return ({ failure: "Failed login", ban: "Ban created", expired: "Ban expired", manual_unban: "Manual unban", blocked_requests: "Blocked requests" } as Record<string, string>)[type] ?? type; }
 function labelStatus(state: string) { return state ? state[0].toUpperCase() + state.slice(1) : "Unknown"; }
 function remaining(expiresAt: string, now: number) { const seconds = Math.max(0, Math.floor((new Date(expiresAt).getTime() - now) / 1000)); if (!seconds) return "Expired"; const days = Math.floor(seconds / 86400); const hours = Math.floor(seconds % 86400 / 3600); const minutes = Math.floor(seconds % 3600 / 60); return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m ${seconds % 60}s`; }
+function BanRemaining({ expiresAt }: { expiresAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15_000); return () => window.clearInterval(timer); }, []);
+  return <time dateTime={expiresAt}>{remaining(expiresAt, now)}</time>;
+}

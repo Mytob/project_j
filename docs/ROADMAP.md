@@ -3,6 +3,153 @@
 Status is based on behaviour and recorded test evidence, not file presence.
 No milestone is marked complete until its mandatory tests pass.
 
+## v1.5 — Audit and quality consolidation
+
+**Status: The `1.5.1-dev` package passed its local release gate and was
+deployed to the authorized test VPS. All six services, public routes, and
+security checks passed after deployment. The operator subsequently confirmed
+playback. Release readiness remains blocked on mobile Safari verification,
+direct Windows/provider firewall inspection, accessibility review, comparable
+performance measurements, and final changed-code review.**
+The baseline was verified as clean `dev` commit
+`8562b23f0da21fe9f6c17f8367a30171b72b635b`. Audit coverage, confirmed findings,
+security boundaries and the six-page redesign are recorded under
+[`v1.5/`](v1.5/CODEBASE_AUDIT.md).
+
+The candidate corrects Linux CPU guest accounting and weighted historical
+error rates; shares health probes across requests, avoids unchanged health
+state writes and duplicate bootstrap polling; adds CPU alert hysteresis;
+changes one-time WireGuard retrieval to authenticated CSRF-protected POST; and
+hardens the admin container. The dashboard now separates proxy statistics from
+host health, compacts Overview, and uses progressive disclosure for component
+details. This remains a development candidate; the `1.5.1-dev` follow-up is
+deployed to the authorized test VPS but has not been merged or published. The
+running build identifies as `1.5.1-dev`, build `8562b23f0da2-dirty`.
+
+`pwsh -NoProfile -File .\build.ps1 test` and
+`pwsh -NoProfile -File .\build.ps1 release -Version 1.5.0-dev` passed on
+2026-10-18. The release report records the local gate as passed and host
+readiness as blocked. On 2026-10-18, `proxyctl update` deployed it to the
+authorized Ubuntu 26.04.1 test VPS. All six containers were healthy with zero
+restarts; the private container observer returned healthy snapshots; the admin
+container's read-only root, dropped capabilities, no-new-privileges, and 16
+MiB `/tmp` restrictions were active. Public TLS checks returned 200 for
+`darkcry.com`, 200 for `admin.darkcry.com`, and the expected 403 for
+`access.darkcry.com`, all with valid certificates. The two Fail2ban jails,
+host SSH journal, and exactly two TCP/22 nftables rules were verified. The
+2 GiB swap was active and listed in `/etc/fstab`; a connected WireGuard peer
+had a recent handshake and Jellyfin `/health` responded over the tunnel.
+Persistent health, TOTP, whitelist, and statistics files remained present,
+and the updater retained 1.4.2-dev for rollback. The user confirmed native
+Windows playback after this update. Direct Windows firewall/provider
+inspection, accessibility checks, and comparable before/after performance
+measurements remain open. The later `1.5.1-dev` package includes the admin
+session-recovery and UI follow-ups. Its deployment passed the updater, six
+container-health checks, TLS 200/200/403 route checks, both Fail2ban jails,
+and one-per-family SSH nftables rule check. The peer had no handshake at that
+later check, so the earlier playback confirmation does not establish playback
+on `1.5.1-dev`; see the dated entry below.
+The safe static-analysis findings were corrected; `staticcheck` reports only
+32 out-of-scope error-capitalization warnings. The current image scan found no
+critical issues; its distinct high findings are triaged in the security audit. Exact evidence is in
+[`v1.5/TEST_REPORT.md`](v1.5/TEST_REPORT.md); do not promote until all required
+release gates are resolved and explicitly approved.
+
+## v1.6 — Fresh install, recovery, administration and reliability
+
+**Status: The `1.6.0-dev.12` local release gate and disposable Ubuntu acceptance
+passed.** The full guided installation, a forced reboot at the durable `ready`
+checkpoint and `proxyctl install --resume` passed on a clean Ubuntu 26.04.1
+clone. The test created and verified a separate SSH administrator before
+restricting root login. A dev.11 backup was recovered, and the five managed
+containers, `proxyctl doctor`, local TLS routes, host journal access,
+Fail2ban/nftables, maintenance service and backup timer passed. Process
+termination and forced guest reboot at all six updater journal states
+(`prepared`, `stopping`, `replacing`, `starting`, `verifying`, `committing`)
+were recovered or finalized by `proxyctl repair`. An interrupted restore
+recovered, a full temporary filesystem caused a safe backup failure, and a
+manually approved host update completed with health checks passing. The
+candidate package used for these tests was built from a dirty working tree and
+is not a clean release artifact.
+
+The current candidate adds a resumable keyboard installer, schema-2 `.pkg`
+archives with independent whole-file SHA-256 validation, persistent `proxyctl`
+commands, restricted maintenance observation, a durable fixed-action backup
+job API, `.bak` backup/restore, SQLite statistics history and retention,
+bounded diagnostics, and manual host update support. The System dashboard now
+supports backup/restore, package upload/update, rollback and progress tracking;
+the upload resumes from the same selected file. It deliberately remains a
+fresh-install path and does not migrate v1.5.1 data. The implementation audit
+and remaining work are tracked in [`v1.6/CODEBASE_AUDIT.md`](v1.6/CODEBASE_AUDIT.md).
+Public DNS, provider firewall, publicly trusted ACME issuance/renewal, internet
+WireGuard and native Windows client/firewall/playback checks remain unverified.
+They require a separate disposable public VPS and test domain; the existing
+production VPS/domain was not used. No stable release or production deployment
+is claimed. The acceptance procedure is in
+[`v1.6/VPS_ACCEPTANCE.md`](v1.6/VPS_ACCEPTANCE.md).
+
+On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
+1.6.0-dev.6 -SupportedUpgradeSources 1.6.0-dev.5` passed the Go,
+browser/integration and offline package gates, including durable updater-
+recovery retry/commit tests. The integration runner now selects free
+distinct loopback ports and clears its disposable credential fixture before
+regenerating it. The package gate exercised install, IPv4/IPv6 deployment
+ingress rules, offline update, forced rollback, persistent-data/statistics
+retention, TOTP recovery and password reset in a disposable Docker daemon.
+The follow-up restore regression also passed in Go tests and on the isolated
+Ubuntu guest: restore-created ownership is normalized for admin data, security
+events, and configuration; readiness now requires all five product containers;
+and the CLI reports seven restore milestones. The guest restore completed from
+a test-only `1.6.0-dev.1` backup after creating a verified safety backup, with
+all five containers healthy and the local HTTPS check passing. The restored
+whitelist and SQLite history files had UID/GID `65532:65532` and mode `0600`;
+the restore journal was removed. Its 22-file safety backup passed integrity
+verification.
+
+The earlier candidate and update checks used the disposable VMware Ubuntu
+Server 26.04.1 guest using local-only `.localhost` names and a temporary local
+Caddy CA. On the dev.6 update, the maintenance service was restarted to
+activate its updated systemd unit. Its state and jobs directories were created
+with root-only mode 0700, and the fixed backup job completed, persisted through
+a service restart, and produced an independently verified archive. Docker API
+1.41 compatibility was corrected after observing
+that the guest's Docker 29.1.3 daemon requires API 1.44. The release-gate
+package checksum verified on the guest. Its maintenance observer returned
+five healthy managed containers to UID 65532 and denied root, before and after
+reboot. A separate test-only `1.6.0-dev.1` package exercised the updater from
+`1.6.0-dev`; one attempt rolled back safely when local CA trust was absent, and
+a retry with the temporary test CA completed. The mandatory pre-update backup
+verified and `proxyctl doctor` passed. After reboot the maintenance unit and
+backup timer were active, all five containers were healthy, local HTTPS
+returned 200/200/403 for static/admin/access, Fail2ban had both jails, host SSH
+journal records were readable, and reserved IPv4/IPv6 bans reached and were
+removed from the product nftables sets. Public DNS, provider firewall/ACME and
+a native Windows client were not tested in those earlier checks. The later
+dev.7 fresh-host installation and reboot acceptance on a clean snapshot clone,
+including approved Docker prerequisite installation, is recorded in
+[`TESTING.md`](TESTING.md); the original VM and production VPS were not
+modified. Full evidence is in that file and
+`dist/release-validation-1.6.0-dev.7.json`.
+
+| Area | Status | Remaining gate |
+| --- | --- | --- |
+| Go, frontend and browser regression checks | **Passed locally for dev.12** | The clean-tree dev.13 rerun could not start: Docker Desktop's Linux engine returned permission denied and Docker Desktop terminated on startup. No product source changed after the dev.12 gate; a clean rerun remains blocked by the current host environment. |
+| Offline `.pkg` install/update/rollback | **Passed for dev.12 in isolated Docker daemon** | Offline install, update, rollback, retention and recovery passed; six images loaded without registry access. |
+| Ubuntu 26.04 host and package CLI | **dev.12 fresh install/resume, recovery, update/rollback, full updater interruption matrix, restore recovery, host update, and low-disk check passed on disposable clones** | Forced process termination and guest reboot at all six update states recovered through `proxyctl repair`; a ready-phase install reboot resumed successfully; an interrupted restore rolled back; full tmpfs backup failure was safe. SSH administrator access, contextual root-login restriction, Docker, application, Fail2ban, nftables, and doctor checks passed. Public DNS/ACME/provider firewall and native Windows remain open. |
+| Public DNS, provider firewall and ACME | **Blocked** | Requires an isolated public test domain and provider firewall; do not use production DNS for destructive testing. |
+| Native Windows WireGuard and firewall | **Blocked** | Requires the Windows client and scoped firewall verification. |
+| Web Content and About pages | **Implemented locally** | Frontend/API and archive/inventory coverage exist; repeat the release gate after source changes. |
+| Complete v1.6 product scope | **Dev.12 local gate and disposable Ubuntu checks passed; clean-tree rerun blocked** | The dev.12 local release gate and disposable Ubuntu install/resume, recovery, update/rollback, six-state process/reboot interruption matrix, interrupted restore, manual host update and disk-exhaustion checks passed. The dev.13 clean-tree gate could not start because Docker Desktop terminated and WSL access was denied. Public DNS/ACME/provider networking and native Windows client checks remain unverified. The dev.12 candidate is dirty-tree and not a stable release. |
+
+The current dev.12 test-candidate `.pkg` SHA-256 is
+`f5262ded5603f7a02f21edd6d1e5472a9c081371a3c08d853e7f6ec9dc4f2df3`; the
+standalone `proxyctl-linux-amd64` SHA-256 is
+`7c3f2b9b369fda01e04ca4bd5f23cc1f8b8f3c9ac2449eb47eecd50e7627786c`. The
+`dist/release-validation-1.6.0-dev.12.json` report records
+`local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+The candidate was built from a dirty working tree; no merge, push, stable
+release, or production deployment is claimed.
+
 ## v1.2 — Admin redesign and statistics
 
 The authorized scope is recorded in [V1.2.md](V1.2.md). It adds a responsive
@@ -622,3 +769,10 @@ merge commit `7470ef3`.
 | 2026-10-18 | Deploy v1.4.1-dev, add persistent swap, and exercise Ubuntu host/reboot checks. | Product revision `418d981f477a`; PR #67/#68 already merged to `dev`. | Package SHA-256 verified; `proxyctl update` passed. 2 GiB `/swapfile` persisted through reboot. Six containers healthy; real sshd journal, two Fail2ban jails, IPv4/IPv6 SSH set ban/unban, host nftables chain, and public HTTPS 200/200/403 with valid TLS passed. The operator subsequently confirmed streaming works. A direct security-container restart added a duplicate IPv4/IPv6 SSH rule pair; the extra pair was removed, and a fresh SSH login passed. The fix and repeat-restart retest are recorded in the following entries. See [TESTING.md](TESTING.md). |
 | 2026-10-18 | Make Fail2ban SSH rules idempotent across abrupt security-container restarts. | Commit `1b1f6ab5d4d8` on `fix/securityd-nftables-restart-idempotence`; [PR #69](https://github.com/Mytob/project_j/pull/69), merged to `dev` at `eebe308`. | Isolated firewall test asserts one IPv4 and IPv6 SSH drop rule after startup and abrupt Fail2ban restart; full `build.ps1 release -Version 1.4.2-dev` passed. See deployment and two-restart Ubuntu verification below. |
 | 2026-10-18 | Deploy the restart fix and verify repeated restarts on Ubuntu. | Package from `1b1f6ab5d4d8`; [PR #69](https://github.com/Mytob/project_j/pull/69), merged to `dev` at `eebe308`. | `proxyctl update` passed. After each of two security-container restarts, the live host nftables chain had exactly one IPv4 and one IPv6 SSH rule; a fresh SSH connection succeeded, all six services were healthy, and public TLS routes returned 200/200/403. |
+| 2026-10-19 | Keep the admin session usable after the one-time WireGuard download on mobile browsers; deploy the `1.5.1-dev` follow-up. | Local uncommitted frontend, browser-test, health/UI follow-up. | `pwsh -NoProfile -File .\tests\integration\run.ps1 -UpdateBrowserSnapshots`, `pwsh -NoProfile -File .\build.ps1 test`, and `pwsh -NoProfile -File .\build.ps1 release -Version 1.5.1-dev` — PASS. The authorized VPS updater passed; all six containers healthy with zero restarts, TLS routes returned 200/200/403, both Fail2ban jails active, and SSH nftables had one IPv4 plus one IPv6 rule. No active WireGuard handshake was present at the post-deploy check, so playback and physical iPhone Safari recovery remain unverified on this build. See [TESTING.md](TESTING.md). |
+| 2026-10-22 | v1.6.0-dev.6 maintenance-job update check on disposable VMware Ubuntu. | `feature/v1.6-fresh-install` at baseline `8562b23`; no commit or PR. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.6 -SupportedUpgradeSources 1.6.0-dev.5` — PASS; `local_gate: passed`, host-dependent readiness blocked. Updated the disposable Ubuntu 26.04.1 guest from dev.5; checksum and `proxyctl doctor` passed. The active maintenance service adopted the updated unit/binary; restricted job API denied root (403), accepted admin UID 65532 (202), completed a backup, retained its job after service restart, and `proxyctl verify-backup` passed. Five containers healthy, local routes 200/200/403. Public ACME/provider networking and native Windows tests remain unverified. No production deployment, merge, or publication. See [TESTING.md](TESTING.md). |
+| 2026-10-22 | v1.6.0-dev.7 full release gate and clean Ubuntu snapshot-clone acceptance. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | `pwsh -NoProfile -File .\build.ps1 test` and `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.7` — PASS. Release report records local gate passed and remaining host checks blocked. On a clone of the VMware `Fresh Install` snapshot, official Docker Engine/Compose prerequisites and the app were installed; checksum, `proxyctl doctor`, five healthy containers, verified backup, local TLS 200/200/403, restricted observer, journald, Fail2ban, IPv4/IPv6 nftables ban/unban, and normal reboot recovery passed. Public ACME/networking and native Windows checks remain unverified; forced interruption and clean-host recovery acceptance remain open. No production VPS deployment, merge, or publication. Package hashes and details are in [TESTING.md](TESTING.md). |
+| 2026-10-22 | v1.6.0-dev.9 full release gate and exact-package Ubuntu update/rollback acceptance. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.9 -SupportedUpgradeSources 1.6.0-dev.7` — PASS. Exact package checksum verified in disposable Ubuntu clone; update to dev.9, `proxyctl doctor`, rollback to dev.7, both 21-file safety backups, five healthy containers, maintenance service and backup timer all PASS. After rollback, deliberately stopping admin exercised persistent bounded recovery: it returned healthy and doctor passed. Report records local gate passed and host checks blocked. SSH/admin setup, safe unused-image cleanup, forced interruption, clean-host disaster recovery, public ACME/provider networking and native Windows checks remain open. No production VPS deployment, merge, or publication. Package hashes and details are in [TESTING.md](TESTING.md). |
+| 2026-10-22 | v1.6.0-dev.10 full release gate, Ubuntu update and safe image cleanup acceptance. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.10 -SupportedUpgradeSources 1.6.0-dev.7` — PASS; local release report records host readiness blocked. Exact package checksum and update from dev.7 passed on the disposable Ubuntu clone; doctor, five healthy services, maintenance service and backup timer passed. Maintenance cleanup removed one unused app image and preserved active/rollback references, a stopped-container image and unrelated Docker resources. SSH/admin setup, clean-host recovery, exhaustive forced interruptions, public ACME/provider networking and native Windows checks remain open. No production deployment, merge or publication. Package hashes and details are in [TESTING.md](TESTING.md). |
+| 2026-10-22 | v1.6.0-dev.11 full release gate and clean Ubuntu SSH administrator check. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.11 -SupportedUpgradeSources 1.6.0-dev.10` — PASS; local release report records host readiness blocked. On a fresh clone, both package checksums verified, Docker/Compose installed, and a password-auth SSH admin passed separate login and sudo checks. A second run enabled `PermitRootLogin no`; a new admin SSH connection and sudo passed, then cleanup restored the original root policy. Five containers reached healthy; app installation correctly rolled back at public HTTPS because the test used `.invalid`. Test account/drop-in and temporary host mappings were removed; Docker remains on the clone. Public DNS/ACME/provider networking, clean-host recovery, forced interruption, and native Windows checks remain unverified. No production deployment, merge, or publication. Package hashes and details are in [TESTING.md](TESTING.md). |
+| 2026-10-22 | v1.6.0-dev.12 complete disposable Ubuntu recovery acceptance. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | The full `build.ps1 release -Version 1.6.0-dev.12 -SupportedUpgradeSources 1.6.0-dev.11` local gate passed; report retains `blocked_host_checks_pending`. On disposable clones, fresh install and `install --resume` after reboot passed; alternate SSH login/sudo and contextual `PermitRootLogin no` passed; update process kills and forced guest reboots at all six durable stages recovered/finalized through `proxyctl repair`; interrupted restore rolled back; manual host updates passed post-health checks without a reboot requirement; a full 16 KiB tmpfs caused a safe backup failure. `proxyctl doctor`, five healthy services, both Fail2ban jails, and the expected SSH nftables table passed. Public DNS/ACME/provider networking and native Windows client checks remain open. No production VPS, original VM, merge, push, or stable release was used. See [TESTING.md](TESTING.md). |
