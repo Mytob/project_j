@@ -15,6 +15,16 @@
   `7c3f2b9b369fda01e04ca4bd5f23cc1f8b8f3c9ac2449eb47eecd50e7627786c`.
   The candidate identifies build `8562b23f0da2-dirty` and was built from a
   dirty working tree.
+- After the source commit, `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.6.0-dev.13 -SupportedUpgradeSources 1.6.0-dev.12` — BLOCKED before
+  tests ran. Docker returned permission denied for the Docker Desktop Linux
+  engine named pipe. `docker desktop start` then reported that Docker Desktop
+  terminated unexpectedly; `wsl.exe --list --verbose` returned
+  `Wsl/E_ACCESSDENIED`, and Go is not installed on the Windows PATH. The
+  generated `dist/release-validation-1.6.0-dev.13.json` records
+  `local_gate: failed`. The v1.6 implementation had already passed the full
+  dev.12 gate above; the clean-tree rerun and a clean dev.13 package could not
+  be produced in this resumed environment.
 - The recovery run exposed a real bug: the `admin-writer.health` heartbeat was
   counted as a security-event file even though it is not an event JSON record.
   Recovery rejected the otherwise valid backup. `internal/deployment` now

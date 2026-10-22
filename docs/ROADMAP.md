@@ -133,13 +133,13 @@ modified. Full evidence is in that file and
 
 | Area | Status | Remaining gate |
 | --- | --- | --- |
-| Go, frontend and browser regression checks | **Passed locally for dev.12** | Repeat after further code changes. |
+| Go, frontend and browser regression checks | **Passed locally for dev.12** | The clean-tree dev.13 rerun could not start: Docker Desktop's Linux engine returned permission denied and Docker Desktop terminated on startup. No product source changed after the dev.12 gate; a clean rerun remains blocked by the current host environment. |
 | Offline `.pkg` install/update/rollback | **Passed for dev.12 in isolated Docker daemon** | Offline install, update, rollback, retention and recovery passed; six images loaded without registry access. |
 | Ubuntu 26.04 host and package CLI | **dev.12 fresh install/resume, recovery, update/rollback, full updater interruption matrix, restore recovery, host update, and low-disk check passed on disposable clones** | Forced process termination and guest reboot at all six update states recovered through `proxyctl repair`; a ready-phase install reboot resumed successfully; an interrupted restore rolled back; full tmpfs backup failure was safe. SSH administrator access, contextual root-login restriction, Docker, application, Fail2ban, nftables, and doctor checks passed. Public DNS/ACME/provider firewall and native Windows remain open. |
 | Public DNS, provider firewall and ACME | **Blocked** | Requires an isolated public test domain and provider firewall; do not use production DNS for destructive testing. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires the Windows client and scoped firewall verification. |
 | Web Content and About pages | **Implemented locally** | Frontend/API and archive/inventory coverage exist; repeat the release gate after source changes. |
-| Complete v1.6 product scope | **Local gate passed; final acceptance pending** | The dev.12 local release gate and disposable Ubuntu install/resume, recovery, update/rollback, six-state process/reboot interruption matrix, interrupted restore, manual host update and disk-exhaustion checks passed. Public DNS/ACME/provider networking and native Windows client checks remain unverified. The dev.12 candidate is dirty-tree and not a stable release. |
+| Complete v1.6 product scope | **Dev.12 local gate and disposable Ubuntu checks passed; clean-tree rerun blocked** | The dev.12 local release gate and disposable Ubuntu install/resume, recovery, update/rollback, six-state process/reboot interruption matrix, interrupted restore, manual host update and disk-exhaustion checks passed. The dev.13 clean-tree gate could not start because Docker Desktop terminated and WSL access was denied. Public DNS/ACME/provider networking and native Windows client checks remain unverified. The dev.12 candidate is dirty-tree and not a stable release. |
 
 The current dev.12 test-candidate `.pkg` SHA-256 is
 `f5262ded5603f7a02f21edd6d1e5472a9c081371a3c08d853e7f6ec9dc4f2df3`; the
