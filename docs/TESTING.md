@@ -33,16 +33,21 @@
   200/200/403 for `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com`,
   each with `TLS_verify=0`. The public admin root returned 200; unauthenticated
   `/settings` and `/health` redirected to the sign-in page (303), not 404. After
-  the update the browser required a fresh sign-in, so authenticated Health
-  rendering and Settings reload verification on the VPS are pending the
-  operator signing in. This is the user-authorized
-  disposable test VPS; no production release or merge occurred.
+  the operator signed in, `/health` rendered the Health page and `/settings`
+  rendered Settings on direct navigation; a full browser reload on `/settings`
+  also returned to Settings. The live Health view reported overall Degraded,
+  Host metrics Degraded, CPU 100%, and four container components Unknown,
+  while the updater and `proxyctl doctor` reported all five app containers
+  healthy. Treat Health rendering and Settings reload as passed; the live
+  component telemetry discrepancy remains open for investigation. This is the
+  user-authorized disposable test VPS; no production release or merge occurred.
 - The first dev.20 gate attempts stopped on overly strict test assumptions
   (fresh history always being empty, then a single bootstrap despite the added
   reload). The browser fixture/assertion was corrected; the final dev.21 gate
-  passed. The dev.21 update has passed on the disposable public VPS, but its
-  authenticated page check awaits an operator sign-in. Native Windows
-  acceptance remains pending.
+  passed. Authenticated Health rendering and direct/reloaded Settings both
+  passed in the deployed browser. The Health page's Degraded/Unknown live
+  telemetry, native Windows acceptance, provider firewall, ACME renewal,
+  dashboard update/rollback, and post-update playback remain pending.
 
 ## v1.6.0-dev.19 disposable public VPS fresh install and browser acceptance — 2026-10-22
 

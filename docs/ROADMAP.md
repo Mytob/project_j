@@ -60,12 +60,15 @@ release gates are resolved and explicitly approved.
 **Status: The dev.21 local release gate passes, including browser coverage for
 fresh/null Health history and direct Settings reload. The package was updated
 on the user-authorized disposable public VPS; `proxyctl doctor`, all five
-containers, and public HTTPS readiness passed. The browser now requires a fresh
-sign-in before the authenticated Health and Settings pages can be verified on
-that host. Provider-firewall review, ACME renewal, dashboard update/rollback,
-and Windows profile/firewall/handshake checks remain pending. The operator
-reported playback works before this update; post-update playback has not been
-retested. v1.6 is not complete and stable release readiness remains blocked.**
+containers, and public HTTPS readiness passed. Authenticated Health and direct
+plus reloaded Settings pages render on the VPS. However, its Health UI reports
+Host metrics Degraded and four container components Unknown while the updater
+and `proxyctl doctor` report all five containers healthy; this telemetry
+discrepancy needs investigation. Provider-firewall review, ACME renewal,
+dashboard update/rollback, and Windows profile/firewall/handshake checks remain
+pending. The operator reported playback works before this update; post-update
+playback has not been retested. v1.6 is not complete and stable release
+readiness remains blocked.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
 432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
@@ -92,9 +95,12 @@ integration/security/streaming checks, and offline package install/update/
 rollback passed. The exact dev.21 package and full evidence are in
 [TESTING.md](TESTING.md). The package updated the disposable public VPS;
 `proxyctl doctor`, five healthy containers, and public HTTPS readiness passed.
-Authenticated Health rendering and Settings reload are still pending a fresh
-admin sign-in after the update. Dashboard update/rollback through the admin UI
-and Windows acceptance remain unverified. PR #79 targets `dev`.
+Authenticated Health rendering and direct/reloaded Settings are now verified
+after sign-in. The deployed Health page reports Host metrics Degraded and four
+container rows Unknown despite the installer and `proxyctl doctor` reporting
+all five containers healthy; investigate this discrepancy before treating
+live component telemetry as accepted. Dashboard update/rollback through the
+admin UI and Windows acceptance remain unverified. PR #79 targets `dev`.
 
 On 2026-10-23, `pwsh -NoProfile -File .\build.ps1 release -Version
 1.6.0-dev.21 -SupportedUpgradeSources 1.6.0-dev.19` passed from the working
@@ -108,7 +114,11 @@ disposable public VPS from dev.19; package verification, pre-update backup,
 image loading, service health, and HTTPS readiness passed. `proxyctl doctor`
 passed, all five containers were healthy, and the maintenance unit was active.
 Unauthenticated `/settings` and `/health` returned 303 to sign-in rather than
-404; authenticated UI verification awaits a fresh operator sign-in. Two earlier
+404. After the operator signed in, the deployed `/health` page rendered and
+showed Health details; `/settings` rendered on direct navigation and after a
+full reload. Health displayed overall Degraded, Host metrics Degraded, CPU
+100%, and four container components Unknown, despite the updater and
+`proxyctl doctor` reporting all five app containers healthy. Two earlier
 dev.20 attempts stopped on incorrect test assumptions; the corrected dev.21
 gate passed. No production deployment, merge, or stable release is claimed.
 
