@@ -7,8 +7,7 @@ upgrade, rollback, firewall, restore, or failure-injection testing. Record only
 observed results and redact credentials, tokens, private keys, and backup
 contents.
 
-The current `1.6.0-dev.12` package is a dirty-tree development candidate; it is
-not a release artifact and must not be used as the final acceptance package.
+The clean-tree 1.6.0-dev.13 candidate passed the local gate and an exact-package update on a disposable Ubuntu clone. It remains a development candidate, not a stable release. Do not deploy it to the production VPS. This public VPS checklist is pending until a separate disposable VPS and test domain are available.
 
 ## Before installation
 

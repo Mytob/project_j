@@ -1,5 +1,39 @@
 # Testing
 
+## v1.6.0-dev.13 clean-tree release gate and Ubuntu update — 2026-10-22
+
+- Command: pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.13 -SupportedUpgradeSources 1.6.0-dev.12 — PASS, exit 0, against
+  clean dev commit 432b0db7bc7429f0daa2de83ccfd1b219cffb654 after Docker Desktop
+  Linux engine access was restored. Go tests, M1–M6 integration/security/
+  streaming, frontend typecheck and unit tests, four Chromium/Firefox/WebKit
+  browser checks, and offline package install/update/rollback/recovery gates
+  passed. Six images loaded without registry access.
+- Report: dist/release-validation-1.6.0-dev.13.json records local_gate: passed
+  and release_readiness: blocked_host_checks_pending. Public-network and native
+  Windows checks remain pending; no stable release is claimed.
+- Package: dist/jellyfin-proxy-1.6.0-dev.13.pkg, 137,276,733 bytes, SHA-256
+  2c72872dbc1cf5f3e100618fe8295e533b1387e1d859231758d09b4b6c9b4e9e. Its
+  independent sidecar checksum passed on the Ubuntu guest.
+- Utility: dist/proxyctl-linux-amd64, 14,303,392 bytes, SHA-256
+  db53f20494b826156adf545ab36f88cb80e4f1d70b76f52de947792afb496e6f. The
+  package build also produced its separate checksum sidecar.
+- Exact-package update: On the disposable VMware Ubuntu 26.04.1 clone
+  D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx (192.168.145.136), sha256sum -c
+  passed for the transferred package. proxyctl update from dev.12 to dev.13
+  completed, created its verified pre-update backup, loaded bundled images,
+  passed update readiness, and retained the active and previous releases.
+- Post-update doctor: sudo proxyctl doctor exited 0. Installation files,
+  release metadata (1.6.0-dev.13, build 432b0db7bc74), Compose configuration,
+  all five application services, restore/update recovery state, Docker Engine,
+  Compose, and host storage all passed.
+- Earlier dev.12 testing on the same implementation covered fresh install/
+  resume, recovery, rollback, updater interruption, restore interruption, low
+  storage, host maintenance, journal, Fail2ban and nftables. The exact dev.13
+  package did not repeat that entire failure matrix. Public DNS, provider
+  firewall, publicly trusted ACME issuance/renewal, internet WireGuard, and
+  native Windows client/firewall/playback remain unverified. No production
+  VPS/domain was used and no GitHub release was published.
 ## v1.6.0-dev.12 release gate, recovery and update interruption checks — 2026-10-22
 
 - `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.12
