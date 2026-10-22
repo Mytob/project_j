@@ -7,7 +7,7 @@ upgrade, rollback, firewall, restore, or failure-injection testing. Record only
 observed results and redact credentials, tokens, private keys, and backup
 contents.
 
-The clean-tree 1.6.0-dev.13 candidate passed the local gate and an exact-package update on a disposable Ubuntu clone. It remains a development candidate, not a stable release. Do not deploy it to the production VPS. This public VPS checklist is pending until a separate disposable VPS and test domain are available.
+The clean-tree 1.6.0-dev.14 candidate passed the local gate and an exact-package update/rollback/update cycle on a disposable Ubuntu clone. Version-matched doctor and Ubuntu host journal, Fail2ban, and nftables checks also passed. It remains a development candidate, not a stable release. Do not deploy it to the production VPS. This public VPS checklist is pending until a separate disposable VPS and test domain are available.
 
 ## Before installation
 

@@ -567,3 +567,32 @@ absent.
   was touched. Public DNS, provider firewall, public ACME, internet WireGuard,
   and native Windows client/firewall/playback checks remain blocked; no stable
   release or GitHub release is claimed.
+
+### v1.6.0-dev.14 clean-tree gate and Ubuntu update/rollback/update — 2026-10-22
+
+- The clean dev checkout at `78dfb7987946f011e88dc7cde4660c2d24b12142` passed
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.14
+  -SupportedUpgradeSources 1.6.0-dev.13`. The report records local gates
+  passed and host-specific release readiness blocked.
+- Package SHA-256:
+  `20bacf089d92b4d71b87333004b1f72c83397e5832d0326d8da7c21dbf553601`;
+  standalone utility SHA-256:
+  `9f79399ff2abfac87e70807582db64d44be4791070f64d98d507d5b814bee719`.
+- On the disposable Ubuntu clone, the exact package checksum passed. Update
+  from dev.13 to dev.14 and subsequent rollback to dev.13 created safety
+  backups and passed their release/health checks; re-updating to dev.14
+  also passed. The final `proxyctl doctor` passed and reported build
+  `78dfb7987946`. All five managed containers were healthy, and the maintenance
+  service and scheduled backup timer were active.
+- On the final dev.14 installation, the restricted security container read
+  host sshd journal entries, reported `jp-admin` and `jp-ssh`, and its host
+  nftables chain showed the IPv4 and IPv6 TCP/22 rules. Reserved documentation
+  IPv4 and IPv6 addresses were banned/unbanned, leaving zero active bans. The
+  WireGuard interface listened on UDP/51820 with its configured peer, but no
+  handshake was recorded.
+- The full destructive Ubuntu matrix remains the earlier dev.12 evidence; it
+  was not repeated against dev.14. Public DNS/provider firewall/ACME, internet
+  WireGuard/playback and native Windows client/firewall checks remain
+  unverified. The production VPS and the user-specified dev.5 VM were not
+  changed. No stable release or GitHub release is claimed. See
+  [`../TESTING.md`](../TESTING.md) for command and result details.
