@@ -57,14 +57,34 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The clean-tree 1.6.0-dev.14 local release gate, exact-package
-update/rollback/update cycle, doctor, and version-matched Ubuntu host security
-checks on a disposable clone passed. Stable release readiness remains blocked
+**Status: The clean-tree 1.6.0-dev.15 local release gate and exact-package
+update, doctor, host security checks, backup verification, and reboot recovery
+on a disposable Ubuntu clone passed. Stable release readiness remains blocked
 on public-network and native Windows evidence.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
 432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
-from clean dev commit 78dfb7987946f011e88dc7cde4660c2d24b12142.
+from clean dev commit 78dfb7987946f011e88dc7cde4660c2d24b12142. The clean
+dev.15 candidate was built from dev commit
+`ebd767615ded1abc6fe776a7c229e8c0784c971b`.
+
+On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
+1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` passed. Go tests,
+browser/monitoring/security/streaming integration, frontend validation, and
+offline package installation, update, rollback and recovery passed. The report
+records `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+The exact package updated the disposable Ubuntu 26.04.1 VMware clone from
+dev.14; its checksum, pre-update backup, image load, service readiness, and
+active/previous release retention passed. `proxyctl doctor` passed on dev.15;
+all five containers, the maintenance service, and scheduled backup timer were
+healthy/active. The security container read host sshd journal records and
+reported both Fail2ban jails. Reserved IPv4/IPv6 test bans reached and cleared
+the host nftables sets, whose SSH chain had one TCP/22 drop rule per address
+family. A manual 21-file backup verified. After a normal reboot, doctor,
+container health, maintenance and backup units, journal access, Fail2ban, and
+the exact nftables rules recovered. WireGuard listened on UDP/51820, but no
+peer handshake was observed. Public DNS/provider firewall/ACME and native
+Windows/client playback remain unverified.
 
 On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
 1.6.0-dev.14 -SupportedUpgradeSources 1.6.0-dev.13` passed. Go tests,
@@ -109,18 +129,18 @@ implementation audit and remaining work are tracked in
 
 | Area | Status | Remaining gate |
 | --- | --- | --- |
-| Go, frontend and browser regression checks | **Passed on clean dev.14** | Host-specific release checks remain open. |
-| Offline .pkg install/update/rollback | **Passed in local isolated Docker gate** | Six bundled images loaded without registry access. |
-| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install, reboot, bounded admin recovery, update/rollback/update, doctor and host security checks passed** | Full destructive failure matrix was not repeated against dev.14. |
+| Go, frontend and browser regression checks | **Passed on clean dev.15** | Host-specific release checks remain open. |
+| Offline .pkg install/update/rollback | **Passed on clean dev.15 in local isolated Docker gate** | Six bundled images loaded without registry access. |
+| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install/reboot; dev.15 exact-package update, reboot, doctor, backup, and host security checks passed** | Full destructive failure matrix was not repeated against dev.15. |
 | Public DNS, provider firewall and ACME | **Blocked** | Requires a separate disposable public VPS and test domain. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires Windows client and scoped firewall/playback verification. |
-| Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.14 as stable. |
+| Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.15 as stable. |
 
-The clean dev.14 package SHA-256 is
-20bacf089d92b4d71b87333004b1f72c83397e5832d0326d8da7c21dbf553601.
-Standalone proxyctl SHA-256 is
-9f79399ff2abfac87e70807582db64d44be4791070f64d98d507d5b814bee719. The report
-is `dist/release-validation-1.6.0-dev.14.json`. Generated artifacts remain local
+The clean dev.15 package SHA-256 is
+`ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`;
+standalone proxyctl SHA-256 is
+`69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`. The report
+is `dist/release-validation-1.6.0-dev.15.json`. Generated artifacts remain local
 under dist; no stable release or production deployment is claimed. See
 [TESTING.md](TESTING.md) and [v1.6/VPS_ACCEPTANCE.md](v1.6/VPS_ACCEPTANCE.md)
 for evidence and remaining acceptance checks.
@@ -752,3 +772,4 @@ merge commit `7470ef3`.
 | 2026-10-22 | v1.6.0-dev.11 full release gate and clean Ubuntu SSH administrator check. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.11 -SupportedUpgradeSources 1.6.0-dev.10` — PASS; local release report records host readiness blocked. On a fresh clone, both package checksums verified, Docker/Compose installed, and a password-auth SSH admin passed separate login and sudo checks. A second run enabled `PermitRootLogin no`; a new admin SSH connection and sudo passed, then cleanup restored the original root policy. Five containers reached healthy; app installation correctly rolled back at public HTTPS because the test used `.invalid`. Test account/drop-in and temporary host mappings were removed; Docker remains on the clone. Public DNS/ACME/provider networking, clean-host recovery, forced interruption, and native Windows checks remain unverified. No production deployment, merge, or publication. Package hashes and details are in [TESTING.md](TESTING.md). |
 | 2026-10-22 | v1.6.0-dev.12 complete disposable Ubuntu recovery acceptance. | `feature/v1.6-fresh-install` at `8562b23` with uncommitted implementation changes; no commit or PR. | The full `build.ps1 release -Version 1.6.0-dev.12 -SupportedUpgradeSources 1.6.0-dev.11` local gate passed; report retains `blocked_host_checks_pending`. On disposable clones, fresh install and `install --resume` after reboot passed; alternate SSH login/sudo and contextual `PermitRootLogin no` passed; update process kills and forced guest reboots at all six durable stages recovered/finalized through `proxyctl repair`; interrupted restore rolled back; manual host updates passed post-health checks without a reboot requirement; a full 16 KiB tmpfs caused a safe backup failure. `proxyctl doctor`, five healthy services, both Fail2ban jails, and the expected SSH nftables table passed. Public DNS/ACME/provider networking and native Windows client checks remain open. No production VPS, original VM, merge, push, or stable release was used. See [TESTING.md](TESTING.md). |
 | 2026-10-22 | v1.6.0-dev.13 clean release gate and exact-package Ubuntu update. | Product implementation is PR #71; the release build used merged dev commit 432b0db7bc74. | Full clean-tree release gate passed with local_gate: passed; public/Windows checks remain blocked. The exact package updated the dev.12 disposable Ubuntu clone, passed readiness, retained active/previous releases, and proxyctl doctor passed with build 432b0db7bc74. Package SHA-256 2c72872dbc1cf5f3e100618fe8295e533b1387e1d859231758d09b4b6c9b4e9e; proxyctl SHA-256 db53f20494b826156adf545ab36f88cb80e4f1d70b76f52de947792afb496e6f. No production deployment or stable publication. |
+| 2026-10-22 | v1.6.0-dev.15 clean release gate and Ubuntu exact-package update/reboot check. | Clean dev commit `ebd767615ded1abc6fe776a7c229e8c0784c971b`; docs-only PR #77 was merged before the build. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0; local gate passed and public/Windows host checks remain blocked. Exact package updated the disposable Ubuntu 26.04.1 clone from dev.14; checksum, pre-update backup, all five healthy containers, doctor, verified 21-file backup, maintenance/backup units, actual SSH journal access, Fail2ban, and IPv4/IPv6 nftables ban/unban passed. Normal reboot recovered all five containers and host security state. WireGuard listens, but no peer handshake. Package SHA-256 `ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`; standalone proxyctl SHA-256 `69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`. No public VPS, production deployment, or stable publication. |

@@ -609,3 +609,31 @@ absent.
   WireGuard handshake or traffic was observed. No stable release or GitHub
   release is claimed. See
   [`../TESTING.md`](../TESTING.md) for command and result details.
+
+### v1.6.0-dev.15 clean-tree gate and Ubuntu update/reboot — 2026-10-22
+
+- The clean dev checkout at `ebd767615ded1abc6fe776a7c229e8c0784c971b` passed
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.15
+  -SupportedUpgradeSources 1.6.0-dev.14`. The report records local gates
+  passed and public/Windows host-specific release readiness blocked.
+- Package SHA-256:
+  `ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`;
+  standalone `proxyctl` SHA-256:
+  `69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`.
+- The exact package updated the disposable Ubuntu 26.04.1 clone from dev.14,
+  created its pre-update backup, loaded images, passed readiness, and retained
+  active/previous releases. Doctor passed with version dev.15/build
+  `ebd767615ded`. All five containers were healthy; the maintenance service and
+  backup timer were active; a manual 21-file backup verified.
+- The restricted security container read actual host sshd records and reported
+  `jp-admin` and `jp-ssh`. The host SSH nftables chain contained one TCP/22
+  drop rule for each address family. Reserved documentation IPs were banned
+  and unbanned successfully, leaving both sets empty and zero active bans.
+  After normal reboot, doctor, container health, backup/maintenance units,
+  journal access, Fail2ban and the exact nftables rules recovered. WireGuard
+  listened on UDP/51820, but no peer handshake was recorded.
+- The full destructive Ubuntu matrix is still the dev.12 evidence and was not
+  repeated against dev.15. Public DNS/provider firewall/ACME, internet
+  WireGuard/playback and native Windows client/firewall checks remain
+  unverified. No production VPS or stable release was used. See
+  [`../TESTING.md`](../TESTING.md) for exact package and command evidence.

@@ -1,5 +1,48 @@
 # Testing
 
+## v1.6.0-dev.15 clean-tree gate and Ubuntu update/reboot checks — 2026-10-22
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0, from
+  clean dev commit `ebd767615ded1abc6fe776a7c229e8c0784c971b`. Go tests,
+  M1–M6 integration/security/streaming, frontend validation, four browser
+  checks, and offline package installation/update/rollback/recovery passed.
+  Six bundled images loaded without registry access. The generated report
+  records `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.15.pkg`, 137,277,415 bytes, SHA-256
+  `ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`.
+  Standalone `proxyctl-linux-amd64` is 14,303,392 bytes, SHA-256
+  `69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`.
+  Report: `dist/release-validation-1.6.0-dev.15.json`.
+- Exact-package update: On the disposable Ubuntu 26.04.1 VMware clone
+  `D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` (`192.168.145.136`), the
+  transferred package SHA-256 matched. `proxyctl update` from dev.14 to dev.15
+  completed, created its pre-update backup, loaded bundled images, passed
+  service readiness, and retained active and previous releases. Installed
+  `proxyctl --version` reported `1.6.0-dev.15`; `sudo proxyctl doctor` exited 0
+  and reported build `ebd767615ded`.
+- Host acceptance: All five app containers were healthy. The maintenance
+  service and scheduled backup timer were enabled and active. A manual backup
+  verified successfully and contained 21 files. The restricted security
+  container returned actual host `sshd` journal records and reported the
+  `jp-admin` and `jp-ssh` Fail2ban jails. The host `inet jp_fail2ban` SSH chain
+  contained one IPv4 and one IPv6 TCP/22 drop rule. Reserved documentation
+  addresses `192.0.2.44` and `2001:db8::44` were banned and unbanned; both sets
+  were empty and `jp-ssh` reported zero active bans. The WireGuard interface
+  listened on UDP/51820 with its configured peer, but no handshake was
+  recorded.
+- Reboot: After a normal `systemctl reboot`, SSH reconnected to the same clone.
+  `proxyctl doctor` passed, all five containers were healthy, maintenance and
+  backup units were active, post-boot SSH journal records were visible, and
+  Fail2ban plus the one-rule-per-family SSH nftables chain recovered. Both
+  address sets remained empty; WireGuard listened on UDP/51820 without a
+  recent peer handshake.
+- Limits: The broader destructive failure matrix remains the dev.12 evidence;
+  it was not repeated against dev.15. No public VPS, provider firewall,
+  public ACME, internet WireGuard, or native Windows client/firewall/playback
+  test was used. The production VPS and its domains were not changed. No stable
+  release or GitHub release is claimed.
+
 ## v1.6.0-dev.14 clean-tree gate and Ubuntu update/rollback/update — 2026-10-22
 
 - Command: `pwsh -NoProfile -File .\build.ps1 release -Version
