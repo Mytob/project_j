@@ -27,13 +27,27 @@
   release metadata (1.6.0-dev.13, build 432b0db7bc74), Compose configuration,
   all five application services, restore/update recovery state, Docker Engine,
   Compose, and host storage all passed.
-- Earlier dev.12 testing on the same implementation covered fresh install/
-  resume, recovery, rollback, updater interruption, restore interruption, low
+- Version-matched Ubuntu host checks on that dev.13 clone: `sudo docker ps`
+  showed all five services healthy. `sudo docker exec jellyfin-proxy-securityd-1
+  fail2ban-client --socket /tmp/fail2ban.sock status` reported the `jp-ssh` and
+  `jp-admin` jails. From the same security container,
+  `journalctl --no-pager --output=short-iso -n 3 _COMM=sshd` returned actual
+  host sshd records and `nft list chain inet jp_fail2ban jp_ssh_input` showed
+  the IPv4 and IPv6 TCP/22 drop rules. Reserved test addresses `192.0.2.44`
+  and `2001:db8::44` were added to their matching Fail2ban/nftables sets and
+  removed; the final `jp-ssh` banned list was empty. `docker exec
+  jellyfin-proxy-wireguard-1 wg show` confirmed the server interface listening
+  on UDP/51820 and its configured peer; no recent peer handshake was reported.
+- Earlier dev.12 testing on disposable clones covered fresh install/resume,
+  recovery, rollback, updater interruption, restore interruption, low
   storage, host maintenance, journal, Fail2ban and nftables. The exact dev.13
-  package did not repeat that entire failure matrix. Public DNS, provider
-  firewall, publicly trusted ACME issuance/renewal, internet WireGuard, and
-  native Windows client/firewall/playback remain unverified. No production
-  VPS/domain was used and no GitHub release was published.
+  package did not repeat that entire destructive failure matrix. The separate
+  user-specified `D:\VM\Ubuntu` instance was read-only checked and found on
+  dev.5; it was left unchanged because dev.13 only accepts dev.12 as an update
+  source. Public DNS, provider firewall, publicly trusted ACME issuance/renewal,
+  internet WireGuard, and native Windows client/firewall/playback remain
+  unverified. No production VPS/domain was used and no GitHub release was
+  published.
 ## v1.6.0-dev.12 release gate, recovery and update interruption checks — 2026-10-22
 
 - `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.12
