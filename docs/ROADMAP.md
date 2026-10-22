@@ -70,7 +70,10 @@ were recovered or finalized by `proxyctl repair`. An interrupted restore
 recovered, a full temporary filesystem caused a safe backup failure, and a
 manually approved host update completed with health checks passing. The
 candidate package used for these tests was built from a dirty working tree and
-is not a clean release artifact.
+is not a clean release artifact. The implementation was merged to `dev` by
+[PR #71](https://github.com/Mytob/project_j/pull/71) at `c8e279a`. A clean-tree
+dev.13 rerun then stopped before tests because Docker Desktop terminated on
+startup and WSL access was denied; it is recorded as blocked, not passed.
 
 The current candidate adds a resumable keyboard installer, schema-2 `.pkg`
 archives with independent whole-file SHA-256 validation, persistent `proxyctl`
@@ -147,8 +150,9 @@ standalone `proxyctl-linux-amd64` SHA-256 is
 `7c3f2b9b369fda01e04ca4bd5f23cc1f8b8f3c9ac2449eb47eecd50e7627786c`. The
 `dist/release-validation-1.6.0-dev.12.json` report records
 `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
-The candidate was built from a dirty working tree; no merge, push, stable
-release, or production deployment is claimed.
+The candidate was built from a dirty working tree and is not a clean release
+artifact. PR #71 merged the source into `dev` at `c8e279a`; no stable release or
+production deployment is claimed.
 
 ## v1.2 — Admin redesign and statistics
 
