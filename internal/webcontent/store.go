@@ -248,8 +248,11 @@ func validRevisionID(revision string) bool {
 // homepage. Existing content is left in place.
 func Initialize(root, packagedSite string) error {
 	if _, err := os.Lstat(filepath.Join(root, "current")); err == nil {
-		_, err = readPointer(root, "current")
-		return err
+		current, err := readPointer(root, "current")
+		if err != nil {
+			return err
+		}
+		return ensureDefaultErrorPages(root, current)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -262,7 +265,46 @@ func Initialize(root, packagedSite string) error {
 	if err != nil {
 		return err
 	}
-	return publishFiles(root, map[string][]byte{"index.html": data}, "default")
+	files := map[string][]byte{"index.html": data}
+	for name, content := range defaultErrors {
+		files["errors/"+name] = []byte(content)
+	}
+	return publishFiles(root, files, "default")
+}
+
+// ensureDefaultErrorPages adds newly introduced built-in pages to older
+// installations without changing any page the administrator has published.
+// It publishes a new immutable revision only when a default page is missing.
+func ensureDefaultErrorPages(root, current string) error {
+	revisionRoot := filepath.Join(root, "revisions", current)
+	if err := ensureRealDirectory(revisionRoot); err != nil {
+		return errors.New("active public-site revision is missing or unsafe")
+	}
+	errorRoot := filepath.Join(revisionRoot, "errors")
+	errorInfo, err := os.Lstat(errorRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return CopyDirectoryTo(revisionRoot, root)
+	}
+	if err != nil {
+		return err
+	}
+	if !errorInfo.IsDir() || errorInfo.Mode()&os.ModeSymlink != 0 {
+		return errors.New("active public-site error pages are unsafe")
+	}
+	for name := range defaultErrors {
+		path := filepath.Join(errorRoot, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return CopyDirectoryTo(revisionRoot, root)
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > MaxFileBytes {
+			return errors.New("active public-site error page is unsafe")
+		}
+	}
+	return nil
 }
 
 // PublishZip validates a bounded static-site ZIP and atomically switches the
