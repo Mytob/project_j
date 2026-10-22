@@ -272,6 +272,20 @@ func Initialize(root, packagedSite string) error {
 	return publishFiles(root, files, "default")
 }
 
+// EnsureDefaultErrorPages upgrades an existing public-site store with newly
+// introduced built-in error pages. It leaves an uninitialized store alone so
+// the deployment layer can seed it from the packaged homepage.
+func EnsureDefaultErrorPages(root string) error {
+	current, err := readPointer(root, "current")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return ensureDefaultErrorPages(root, current)
+}
+
 // ensureDefaultErrorPages adds newly introduced built-in pages to older
 // installations without changing any page the administrator has published.
 // It publishes a new immutable revision only when a default page is missing.

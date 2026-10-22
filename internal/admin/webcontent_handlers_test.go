@@ -81,6 +81,51 @@ func TestWebContentUploadRequiresAdministratorAndCSRFAndCanRollback(t *testing.T
 	}
 }
 
+func TestConfigureWebContentMigratesLegacyErrorPages(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "site")
+	defaults := t.TempDir()
+	if err := os.WriteFile(filepath.Join(defaults, "index.html"), []byte("existing homepage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := webcontent.Initialize(root, defaults); err != nil {
+		t.Fatal(err)
+	}
+	status, err := webcontent.GetStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRevision := filepath.Join(root, "revisions", status.Current)
+	if err := os.WriteFile(filepath.Join(oldRevision, "errors", "403.html"), []byte("custom denial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(oldRevision, "errors", "404.html")); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(nil, nil)
+	if err := server.ConfigureWebContent(root); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := webcontent.GetStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Current == status.Current || updated.Previous != status.Current {
+		t.Fatalf("admin startup did not publish a migrated revision: before %+v, after %+v", status, updated)
+	}
+	assertWebContentFile(t, root, updated.Current, "index.html", "existing homepage")
+	assertWebContentFile(t, root, updated.Current, "errors/403.html", "custom denial")
+	assertWebContentFile(t, root, updated.Current, "errors/404.html", "Not found")
+}
+
+func assertWebContentFile(t *testing.T, root, revision, name, contains string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "revisions", revision, filepath.FromSlash(name)))
+	if err != nil || !strings.Contains(string(data), contains) {
+		t.Fatalf("public-site file %s = %q, %v; want content containing %q", name, data, err, contains)
+	}
+}
+
 func uploadRequest(t *testing.T, handler http.Handler, cookie *http.Cookie, csrf string, archive []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer

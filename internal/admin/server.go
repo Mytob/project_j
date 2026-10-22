@@ -29,6 +29,7 @@ import (
 	"github.com/Mytob/project_j/internal/maintenance"
 	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/security"
+	"github.com/Mytob/project_j/internal/webcontent"
 	"github.com/Mytob/project_j/internal/whitelist"
 	"github.com/Mytob/project_j/internal/wireguard"
 	"github.com/skip2/go-qrcode"
@@ -158,6 +159,9 @@ func (s *Server) ConfigureWebContent(root string) error {
 		return errors.New("web content root must be an absolute non-root path")
 	}
 	s.webContentRoot = filepath.Clean(root)
+	if err := webcontent.EnsureDefaultErrorPages(s.webContentRoot); err != nil {
+		return fmt.Errorf("migrate built-in public error pages: %w", err)
+	}
 	return nil
 }
 
