@@ -3,7 +3,7 @@
 **Audit date:** 2026-10-22
 
 **Baseline commit:** `8562b23` (v1.6 branch start)
-**Current tested dev commit:** `432b0db7bc7429f0daa2de83ccfd1b219cffb654`
+**Current tested dev commit:** `78dfb7987946f011e88dc7cde4660c2d24b12142`
 **Implementation PR:** #71 merged into dev at c8e279a.
 **Documentation PR:** #72 merged into dev at 432b0db.
 
@@ -590,9 +590,22 @@ absent.
   IPv4 and IPv6 addresses were banned/unbanned, leaving zero active bans. The
   WireGuard interface listened on UDP/51820 with its configured peer, but no
   handshake was recorded.
+- A separate clone of the clean Ubuntu 26.04.1 snapshot passed the dev.14
+  fresh install. Package and sidecar checksums passed; the installer completed
+  with isolated `.localhost` names and test-only local CA trust for HTTPS
+  readiness. `proxyctl doctor`, five-container health, maintenance service,
+  backup timer and verified 21-file backup passed. TLS returned 200/200/403
+  for site/admin/access. The restricted container observer returned five
+  healthy containers to its authorized UID and 403 to root. Fail2ban, host
+  journal access and both SSH nftables address-family rules passed, including
+  ban/unban probes. These checks survived a normal reboot. Stopping the admin
+  container triggered bounded restart recovery; it returned healthy and
+  `proxyctl doctor` passed afterward.
 - The full destructive Ubuntu matrix remains the earlier dev.12 evidence; it
   was not repeated against dev.14. Public DNS/provider firewall/ACME, internet
   WireGuard/playback and native Windows client/firewall checks remain
-  unverified. The production VPS and the user-specified dev.5 VM were not
-  changed. No stable release or GitHub release is claimed. See
+  unverified. The production VPS was not changed. The user-specified
+  `D:\VM\Ubuntu` VM was read-only inspected at dev.6 and left unchanged; no
+  WireGuard handshake or traffic was observed. No stable release or GitHub
+  release is claimed. See
   [`../TESTING.md`](../TESTING.md) for command and result details.

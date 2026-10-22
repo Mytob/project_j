@@ -88,9 +88,14 @@ addresses were banned and unbanned successfully, leaving zero active bans.
 The WireGuard server interface listened on UDP/51820 and had its peer
 configured, but no current peer handshake was observed. The earlier dev.12
 disposable-host run covered fresh install/resume, recovery, updater
-interruption, restore interruption, low-storage and host-maintenance checks;
-the dev.14 package did not repeat that entire destructive failure matrix. The
-user-specified `D:\VM\Ubuntu` VM was found on dev.5 and remains unchanged.
+interruption, restore interruption, low-storage and host-maintenance checks.
+A separate clean Ubuntu 26.04.1 clone at
+`D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx` passed a dev.14 fresh
+install, first boot, reboot, HTTPS route, backup, restricted observer
+authorization, Fail2ban/journal/nftables, and bounded admin-container recovery
+check. The dev.14 package did not repeat the entire destructive failure
+matrix. The user-specified `D:\VM\Ubuntu` VM was read-only inspected on dev.6
+and left unchanged; no WireGuard handshake or traffic was observed there.
 
 The current candidate adds a resumable keyboard installer, schema-2 .pkg
 archives with independent whole-file SHA-256 validation, persistent proxyctl
@@ -106,7 +111,7 @@ implementation audit and remaining work are tracked in
 | --- | --- | --- |
 | Go, frontend and browser regression checks | **Passed on clean dev.14** | Host-specific release checks remain open. |
 | Offline .pkg install/update/rollback | **Passed in local isolated Docker gate** | Six bundled images loaded without registry access. |
-| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; exact dev.14 update/rollback/update, doctor and host security probes passed** | Full destructive failure matrix was not repeated against dev.14. |
+| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install, reboot, bounded admin recovery, update/rollback/update, doctor and host security checks passed** | Full destructive failure matrix was not repeated against dev.14. |
 | Public DNS, provider firewall and ACME | **Blocked** | Requires a separate disposable public VPS and test domain. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires Windows client and scoped firewall/playback verification. |
 | Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.14 as stable. |
