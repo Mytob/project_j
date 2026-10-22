@@ -12,6 +12,7 @@
     const target = document.getElementById(id);
     if (target) target.textContent = value == null ? '—' : String(value);
   };
+  const diskUsedBar = document.getElementById('disk-used-bar');
   const formatCount = (value) => value == null ? null : Math.round(value).toLocaleString();
   const formatBytes = (value) => {
     if (value == null) return null;
@@ -75,7 +76,7 @@
       document.getElementById('disk-empty').hidden = host.disk_total_bytes == null || host.disk_used_bytes == null || host.disk_free_bytes == null;
       document.getElementById('network-current-empty').hidden = host.network_in_bytes_per_second != null || host.network_out_bytes_per_second != null || host.network_in_total_bytes != null || host.network_out_total_bytes != null;
       if (host.disk_total_bytes > 0 && host.disk_used_bytes != null) {
-        document.getElementById('disk-used-bar').style.width = `${percentage(host.disk_used_bytes, host.disk_total_bytes)}%`;
+        diskUsedBar.value = percentage(host.disk_used_bytes, host.disk_total_bytes);
       }
       set('disk-used-label', formatBytes(number(host.disk_used_bytes)));
       set('disk-free-label', formatBytes(number(host.disk_free_bytes)));
@@ -84,7 +85,7 @@
       ['host-cpu-state', 'host-memory-state', 'host-swap-state', 'host-disk-state'].forEach((id) => set(id, 'Unavailable'));
       document.getElementById('disk-empty').hidden = false;
       document.getElementById('network-current-empty').hidden = false;
-      document.getElementById('disk-used-bar').style.width = '0';
+      diskUsedBar.value = 0;
     }
     const proxy = data.proxy;
     if (proxy) {

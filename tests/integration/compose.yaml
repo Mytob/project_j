@@ -294,6 +294,13 @@ services:
       args:
         VERSION: integration-test
         BUILD_NUMBER: browser-test
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16777216
     command: ["--listen", ":8080", "--config", "/opt/jellyfin-proxy/config/admin.json", "--totp-key", "/opt/jellyfin-proxy/config/totp-key/totp.key", "--totp-state", "/opt/jellyfin-proxy/data/totp-state.json", "--whitelist", "/opt/jellyfin-proxy/data/whitelist.json", "--caddy-socket", "/run/caddy-admin/admin.sock", "--caddyfile", "/etc/caddy/Caddyfile", "--wireguard-client-config", "/opt/jellyfin-proxy/data/wireguard-client/windows.conf", "--wireguard-control-socket", "/run/wireguard-control/control.sock", "--wireguard-endpoint", "wireguard:51820", "--wireguard-health", "/run/wireguard-health/current", "--host-metrics-url", "http://hostmetrics:8181", "--container-health-url", "http://containerhealth:8282", "--proxy-metrics", "/run/proxy-metrics/current.json", "--security-events", "/opt/jellyfin-proxy/data/security-events", "--security-event-key", "/opt/jellyfin-proxy/config/security-event-key/event.key", "--security-control-socket", "/run/jellyfin-proxy-security/control.sock", "--trusted-proxy-cidrs", "${WIREGUARD_IP:-172.29.254.2}/32"]
     volumes:
       - ./admin-credential.generated.json:/opt/jellyfin-proxy/config/admin.json:ro
@@ -362,7 +369,7 @@ services:
       BASE_URL: https://admin.domain.test
       SECURITY_TEST_BAN_IP: ${UNTRUSTED_CLIENT_IP:-172.29.254.20}
       SECURITY_TEST_CLIENT_IP: ${BROWSER_TEST_IP:-172.29.254.30}
-    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.0 && npm ci && npx playwright test --reporter=line --update-snapshots=${BROWSER_SNAPSHOT_MODE:-missing}; status=$$?; cp -a /tmp/totp-browser/*-snapshots /tests/ 2>/dev/null || true; exit $$status"]
+    command: ["bash", "-lc", "cp -a /tests /tmp/totp-browser && cd /tmp/totp-browser && npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.0 && npm ci --no-audit --no-fund && npx playwright test --reporter=line --update-snapshots=${BROWSER_SNAPSHOT_MODE:-missing}; status=$$?; cp -a /tmp/totp-browser/*-snapshots /tests/ 2>/dev/null || true; exit $$status"]
     depends_on:
       admin:
         condition: service_started

@@ -71,7 +71,7 @@ func main() {
 		os.Exit(1)
 	}
 	controller.Journalctl = *journalctlPath
-	api := &security.ControlAPI{Manager: manager, OnChange: controller.Reconcile, OnUnban: controller.PrepareUnban}
+	api := &security.ControlAPI{Manager: manager, OnChange: controller.Reconcile, OnUnban: controller.CommitUnban}
 	listener, err := listenControlSocket(*controlSocket)
 	if err != nil {
 		logger.Error("open private security control socket", "error", err)

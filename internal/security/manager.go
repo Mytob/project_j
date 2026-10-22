@@ -220,9 +220,7 @@ func (m *Manager) Sweep() ([]HistoryEvent, error) {
 			created = append(created, HistoryEvent{ID: fmt.Sprintf("expired:%s:%d", identifier, ban.ExpiresAt.UnixNano()), At: ban.ExpiresAt, Service: ban.Service, IP: ban.IP, Type: "expired", Details: "Ban expired", FailedAttempts: ban.FailedAttempts, Escalation: ban.Escalation})
 		}
 	}
-	for _, event := range created {
-		m.state.History = append(m.state.History, event)
-	}
+	m.state.History = append(m.state.History, created...)
 	pruned := m.pruneLocked(now)
 	changed := len(created) > 0 || pruned
 	if changed {

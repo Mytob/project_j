@@ -51,10 +51,19 @@ func (c Config) Validate() error {
 	if err := validateProtection("admin", c.Admin); err != nil {
 		return err
 	}
-	if c.HistoryRetention < time.Hour || c.HistoryRetention > 365*24*time.Hour {
-		return errors.New("history retention must be between 1 hour and 365 days")
+	if !validHistoryRetention(c.HistoryRetention) {
+		return errors.New("history retention must be 7, 14, 30, 60, 90, or 180 days")
 	}
 	return nil
+}
+
+func validHistoryRetention(value time.Duration) bool {
+	for _, days := range []int{7, 14, 30, 60, 90, 180} {
+		if value == time.Duration(days)*24*time.Hour {
+			return true
+		}
+	}
+	return false
 }
 
 func validateProtection(name string, c ProtectionConfig) error {

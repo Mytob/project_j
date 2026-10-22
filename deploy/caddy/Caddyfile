@@ -3,7 +3,11 @@
 }
 
 {$BASE_DOMAIN} {
-	root * /srv/site
+	root * /srv/site/current
+	handle_errors 403 404 502 503 {
+		rewrite /errors/{err.status_code}.html
+		file_server
+	}
 	file_server
 }
 
@@ -15,6 +19,11 @@ admin.{$BASE_DOMAIN} {
 }
 
 access.{$BASE_DOMAIN} {
+	root * /srv/site/current
+	handle_errors 403 404 502 503 {
+		rewrite /errors/{err.status_code}.html
+		file_server
+	}
 	route {
 		jp_proxy_metrics
 		import /etc/caddy/whitelist.caddy

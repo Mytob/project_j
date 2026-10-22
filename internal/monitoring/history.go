@@ -1,23 +1,29 @@
 package monitoring
 
 import (
-	"compress/gzip"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 const (
-	HistoryRetention = 90 * 24 * time.Hour
-	maxHistoryFile   = 4 << 20
-	maxSamplesPerDay = 1500
+	DefaultHistoryRetention = 30 * 24 * time.Hour
+	MaximumHistoryRetention = 180 * 24 * time.Hour
+	maxHistoryFile          = 4 << 20
+	maxSamplesPerDay        = 1500
+	pruneBatchSize          = 1000
+	DatabaseSchemaVersion   = 1
 )
 
 type ProxyMetrics struct {
@@ -41,104 +47,96 @@ type Snapshot struct {
 	Proxy      *ProxyMetrics `json:"proxy,omitempty"`
 }
 
-// History stores one-minute samples in compressed, per-day files. Each file
-// is replaced atomically, is bounded, and is independent of release contents.
+// History stores one-minute samples in a private SQLite database independent
+// of replaceable release files.
 type History struct {
-	mu     sync.RWMutex
-	root   string
-	days   map[string][]Snapshot
-	latest time.Time
-	now    func() time.Time
+	mu        sync.RWMutex
+	db        *sql.DB
+	path      string
+	retention time.Duration
+	now       func() time.Time
 }
 
 func OpenHistory(root string) (*History, error) {
 	if root == "" {
 		return nil, errors.New("statistics history directory is required")
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, fmt.Errorf("create statistics history directory: %w", err)
+	path := root
+	if filepath.Ext(path) != ".db" {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return nil, fmt.Errorf("create statistics directory: %w", err)
+		}
+		if err := os.Chmod(path, 0o700); err != nil {
+			return nil, fmt.Errorf("secure statistics directory: %w", err)
+		}
+		path = filepath.Join(path, "statistics.db")
+	} else if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create statistics directory: %w", err)
 	}
-	if err := os.Chmod(root, 0o700); err != nil {
-		return nil, fmt.Errorf("secure statistics history directory: %w", err)
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=foreign_keys(ON)")
+	if err != nil {
+		return nil, fmt.Errorf("open statistics database: %w", err)
 	}
-	history := &History{root: root, days: make(map[string][]Snapshot), now: time.Now}
-	if err := history.load(); err != nil {
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("connect statistics database: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("secure statistics database: %w", err)
+	}
+	history := &History{db: db, path: path, retention: DefaultHistoryRetention, now: time.Now}
+	if err := history.initialize(); err != nil {
+		db.Close()
 		return nil, err
 	}
 	return history, nil
 }
 
-func (h *History) load() error {
-	entries, err := os.ReadDir(h.root)
-	if err != nil {
-		return fmt.Errorf("read statistics history directory: %w", err)
+func (h *History) initialize() error {
+	if _, err := h.db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		return fmt.Errorf("enable incremental database reclamation: %w", err)
 	}
-	cutoff := h.now().UTC().Add(-HistoryRetention)
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".json.gz") {
-			continue
-		}
-		date := strings.TrimSuffix(name, ".json.gz")
-		day, parseErr := time.Parse("2006-01-02", date)
-		if parseErr != nil {
-			continue
-		}
-		path := filepath.Join(h.root, name)
-		if day.Add(24 * time.Hour).Before(cutoff) {
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("expire old statistics history: %w", err)
-			}
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil || info.Size() > maxHistoryFile {
-			continue
-		}
-		samples, err := readHistoryFile(path, day)
-		if err != nil {
-			// One damaged day is discarded from the in-memory view; healthy days
-			// remain available and the next atomic save repairs that day.
-			continue
-		}
-		h.days[date] = samples
-		if latest := samples[len(samples)-1].CapturedAt; latest.After(h.latest) {
-			h.latest = latest
+	var schema int
+	if err := h.db.QueryRow(`PRAGMA user_version`).Scan(&schema); err != nil {
+		return fmt.Errorf("read statistics database schema: %w", err)
+	}
+	if schema > DatabaseSchemaVersion {
+		return fmt.Errorf("statistics database schema %d is newer than supported schema %d", schema, DatabaseSchemaVersion)
+	}
+	statements := []string{`CREATE TABLE IF NOT EXISTS proxy_samples (
+		captured_at INTEGER PRIMARY KEY,
+		payload BLOB NOT NULL CHECK(length(payload) <= 4194304)
+	)`, `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`, `CREATE INDEX IF NOT EXISTS proxy_samples_captured_at ON proxy_samples(captured_at)`}
+	for _, statement := range statements {
+		if _, err := h.db.Exec(statement); err != nil {
+			return fmt.Errorf("initialize statistics database: %w", err)
 		}
 	}
-	return nil
-}
-
-func readHistoryFile(path string, day time.Time) ([]Snapshot, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	compressed, err := gzip.NewReader(io.LimitReader(file, maxHistoryFile+1))
-	if err != nil {
-		return nil, err
-	}
-	defer compressed.Close()
-	data, err := io.ReadAll(io.LimitReader(compressed, maxHistoryFile+1))
-	if err != nil || len(data) > maxHistoryFile {
-		return nil, errors.New("statistics history is too large or corrupt")
-	}
-	var samples []Snapshot
-	if err := json.Unmarshal(data, &samples); err != nil {
-		return nil, err
-	}
-	if len(samples) > maxSamplesPerDay {
-		return nil, errors.New("statistics day exceeds its sample limit")
-	}
-	start := day.UTC()
-	end := start.Add(24 * time.Hour)
-	for i, sample := range samples {
-		if sample.CapturedAt.IsZero() || sample.CapturedAt.Before(start) || !sample.CapturedAt.Before(end) || (i > 0 && !samples[i-1].CapturedAt.Before(sample.CapturedAt)) {
-			return nil, errors.New("statistics samples are out of range or unordered")
+	if schema == 0 {
+		if _, err := h.db.Exec(`PRAGMA user_version=1`); err != nil {
+			return fmt.Errorf("record statistics database schema: %w", err)
 		}
 	}
-	return samples, nil
+	var raw string
+	err := h.db.QueryRow(`SELECT value FROM app_settings WHERE key='proxy_retention_days'`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := h.db.Exec(`INSERT INTO app_settings(key,value) VALUES('proxy_retention_days','30')`); err != nil {
+			return fmt.Errorf("set default proxy statistics retention: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("read proxy statistics retention: %w", err)
+	} else {
+		days, parseErr := strconv.Atoi(raw)
+		retention := time.Duration(days) * 24 * time.Hour
+		if parseErr != nil || !validRetention(retention) {
+			return errors.New("stored proxy statistics retention is invalid")
+		}
+		h.retention = retention
+	}
+	return h.prune(h.now().UTC().Add(-h.retention))
 }
 
 func (h *History) Append(sample Snapshot) error {
@@ -146,48 +144,57 @@ func (h *History) Append(sample Snapshot) error {
 		return errors.New("statistics sample timestamp is required")
 	}
 	sample.CapturedAt = sample.CapturedAt.UTC()
-	date := sample.CapturedAt.Format("2006-01-02")
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if !h.latest.IsZero() && sample.CapturedAt.Before(h.latest) {
+	var latest int64
+	if err := h.db.QueryRow(`SELECT COALESCE(MAX(captured_at),0) FROM proxy_samples`).Scan(&latest); err != nil {
+		return fmt.Errorf("read latest statistics timestamp: %w", err)
+	}
+	if latest > 0 && sample.CapturedAt.UnixNano() < latest {
 		return errors.New("statistics samples must be appended in timestamp order")
 	}
-	if err := h.expireLocked(sample.CapturedAt.Add(-HistoryRetention)); err != nil {
+	if err := h.prune(sample.CapturedAt.Add(-h.retention)); err != nil {
 		return err
 	}
-	day := append([]Snapshot(nil), h.days[date]...)
-	if len(day) > 0 && !day[len(day)-1].CapturedAt.Before(sample.CapturedAt) {
-		if day[len(day)-1].CapturedAt.Equal(sample.CapturedAt) {
-			day[len(day)-1] = sample
-		} else {
-			return errors.New("statistics samples must be appended in timestamp order")
+	var count int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM proxy_samples WHERE captured_at>=? AND captured_at<?`, sample.CapturedAt.UTC().Truncate(24*time.Hour).UnixNano(), sample.CapturedAt.UTC().Truncate(24*time.Hour).Add(24*time.Hour).UnixNano()).Scan(&count); err != nil {
+		return err
+	}
+	if count >= maxSamplesPerDay {
+		var exists int
+		if err := h.db.QueryRow(`SELECT COUNT(*) FROM proxy_samples WHERE captured_at=?`, sample.CapturedAt.UnixNano()).Scan(&exists); err != nil {
+			return err
 		}
-	} else {
-		if len(day) >= maxSamplesPerDay {
+		if exists == 0 {
 			return errors.New("statistics sample limit for the day has been reached")
 		}
-		day = append(day, sample)
 	}
-	if err := writeHistoryFile(h.root, date, day); err != nil {
-		return fmt.Errorf("persist statistics history: %w", err)
+	data, err := json.Marshal(sample)
+	if err != nil {
+		return err
 	}
-	h.days[date] = day
-	if sample.CapturedAt.After(h.latest) {
-		h.latest = sample.CapturedAt
+	if len(data) > maxHistoryFile {
+		return errors.New("statistics sample exceeds its storage limit")
+	}
+	if _, err := h.db.Exec(`INSERT INTO proxy_samples(captured_at,payload) VALUES(?,?) ON CONFLICT(captured_at) DO UPDATE SET payload=excluded.payload`, sample.CapturedAt.UnixNano(), data); err != nil {
+		return fmt.Errorf("persist statistics sample: %w", err)
 	}
 	return nil
 }
 
-func (h *History) expireLocked(cutoff time.Time) error {
-	for date := range h.days {
-		day, err := time.Parse("2006-01-02", date)
-		if err != nil || !day.Add(24*time.Hour).Before(cutoff) {
-			continue
+func (h *History) prune(cutoff time.Time) error {
+	result, err := h.db.Exec(`DELETE FROM proxy_samples WHERE captured_at IN (SELECT captured_at FROM proxy_samples WHERE captured_at<? ORDER BY captured_at LIMIT ?)`, cutoff.UnixNano(), pruneBatchSize)
+	if err != nil {
+		return fmt.Errorf("prune expired statistics: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if removed > 0 {
+		if _, err := h.db.Exec(`PRAGMA incremental_vacuum(100)`); err != nil {
+			return fmt.Errorf("reclaim expired statistics pages: %w", err)
 		}
-		if err := os.Remove(filepath.Join(h.root, date+".json.gz")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("expire old statistics history: %w", err)
-		}
-		delete(h.days, date)
 	}
 	return nil
 }
@@ -195,59 +202,144 @@ func (h *History) expireLocked(cutoff time.Time) error {
 func (h *History) LatestAt() (time.Time, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	var latest time.Time
-	for _, day := range h.days {
-		if len(day) > 0 && day[len(day)-1].CapturedAt.After(latest) {
-			latest = day[len(day)-1].CapturedAt
-		}
+	var latest int64
+	if err := h.db.QueryRow(`SELECT COALESCE(MAX(captured_at),0) FROM proxy_samples`).Scan(&latest); err != nil || latest == 0 {
+		return time.Time{}, false
 	}
-	return latest, !latest.IsZero()
+	return time.Unix(0, latest).UTC(), true
 }
 
-func writeHistoryFile(root, date string, samples []Snapshot) error {
-	data, err := json.Marshal(samples)
+func validRetention(value time.Duration) bool {
+	for _, days := range []int{7, 14, 30, 60, 90, 180} {
+		if value == time.Duration(days)*24*time.Hour {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *History) Retention() time.Duration { h.mu.RLock(); defer h.mu.RUnlock(); return h.retention }
+
+func (h *History) SetRetention(value time.Duration) error {
+	if !validRetention(value) {
+		return errors.New("proxy statistics retention must be 7, 14, 30, 60, 90, or 180 days")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	days := int(value / (24 * time.Hour))
+	if _, err := h.db.Exec(`INSERT INTO app_settings(key,value) VALUES('proxy_retention_days',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, fmt.Sprint(days)); err != nil {
+		return err
+	}
+	h.retention = value
+	return h.prune(h.now().UTC().Add(-value))
+}
+
+func (h *History) StorageInfo() (databaseBytes, retainedSamples int64, err error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if err = h.db.QueryRow(`SELECT COUNT(*) FROM proxy_samples`).Scan(&retainedSamples); err != nil {
+		return
+	}
+	var info os.FileInfo
+	info, err = os.Stat(h.path)
+	if err != nil {
+		return
+	}
+	databaseBytes = info.Size()
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if sidecar, statErr := os.Stat(h.path + suffix); statErr == nil {
+			databaseBytes += sidecar.Size()
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			err = statErr
+			return
+		}
+	}
+	return
+}
+
+func (h *History) Close() error { return h.db.Close() }
+
+// BackupTo uses SQLite's online backup API to create a consistent standalone
+// database snapshot without stopping statistics collection.
+func (h *History) BackupTo(destination string) error {
+	if filepath.Ext(destination) != ".db" {
+		return errors.New("statistics backup must use a .db destination")
+	}
+	absPath, err := filepath.Abs(destination)
 	if err != nil {
 		return err
 	}
-	if len(data) > maxHistoryFile {
-		return errors.New("statistics history day exceeds its storage limit")
+	parent, err := filepath.EvalSymlinks(filepath.Dir(absPath))
+	if err != nil {
+		return fmt.Errorf("resolve statistics backup directory: %w", err)
 	}
-	temp, err := os.CreateTemp(root, ".statistics-*.tmp")
+	if parent != filepath.Dir(absPath) {
+		return errors.New("statistics backup directory must not be a symbolic link")
+	}
+	if _, err := os.Lstat(absPath); err == nil {
+		return errors.New("statistics backup destination already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var partial bool
+	defer func() {
+		if partial {
+			_ = os.Remove(absPath)
+			_ = os.Remove(absPath + "-wal")
+			_ = os.Remove(absPath + "-shm")
+		}
+	}()
+	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}).String() + "?mode=rwc"
+	connection, err := h.db.Conn(context.Background())
 	if err != nil {
 		return err
 	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return err
-	}
-	compressed := gzip.NewWriter(temp)
-	if _, err := compressed.Write(data); err != nil {
-		compressed.Close()
-		temp.Close()
-		return err
-	}
-	if err := compressed.Close(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, filepath.Join(root, date+".json.gz")); err != nil {
-		return err
-	}
-	directory, err := os.Open(root)
+	err = connection.Raw(func(raw any) error {
+		source, ok := raw.(interface {
+			NewBackup(string) (*sqlite.Backup, error)
+		})
+		if !ok {
+			return errors.New("SQLite connection does not support online backups")
+		}
+		backup, err := source.NewBackup(uri)
+		if err != nil {
+			return err
+		}
+		var backupErr error
+		for {
+			more, stepErr := backup.Step(128)
+			if stepErr != nil {
+				backupErr = stepErr
+				break
+			}
+			if !more {
+				break
+			}
+		}
+		return errors.Join(backupErr, backup.Finish())
+	})
+	connection.Close()
 	if err != nil {
+		partial = true
+		return fmt.Errorf("create online statistics backup: %w", err)
+	}
+	if err := os.Chmod(absPath, 0o600); err != nil {
+		partial = true
+		return fmt.Errorf("secure statistics backup: %w", err)
+	}
+	checkURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}).String() + "?mode=ro"
+	check, err := sql.Open("sqlite", checkURI)
+	if err != nil {
+		partial = true
 		return err
 	}
-	defer directory.Close()
-	return directory.Sync()
+	defer check.Close()
+	var result string
+	if err := check.QueryRow(`PRAGMA integrity_check`).Scan(&result); err != nil || result != "ok" {
+		partial = true
+		return errors.New("statistics backup failed its SQLite integrity check")
+	}
+	return nil
 }
 
 // Range returns chronologically ordered aggregates bounded by maxPoints.
@@ -258,15 +350,25 @@ func (h *History) Range(start, end time.Time, maxPoints int) []Snapshot {
 		return []Snapshot{}
 	}
 	h.mu.RLock()
-	var samples []Snapshot
-	for _, day := range h.days {
-		for _, sample := range day {
-			if !sample.CapturedAt.Before(start) && sample.CapturedAt.Before(end) {
-				samples = append(samples, sample)
-			}
+	rows, err := h.db.QueryContext(context.Background(), `SELECT payload FROM proxy_samples WHERE captured_at>=? AND captured_at<? ORDER BY captured_at`, start.UnixNano(), end.UnixNano())
+	if err != nil {
+		h.mu.RUnlock()
+		return []Snapshot{}
+	}
+	defer rows.Close()
+	samples := make([]Snapshot, 0)
+	for rows.Next() {
+		var data []byte
+		var sample Snapshot
+		if rows.Scan(&data) != nil || len(data) > maxHistoryFile || json.Unmarshal(data, &sample) != nil {
+			continue
 		}
+		samples = append(samples, sample)
 	}
 	h.mu.RUnlock()
+	if rows.Err() != nil {
+		return []Snapshot{}
+	}
 	sort.Slice(samples, func(i, j int) bool { return samples[i].CapturedAt.Before(samples[j].CapturedAt) })
 	if len(samples) <= maxPoints {
 		return samples
@@ -348,6 +450,7 @@ func divideHost(sum *HostMetrics, count uint64) {
 func aggregateProxy(samples []Snapshot) *ProxyMetrics {
 	result := &ProxyMetrics{CapturedAt: samples[len(samples)-1].CapturedAt}
 	var gauges, counters int
+	var weightedErrorRate, requestWeight float64
 	var previous *ProxyMetrics
 	for _, sample := range samples {
 		item := sample.Proxy
@@ -357,7 +460,10 @@ func aggregateProxy(samples []Snapshot) *ProxyMetrics {
 		gauges++
 		result.ActiveRequests += item.ActiveRequests
 		addFloat(&result.RequestsPerSecond, item.RequestsPerSecond)
-		addFloat(&result.ErrorRatePercent, item.ErrorRatePercent)
+		if item.RequestsPerSecond != nil && item.ErrorRatePercent != nil && *item.RequestsPerSecond > 0 && *item.ErrorRatePercent >= 0 {
+			requestWeight += *item.RequestsPerSecond
+			weightedErrorRate += *item.RequestsPerSecond * *item.ErrorRatePercent
+		}
 		addUint(&result.IncomingBytesPerSecond, item.IncomingBytesPerSecond)
 		addUint(&result.OutgoingBytesPerSecond, item.OutgoingBytesPerSecond)
 		if previous != nil {
@@ -373,7 +479,10 @@ func aggregateProxy(samples []Snapshot) *ProxyMetrics {
 		return nil
 	}
 	divideFloat(&result.RequestsPerSecond, uint64(gauges))
-	divideFloat(&result.ErrorRatePercent, uint64(gauges))
+	if requestWeight > 0 {
+		errorRate := weightedErrorRate / requestWeight
+		result.ErrorRatePercent = &errorRate
+	}
 	divideUint(&result.IncomingBytesPerSecond, uint64(gauges))
 	divideUint(&result.OutgoingBytesPerSecond, uint64(gauges))
 	result.ActiveRequests /= int64(gauges)

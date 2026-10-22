@@ -785,7 +785,8 @@ func TestTOTPLoginRequiresPasswordAndFreshUnusedCode(t *testing.T) {
 	if response := request(handler, http.MethodGet, "/dashboard", nil, authenticated); response.Code != http.StatusOK {
 		t.Errorf("fully authenticated session cannot access dashboard: %d", response.Code)
 	}
-	if response := request(handler, http.MethodGet, "/wireguard/config", nil, authenticated); response.Code != http.StatusServiceUnavailable {
+	sessionCSRF, _, _ := server.sessions.State(authenticated.Value)
+	if response := request(handler, http.MethodPost, "/wireguard/config", url.Values{"csrf": {sessionCSRF}}, authenticated); response.Code != http.StatusServiceUnavailable {
 		t.Errorf("authenticated session did not pass auth boundary for unconfigured WireGuard fixture: %d", response.Code)
 	}
 	replayCookie, replayCSRF := newAnonymousLogin(t, handler)
@@ -825,7 +826,7 @@ func TestRecoveryLoginIsRestrictedUntilFreshAuthenticatorActivation(t *testing.T
 	if response := request(handler, http.MethodPost, "/whitelist/add", url.Values{"csrf": {csrfMatch[1]}, "entry": {"192.0.2.1"}}, cookie); response.Code != http.StatusSeeOther {
 		t.Fatalf("recovery session reached whitelist mutation: %d", response.Code)
 	}
-	if response := request(handler, http.MethodGet, "/wireguard/config", nil, cookie); response.Code != http.StatusSeeOther {
+	if response := request(handler, http.MethodPost, "/wireguard/config", url.Values{"csrf": {csrfMatch[1]}}, cookie); response.Code != http.StatusSeeOther {
 		t.Fatalf("recovery session reached protected download: %d", response.Code)
 	}
 	if response := request(handler, http.MethodPost, "/totp/enroll/start", url.Values{"csrf": {csrfMatch[1]}, "password": {"correct test administrator password"}}, cookie); response.Code != http.StatusSeeOther {
@@ -991,15 +992,6 @@ func TestTOTPLoginFailsClosedWhenReplayStateCannotBePersisted(t *testing.T) {
 	}
 }
 
-func mustCode(t *testing.T, secret []byte, at time.Time) string {
-	t.Helper()
-	code, err := totp.Code(secret, at)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return code
-}
-
 func TestTOTPEnrollmentSecretAndConfirmationRequirePasswordReauthentication(t *testing.T) {
 	server, handler, store, _ := newTOTPTestServer(t)
 	cookie := loginTestAdmin(t, server)
@@ -1044,12 +1036,19 @@ func TestWireGuardDownloadRequiresAuthenticationAndIsNonCacheable(t *testing.T) 
 		t.Fatal(err)
 	}
 	handler := server.Handler()
-	unauthorized := request(handler, "GET", "/wireguard/config", nil, nil)
+	getDownload := request(handler, http.MethodGet, "/wireguard/config", nil, nil)
+	if getDownload.Code == http.StatusOK {
+		t.Fatalf("state-changing GET download returned the private config")
+	}
+	if _, err := os.Stat(paths.ClientPath); err != nil {
+		t.Fatalf("rejected GET consumed the config: %v", err)
+	}
+	unauthorized := request(handler, http.MethodPost, "/wireguard/config", nil, nil)
 	if unauthorized.Code != http.StatusSeeOther || unauthorized.Header().Get("Location") != "/" {
 		t.Fatalf("anonymous config download status/location = %d %q", unauthorized.Code, unauthorized.Header().Get("Location"))
 	}
 
-	id, _, err := server.sessions.Create(true)
+	id, csrf, err := server.sessions.Create(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1061,7 +1060,14 @@ func TestWireGuardDownloadRequiresAuthenticationAndIsNonCacheable(t *testing.T) 
 	if state := initialState(t, handler, cookie); state["wireguard_config_available"] != true {
 		t.Fatalf("WireGuard bootstrap did not expose the retained client config: %#v", state)
 	}
-	response := request(handler, "GET", "/wireguard/config", nil, cookie)
+	withoutCSRF := request(handler, http.MethodPost, "/wireguard/config", nil, cookie)
+	if withoutCSRF.Code != http.StatusForbidden {
+		t.Fatalf("download without CSRF returned %d, want forbidden", withoutCSRF.Code)
+	}
+	if _, err := os.Stat(paths.ClientPath); err != nil {
+		t.Fatalf("rejected download consumed the config: %v", err)
+	}
+	response := request(handler, http.MethodPost, "/wireguard/config", url.Values{"csrf": {csrf}}, cookie)
 	if response.Code != http.StatusOK {
 		t.Fatalf("download status %d: %s", response.Code, response.Body.String())
 	}
@@ -1077,7 +1083,7 @@ func TestWireGuardDownloadRequiresAuthenticationAndIsNonCacheable(t *testing.T) 
 	if _, err := os.Stat(paths.ClientPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("successful download did not delete its server copy: %v", err)
 	}
-	second := request(handler, "GET", "/wireguard/config", nil, cookie)
+	second := request(handler, http.MethodPost, "/wireguard/config", url.Values{"csrf": {csrf}}, cookie)
 	if second.Code != http.StatusServiceUnavailable {
 		t.Fatalf("second download returned %d, want one-time download rejection", second.Code)
 	}
@@ -1105,14 +1111,14 @@ func TestWireGuardDownloadFailsClosedWhenRetainedFilePermissionsChange(t *testin
 	if err := server.ConfigureWireGuardConfig(paths.ClientPath); err != nil {
 		t.Fatal(err)
 	}
-	id, _, err := server.sessions.Create(true)
+	id, csrf, err := server.sessions.Create(true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(paths.ClientPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	response := request(server.Handler(), "GET", "/wireguard/config", nil, &http.Cookie{Name: "admin_session", Value: id})
+	response := request(server.Handler(), http.MethodPost, "/wireguard/config", url.Values{"csrf": {csrf}}, &http.Cookie{Name: "admin_session", Value: id})
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("download with broad file permissions returned %d", response.Code)
 	}
@@ -1162,7 +1168,7 @@ func TestWireGuardRotationWaitsForOneTimeDownload(t *testing.T) {
 		t.Fatalf("blocked rotation changed the current downloadable config: %v", err)
 	}
 
-	download := request(handler, http.MethodGet, "/wireguard/config", nil, cookie)
+	download := request(handler, http.MethodPost, "/wireguard/config", url.Values{"csrf": {csrf}}, cookie)
 	if download.Code != http.StatusOK {
 		t.Fatalf("one-time download returned %d: %s", download.Code, download.Body.String())
 	}
@@ -1266,11 +1272,99 @@ func TestStatisticsPageRequiresAdministratorSession(t *testing.T) {
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="root"`) {
 		t.Fatalf("authenticated statistics SPA route = %d %s", page.Code, page.Body.String())
 	}
+	policy := page.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "style-src 'self'") || strings.Contains(policy, "unsafe-inline") {
+		t.Fatalf("statistics route has an unexpected style policy: %q", policy)
+	}
+	fallback, err := templateFiles.ReadFile("templates/statistics.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := templateFiles.ReadFile("templates/statistics.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fallback), `<progress class="disk-bar" id="disk-used-bar"`) || strings.Contains(string(fallback), "style=") || strings.Contains(string(script), ".style.") || !strings.Contains(string(script), "diskUsedBar.value") {
+		t.Fatal("server-rendered statistics fallback requires inline styles")
+	}
 }
 
 type fixedCaddyHealth struct{ err error }
 
 func (check fixedCaddyHealth) CheckHealth() error { return check.err }
+
+type countingCaddyHealth struct{ calls atomic.Int32 }
+
+func (check *countingCaddyHealth) CheckHealth() error {
+	check.calls.Add(1)
+	return nil
+}
+
+func TestComponentHealthSharesChecksForFifteenSeconds(t *testing.T) {
+	server, _, _, _ := newTOTPTestServer(t)
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	check := &countingCaddyHealth{}
+	server.ConfigureComponentHealth(check, "")
+	server.componentHealth(nil)
+	server.componentHealth(nil)
+	if got := check.calls.Load(); got != 1 {
+		t.Fatalf("Caddy checks within one cache interval = %d, want 1", got)
+	}
+	now = now.Add(15 * time.Second)
+	server.componentHealth(nil)
+	if got := check.calls.Load(); got != 2 {
+		t.Fatalf("Caddy checks after cache expiry = %d, want 2", got)
+	}
+}
+
+func TestCPUHealthUsesHysteresis(t *testing.T) {
+	var pressure cpuPressureState
+	for _, sample := range []struct {
+		value    float64
+		degraded bool
+		phase    string
+	}{
+		{97, false, "confirming"},
+		{98, true, "degraded"},
+		{90, true, "degraded"},
+		{85, true, "recovering"},
+		{84, false, "recovered"},
+		{99, false, "confirming"},
+		{60, false, "healthy"},
+		{99, false, "confirming"},
+	} {
+		degraded, phase := pressure.Observe(sample.value)
+		if degraded != sample.degraded || phase != sample.phase {
+			t.Fatalf("Observe(%.1f) = %t, %q; want %t, %q", sample.value, degraded, phase, sample.degraded, sample.phase)
+		}
+	}
+}
+
+func TestUnchangedHealthObservationDoesNotRewriteDurableState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data", "health-state.json")
+	server := New(nil, nil)
+	if err := server.ConfigureHealthState(path); err != nil {
+		t.Fatal(err)
+	}
+	checked := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	server.recordHealth([]componentStatus{{Name: "Caddy / proxy", State: "Healthy", Detail: "private health check succeeded"}}, checked)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := server.recordHealth([]componentStatus{{Name: "Caddy / proxy", State: "Healthy", Detail: "private health check succeeded"}}, checked.Add(time.Minute))
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("unchanged health state was persisted again: before %s after %s", before, after)
+	}
+	if len(items) != 1 || !items[0].CheckedAt.Equal(checked.Add(time.Minute)) {
+		t.Fatalf("in-memory health freshness was not updated: %#v", items)
+	}
+}
 
 func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) {
 	server, handler, _, _ := newTOTPTestServer(t)
@@ -1285,7 +1379,7 @@ func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) 
 	server.ConfigureComponentHealth(fixedCaddyHealth{}, heartbeat)
 	cookie := loginTestAdmin(t, server)
 
-	for _, route := range []string{"/dashboard", "/health", "/access-control", "/security", "/wireguard", "/statistics"} {
+	for _, route := range []string{"/dashboard", "/health", "/access-control", "/security", "/wireguard", "/statistics", "/about"} {
 		response := request(handler, http.MethodGet, route, nil, cookie)
 		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(response.Body.String(), `id="root"`) {
 			t.Errorf("admin route %s did not serve the SPA shell: status=%d content-type=%q", route, response.Code, response.Header().Get("Content-Type"))
@@ -1311,6 +1405,43 @@ func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) 
 	}
 	if observed["Caddy / proxy"]["detail"] != "Caddy responded through its private admin socket." || observed["WireGuard interface"]["detail"] != "A recent heartbeat confirms that the interface is up. This does not prove peer reachability." || observed["Windows peer"]["detail"] != "The private WireGuard status socket is not configured." || observed["Host metrics"]["state"] != "Unknown" || observed["Proxy metrics"]["state"] != "Unknown" || observed["Admin container"]["state"] != "Unknown" {
 		t.Fatalf("bootstrap health did not reflect observed evidence: %#v", observed)
+	}
+}
+
+func TestAboutAPIRequiresAdminAndCombinesInstalledAndRunningVersions(t *testing.T) {
+	server, _, _, _ := newTOTPTestServer(t)
+	metadataPath := filepath.Join(t.TempDir(), "install-info.json")
+	if err := os.WriteFile(metadataPath, []byte(`{"version":1,"installed_at":"2026-10-20T11:12:13Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.ConfigureInstallMetadata(metadataPath); err != nil {
+		t.Fatal(err)
+	}
+	server.ConfigureBuildInfo("1.6.0-dev", "abc1234")
+	observer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/inventory" {
+			t.Fatalf("unexpected about inventory request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ubuntu_version":"Ubuntu 26.04.1 LTS","proxyctl_version":"1.6.0-dev","docker_engine_version":"29.1.3","compose_version":"2.40.3","services":[{"service":"caddy","image":"jellyfin-proxy/caddy:1.6.0-dev","component_version":"2.11.7"}]}`)
+	}))
+	defer observer.Close()
+	server.ConfigureContainerHealth(observer.URL)
+	handler := server.Handler()
+	if response := request(handler, http.MethodGet, "/api/about", nil, nil); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated about status = %d", response.Code)
+	}
+	cookie := loginTestAdmin(t, server)
+	response := request(handler, http.MethodGet, "/api/about", nil, cookie)
+	if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Cache-Control"), "no-store") {
+		t.Fatalf("authenticated about response = %d %q", response.Code, response.Header().Get("Cache-Control"))
+	}
+	var value aboutResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Version != "1.6.0-dev" || value.BuildID != "abc1234" || value.GoVersion == "" || value.InstalledAt != "2026-10-20T11:12:13Z" || !value.InventoryAvailable || value.UbuntuVersion != "Ubuntu 26.04.1 LTS" || value.ProxyctlVersion != "1.6.0-dev" || value.DockerEngineVersion != "29.1.3" || value.ComposeVersion != "2.40.3" || len(value.Services) != 1 || value.Services[0].ComponentVersion != "2.11.7" {
+		t.Fatalf("about response did not distinguish build and running versions: %+v", value)
 	}
 }
 

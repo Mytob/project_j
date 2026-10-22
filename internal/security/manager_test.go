@@ -294,7 +294,7 @@ func TestSweepExpiresBanAndAppliesHistoryRetentionWithoutDeletingState(t *testin
 		t.Fatal("expired ban remains active")
 	}
 	config := m.Snapshot().Config
-	config.HistoryRetention = time.Hour
+	config.HistoryRetention = 7 * 24 * time.Hour
 	if err := m.UpdateConfig(config); err != nil {
 		t.Fatal(err)
 	}

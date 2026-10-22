@@ -20,17 +20,20 @@ VPS public TCP 80/443 -> Caddy (shares WireGuard network namespace)
                   access.domain.com -> whitelist -> WireGuard -> Windows Jellyfin
 ```
 
-The VPS target has Caddy, WireGuard, the Go admin application, a host-metrics
-collector, and a dedicated container-health observer. Docker Compose gives Caddy the WireGuard service's network
+The VPS target has Caddy, WireGuard, the Go admin application, and a host-metrics
+collector. A host maintenance service reports container health over a private
+Unix socket. Docker Compose gives Caddy the WireGuard service's network
 namespace. The WireGuard container owns published web and tunnel ports. The
 admin container remains separate and can reach Caddy's admin API only over a
 private Unix socket with narrowly scoped filesystem permissions. Neither admin
-nor host-metrics receives Docker socket access. The separately authorized
-container-health observer alone receives a read-only socket mount. Its fixed
-GET-only handler filters to labeled application containers and returns only
-state, configured health, restart count, and start time to admin over an
-internal unpublished network. All application services use
-`restart: unless-stopped`.
+nor any application container receives the Docker API socket. The root-owned
+host maintenance service is exposed only at
+`/run/jellyfin-proxy-maintenance/maintenance.sock`; it authorizes the admin's
+numeric UID using kernel Unix peer credentials and exposes fixed GET routes for
+health and container status. Its Docker observer filters to labeled
+application containers and returns only state, configured health, restart
+count, and start time. The Compose admin container mounts that socket directory
+read-only. All application services use `restart: unless-stopped`.
 
 The installer publishes TCP 80/443 and the selected host UDP port from the
 WireGuard namespace. Since Docker DNAT may bypass the host INPUT firewall, the
@@ -40,6 +43,16 @@ peer and the three application service ports; all other ingress is dropped.
 This leaves host SSH and unrelated host firewall rules alone. It does not
 configure a provider firewall/security group; those ports must be allowed there
 by the operator.
+
+On fresh install and fresh-host recovery, `proxyctl` creates a dedicated
+non-root sudo account and a root-owned OpenSSH drop-in that scopes the selected
+password or public-key method to that account. It validates the effective
+`sshd` policy before reload and keeps the existing SSH session open. The
+operator must verify a second login and sudo access before the application
+install continues. Root SSH login is disabled only as a separate confirmed
+step after that check. Failed setup restores the previous managed drop-in and
+removes only the unverified account created by that attempt; host firewall
+configuration remains untouched.
 
 ## M1–M6 local environment
 
@@ -154,9 +167,8 @@ The admin application updates validated Caddy configuration through its
 private Unix admin socket. It persists a candidate allowlist first, then
 activates it through Caddy's transactional `/load` endpoint; if activation
 fails it restores the previous persisted list. A persistence failure leaves
-the active Caddy policy untouched. There is no public management API; only the
-dedicated private container-health observer uses the Docker socket, as
-documented above.
+the active Caddy policy untouched. There is no public management API; container
+health is read through the fixed private host maintenance API described above.
 
 The socket address and permission syntax follow Caddy's
 [admin endpoint configuration](https://caddyserver.com/docs/caddyfile/options).

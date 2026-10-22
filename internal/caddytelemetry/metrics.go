@@ -219,15 +219,12 @@ func (m *Deny) Provision(caddy.Context) error {
 	return nil
 }
 
-func (m Deny) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+func (m Deny) ServeHTTP(_ http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
 	if m.data == nil {
 		return errors.New("proxy deny metrics handler was not provisioned")
 	}
 	m.data.blocked.Add(1)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusForbidden)
-	_, err := io.WriteString(w, "Forbidden\n")
-	return err
+	return caddyhttp.Error(http.StatusForbidden, errors.New("blocked by proxy access policy"))
 }
 
 func (m *Deny) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
