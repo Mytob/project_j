@@ -87,6 +87,8 @@ On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
 integration/security/streaming, and offline package install/update/rollback,
 retention, and password-recovery gates passed. The report records
 `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+The focused admin and web-content package tests also passed afterward using
+the pinned Go container; no product-code changes followed the full gate.
 The exact dev.19 package updated the disposable VM from dev.18 with a verified
 checksum and pre-update backup. The VM's `proxyctl doctor` passed; all five
 containers were healthy. The install-gate table in [TESTING.md](TESTING.md)

@@ -12,6 +12,11 @@
   install/update/rollback/retention/password-recovery checks passed. The
   release report records `local_gate: passed` and
   `release_readiness: blocked_host_checks_pending`.
+- Focused follow-up: `docker run --rm -v "${PWD}:/src" -w /src
+  golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
+  go test ./internal/admin ./internal/webcontent` — PASS, exit 0; both packages
+  passed. This ran against the same source candidate; no source changes were
+  made after the dev.19 full gate.
 - Artifacts: `dist/jellyfin-proxy-1.6.0-dev.19.pkg`, 137,289,488 bytes,
   SHA-256 `a1c656f95fe91f5cd8aab5319d0e7cbbdfb36847077b7d301bf027b578a002df`;
   standalone `proxyctl-linux-amd64`, 14,307,488 bytes, SHA-256
