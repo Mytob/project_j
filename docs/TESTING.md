@@ -44,10 +44,33 @@
   and the configured peer `10.66.66.2/32`. No recent peer handshake was
   reported, so this does not verify internet connectivity or Jellyfin
   playback.
+- Fresh install and reboot acceptance: A separate clone of the Ubuntu
+  `Fresh Install` snapshot at `D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx`
+  (`192.168.145.139`) started without the proxy or Docker installed. After an
+  apt mirror index hash mismatch, a retried package-index update succeeded;
+  Docker Engine and Compose were installed, and the exact dev.14 package and
+  sidecar checksums both passed. The installer completed with isolated
+  `.localhost` hostnames and a test-only local trust setup for its internal
+  HTTPS readiness checks. A separate SSH login as the created host
+  administrator succeeded. `proxyctl doctor` passed; all five containers
+  were healthy; `jellyfin-proxy-maintenance.service` and
+  `jellyfin-proxy-backup.timer` were active. TLS-verified responses were 200
+  for the site and admin hostnames and 403 for the access hostname. Backup
+  creation and verification passed for 21 files. The restricted container
+  observer returned five healthy containers to its authorized UID and 403 to
+  root. The two Fail2ban jails, host SSH journal access, and IPv4/IPv6 SSH
+  nftables rules passed; reserved test addresses were banned and unbanned.
+  After a normal reboot, SSH, doctor, routes, container health, observer
+  authorization, services, and security checks passed again. Stopping the
+  admin container triggered its bounded recovery job; the container returned
+  healthy, the recovery journal recorded the restart, and doctor passed after
+  recovery.
 - The broader fresh-install/resume, forced interruption, restore recovery,
   low-storage and manual host-maintenance matrix was run against dev.12 on
   disposable clones; it was not repeated against dev.14. The specified
-  `D:\VM\Ubuntu` VM was found on dev.5 and left unchanged. No production
+  `D:\VM\Ubuntu` VM was read-only inspected on dev.6; doctor, container health,
+  Fail2ban and SSH nftables checks passed, but its WireGuard peer had no recent
+  handshake or traffic. It was left unchanged. No production
   VPS/domain was used. Public DNS/provider firewall/public ACME, internet
   WireGuard, and native Windows client/firewall/playback checks remain
   unverified. No stable GitHub release was published.
