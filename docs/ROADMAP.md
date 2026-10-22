@@ -57,9 +57,10 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The clean-tree 1.6.0-dev.13 local release gate and an exact-package
-update on disposable Ubuntu passed. Stable release readiness remains blocked on
-public-network and native Windows evidence.**
+**Status: The clean-tree 1.6.0-dev.13 local release gate, exact-package update,
+doctor, and version-matched Ubuntu host security checks on a disposable clone
+passed. Stable release readiness remains blocked on public-network and native
+Windows evidence.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean candidate was built from dev commit 432b0db7bc7429f0daa2de83ccfd1b219cffb654.
 
@@ -77,8 +78,16 @@ previous releases. The post-update proxyctl doctor passed all checks and
 identified version 1.6.0-dev.13, build 432b0db7bc74. The earlier dev.12
 disposable-host run covered the full install/resume, recovery, updater
 interruption, rollback, restore interruption, low-storage, host journal,
-Fail2ban, nftables and host-maintenance checks. The exact dev.13 package did
-not repeat that entire failure matrix.
+Fail2ban, nftables and host-maintenance checks. On the dev.13 clone, all five
+containers were healthy; the security container read real host sshd journal
+records; both Fail2ban jails were active; and the host SSH nftables chain
+contained the expected IPv4 and IPv6 rules. Reserved documentation IPv4/IPv6
+addresses were banned and unbanned successfully, leaving the jail's banned
+list empty. The WireGuard server interface listened on UDP/51820 and had its
+peer configured, but no current peer handshake was observed. The user-specified
+`D:\VM\Ubuntu` VM was inspected read-only and found on dev.5; it was not changed
+because the dev.13 package only accepts dev.12 as a source. The exact dev.13
+package did not repeat the entire destructive failure matrix.
 
 The current candidate adds a resumable keyboard installer, schema-2 .pkg
 archives with independent whole-file SHA-256 validation, persistent proxyctl
@@ -94,7 +103,7 @@ implementation audit and remaining work are tracked in
 | --- | --- | --- |
 | Go, frontend and browser regression checks | **Passed on clean dev.13** | Host-specific release checks remain open. |
 | Offline .pkg install/update/rollback | **Passed in local isolated Docker gate** | Six bundled images loaded without registry access. |
-| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; exact dev.13 update and doctor passed** | Full failure matrix was not repeated against dev.13. |
+| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; exact dev.13 update, doctor and host security probes passed** | Full destructive failure matrix was not repeated against dev.13. |
 | Public DNS, provider firewall and ACME | **Blocked** | Requires a separate disposable public VPS and test domain. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires Windows client and scoped firewall/playback verification. |
 | Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.13 as stable. |
