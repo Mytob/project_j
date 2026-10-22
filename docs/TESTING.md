@@ -1,5 +1,49 @@
 # Testing
 
+## v1.6.0-dev.21 Health and Settings fixes — 2026-10-23
+
+- Changes: Health now tolerates null/empty recovery and health-history arrays,
+  and the backend serializes fresh recovery history as an empty array. Direct
+  `GET /settings` navigation and browser reload now serve the admin SPA.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/admin ./internal/maintenance`
+  — PASS; both packages passed.
+- Full command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.21 -SupportedUpgradeSources 1.6.0-dev.19` — PASS, exit 0. Go
+  tests, frontend typecheck/unit/build, four Playwright browser tests
+  (Firefox, WebKit, Chromium, and TOTP flow), M1–M6 integration, isolated
+  Fail2ban/nftables and Caddy checks, streaming/WireGuard checks, and offline
+  package install/update/rollback/retention/password-recovery checks passed.
+  `dist/release-validation-1.6.0-dev.21.json` records
+  `local_gate: passed`, `release_readiness: blocked_host_checks_pending`.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.21.pkg`, 137,465,696 bytes, SHA-256
+  `4e6b65e47bbd5450e0dfc6a61e84c5e5acc418331c02ec56149d9e8697528615`.
+  Standalone `dist/proxyctl-linux-amd64`, 14,307,488 bytes, SHA-256
+  `aac9d9c6a9928e62aa1ba407c0f29791badde746d8bf215ab4d11f80c6cb1854`.
+  This local artifact was built from the working tree at `c29bf990fbef-dirty`;
+  it is a test candidate, not a public release.
+- Disposable public VPS update: copied the package to `/root`, then ran
+  `proxyctl update /root/jellyfin-proxy-1.6.0-dev.21.pkg` and entered the
+  independently checked SHA-256 above. The updater verified the package,
+  created a pre-update backup, loaded all bundled images, restarted the
+  services, passed health and public HTTPS readiness, and retained the active
+  and previous releases. `proxyctl --version` reported dev.21;
+  `proxyctl doctor` passed and all five app containers were healthy. Docker and
+  `jellyfin-proxy-maintenance.service` were active. Public TLS checks returned
+  200/200/403 for `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com`,
+  each with `TLS_verify=0`. The public admin root returned 200; unauthenticated
+  `/settings` and `/health` redirected to the sign-in page (303), not 404. After
+  the update the browser required a fresh sign-in, so authenticated Health
+  rendering and Settings reload verification on the VPS are pending the
+  operator signing in. This is the user-authorized
+  disposable test VPS; no production release or merge occurred.
+- The first dev.20 gate attempts stopped on overly strict test assumptions
+  (fresh history always being empty, then a single bootstrap despite the added
+  reload). The browser fixture/assertion was corrected; the final dev.21 gate
+  passed. The dev.21 update has passed on the disposable public VPS, but its
+  authenticated page check awaits an operator sign-in. Native Windows
+  acceptance remains pending.
+
 ## v1.6.0-dev.19 disposable public VPS fresh install and browser acceptance — 2026-10-22
 
 - Target: user-authorized disposable Ubuntu 26.04.1 VPS on `darkcry.com`;

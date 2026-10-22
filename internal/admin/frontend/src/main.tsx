@@ -12,7 +12,7 @@ type WireGuardStatus = { peer_public_key: string; server_address: string; client
 type WhitelistEntry = { address: string; name?: string };
 type HostMetrics = { cpu_percent?: number; memory_used_bytes?: number; memory_total_bytes?: number; disk_used_bytes?: number; disk_total_bytes?: number; network_in_bytes_per_second?: number; network_out_bytes_per_second?: number; load_1?: number; load_5?: number; load_15?: number; uptime_seconds?: number };
 type ProxyMetrics = { active_requests?: number; requests_per_second?: number; allowed_requests?: number; blocked_requests?: number; http_error_count?: number; error_rate_percent?: number; incoming_bytes_per_second?: number; outgoing_bytes_per_second?: number; total_transferred_bytes?: number };
-type Initial = { csrf: string; version: string; build_number: string; whitelist_enabled: boolean; whitelist: string[]; whitelist_entries?: WhitelistEntry[]; wireguard_enabled: boolean; wireguard_config_available: boolean; wireguard_status?: WireGuardStatus; totp_status: string; totp_setup_visible: boolean; totp_secret?: string; totp_qr_code?: string; components: Component[]; health_events: HealthEvent[]; current: Metrics; security?: SecuritySnapshot; security_error?: string };
+type Initial = { csrf: string; version: string; build_number: string; whitelist_enabled: boolean; whitelist: string[]; whitelist_entries?: WhitelistEntry[]; wireguard_enabled: boolean; wireguard_config_available: boolean; wireguard_status?: WireGuardStatus; totp_status: string; totp_setup_visible: boolean; totp_secret?: string; totp_qr_code?: string; components: Component[]; health_events: HealthEvent[] | null; current: Metrics; security?: SecuritySnapshot; security_error?: string };
 type HistoryPoint = { captured_at: string; host?: HostMetrics; proxy?: ProxyMetrics };
 type StatisticsSettings = { proxy_retention_days: number; security_retention_days: number; database_bytes: number; retained_samples: number; disk_available_bytes?: number };
 type WebContentStatus = { current_revision?: string; previous_revision?: string };
@@ -25,7 +25,7 @@ type ReleaseVersion = { version?: string; build_id?: string };
 type ReleaseState = { current: ReleaseVersion; previous: ReleaseVersion };
 type RecoveryService = { service: string; state: string; health: string; attempts: number; next_attempt_at?: string; last_action?: string; stopped: boolean; detail?: string };
 type RecoveryEvent = { at: string; service: string; action: string; attempt: number; detail: string };
-type RecoveryStatus = { checked_at?: string; operation_active: boolean; services: RecoveryService[]; events: RecoveryEvent[] };
+type RecoveryStatus = { checked_at?: string; operation_active: boolean; services: RecoveryService[] | null; events: RecoveryEvent[] | null };
 type AboutInfo = { version: string; build_id: string; installed_at?: string; go_version: string; inventory_available: boolean; ubuntu_version?: string; proxyctl_version?: string; docker_engine_version?: string; compose_version?: string; services: { service: string; image: string; component_version?: string }[] };
 
 const pages = [
@@ -60,14 +60,14 @@ async function getInitial(): Promise<Initial> {
   return response.json() as Promise<Initial>;
 }
 
-function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { components: Component[]; health_events: HealthEvent[] }) => void, onSecurity: (data: SecuritySnapshot) => void, onAuthRequired: () => void) {
+function useLiveMetrics(onData: (data: Metrics) => void, onHealth: (data: { components: Component[]; health_events: HealthEvent[] | null }) => void, onSecurity: (data: SecuritySnapshot) => void, onAuthRequired: () => void) {
   useEffect(() => {
     const source = new EventSource("/statistics/events", { withCredentials: true });
     source.addEventListener("metrics", (event) => {
       try { onData(JSON.parse((event as MessageEvent<string>).data) as Metrics); } catch { /* reconnect will deliver the next full sample */ }
     });
     source.addEventListener("health", (event) => {
-      try { onHealth(JSON.parse((event as MessageEvent<string>).data) as { components: Component[]; health_events: HealthEvent[]; wireguard_status?: WireGuardStatus }); } catch { /* reconnect will deliver the next health snapshot */ }
+      try { onHealth(JSON.parse((event as MessageEvent<string>).data) as { components: Component[]; health_events: HealthEvent[] | null; wireguard_status?: WireGuardStatus }); } catch { /* reconnect will deliver the next health snapshot */ }
     });
     source.addEventListener("security", (event) => {
       try { onSecurity(JSON.parse((event as MessageEvent<string>).data) as SecuritySnapshot); } catch { /* reconnect will deliver the next security snapshot */ }
@@ -101,7 +101,7 @@ function App() {
     }
   }, []);
   const onLive = useCallback((value: Metrics) => setMetrics(value), []);
-  const onHealth = useCallback((value: { components: Component[]; health_events: HealthEvent[]; wireguard_status?: WireGuardStatus }) => setInitial((prior) => prior ? { ...prior, ...value } : prior), []);
+  const onHealth = useCallback((value: { components: Component[]; health_events: HealthEvent[] | null; wireguard_status?: WireGuardStatus }) => setInitial((prior) => prior ? { ...prior, ...value } : prior), []);
   const onSecurity = useCallback((value: SecuritySnapshot) => setInitial((prior) => prior ? { ...prior, security: value, security_error: undefined } : prior), []);
   const onAuthRequired = useCallback(() => setError(sessionEndedMessage), []);
   const onWireGuardConfigConsumed = useCallback(() => setInitial((prior) => prior ? {
@@ -539,6 +539,9 @@ function Health({ data, metrics, refresh }: { data: Initial; metrics: Metrics; r
     const timer = window.setInterval(() => { void loadRecovery(); }, 15000);
     return () => { alive = false; window.clearInterval(timer); };
   }, []);
+  const recoveryServices = recovery?.services ?? [];
+  const recoveryEvents = recovery?.events ?? [];
+  const healthEvents = data.health_events ?? [];
   const resources: ChartDefinition[] = [
     { title: "CPU usage", read: (row) => row.host?.cpu_percent, unit: "percent" },
     { title: "Memory usage", read: (row) => row.host?.memory_used_bytes, unit: "bytes" },
@@ -550,10 +553,10 @@ function Health({ data, metrics, refresh }: { data: Initial; metrics: Metrics; r
     <section className="panel"><div className="panel-title"><div><p className="eyebrow">COMPONENTS</p><h2>Health details</h2></div></div><ComponentCards components={data.components}/></section>
     {recovery && <section className="panel recovery-panel"><div className="panel-title"><div><p className="eyebrow">AUTOMATIC RECOVERY</p><h2>Service recovery</h2><p className="muted">Only crashed or unhealthy Jellyfin Proxy containers are restarted. Jellyfin endpoint outages do not trigger restarts.</p></div>{recovery.checked_at && !recovery.checked_at.startsWith("0001-") && <small className="muted">Checked {displayTime(recovery.checked_at)}</small>}</div>
       {recovery.operation_active && <p className="banner">A maintenance operation is stopping or replacing services; automatic recovery is paused.</p>}
-      <div className="recovery-service-list">{recovery.services.map((service) => { const healthy = service.state === "running" && ["healthy", "none", "starting"].includes(service.health); const stateClass = service.stopped ? "down" : healthy ? "healthy" : service.attempts > 0 ? "degraded" : ""; return <article className="recovery-service" key={service.service}><div><strong>{service.service}</strong><small>{service.state} · {service.health}</small></div><span className={`state-pill ${stateClass}`}><i/>{service.stopped ? "Paused" : healthy ? "Healthy" : service.attempts ? `Retry ${service.attempts}/5` : service.state === "unknown" ? "Checking" : "Waiting"}</span>{service.next_attempt_at && !service.next_attempt_at.startsWith("0001-") && !healthy && !service.stopped && <small>Next check {displayTime(service.next_attempt_at)}</small>}{service.detail && <p>{service.detail}</p>}</article>; })}</div>
-      <details className="details recovery-history"><summary>Recovery history · {recovery.events.length} recent events</summary>{recovery.events.length ? <ol className="health-events">{recovery.events.slice(0, 20).map((event, index) => <li key={`${event.at}-${event.service}-${event.action}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.service}</b><span>{event.action.replaceAll("_", " ")}{event.attempt ? ` · attempt ${event.attempt}` : ""}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No automatic recovery actions have been needed.</p>}</details>
+      <div className="recovery-service-list">{recoveryServices.map((service) => { const healthy = service.state === "running" && ["healthy", "none", "starting"].includes(service.health); const stateClass = service.stopped ? "down" : healthy ? "healthy" : service.attempts > 0 ? "degraded" : ""; return <article className="recovery-service" key={service.service}><div><strong>{service.service}</strong><small>{service.state} · {service.health}</small></div><span className={`state-pill ${stateClass}`}><i/>{service.stopped ? "Paused" : healthy ? "Healthy" : service.attempts ? `Retry ${service.attempts}/5` : service.state === "unknown" ? "Checking" : "Waiting"}</span>{service.next_attempt_at && !service.next_attempt_at.startsWith("0001-") && !healthy && !service.stopped && <small>Next check {displayTime(service.next_attempt_at)}</small>}{service.detail && <p>{service.detail}</p>}</article>; })}</div>
+      <details className="details recovery-history"><summary>Recovery history · {recoveryEvents.length} recent events</summary>{recoveryEvents.length ? <ol className="health-events">{recoveryEvents.slice(0, 20).map((event, index) => <li key={`${event.at}-${event.service}-${event.action}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.service}</b><span>{event.action.replaceAll("_", " ")}{event.attempt ? ` · attempt ${event.attempt}` : ""}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No automatic recovery actions have been needed.</p>}</details>
     </section>}
-    <section className="panel"><details className="health-history-details"><summary>Health history · {data.health_events.length} recent changes</summary>{data.health_events.length ? <ol className="health-events">{[...data.health_events].reverse().map((event, index) => <li key={`${event.at}-${event.name}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.name}</b><span>{event.from ?? "First check"} → {event.to}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No health status changes have been recorded.</p>}</details></section>
+    <section className="panel"><details className="health-history-details"><summary>Health history · {healthEvents.length} recent changes</summary>{healthEvents.length ? <ol className="health-events">{[...healthEvents].reverse().map((event, index) => <li key={`${event.at}-${event.name}-${index}`}><time dateTime={event.at}>{displayTime(event.at)}</time><b>{event.name}</b><span>{event.from ?? "First check"} → {event.to}</span><p>{event.detail}</p></li>)}</ol> : <p className="empty-chart">No health status changes have been recorded.</p>}</details></section>
   </>;
 }
 function Access({ data }: { data: Initial }) {

@@ -174,3 +174,26 @@ func TestRecoveryRejectsUnsafeStateAndUnapprovedServices(t *testing.T) {
 		t.Fatalf("recovery exposed an unexpected service list: %+v", controller.Status().Services)
 	}
 }
+
+func TestFreshRecoveryStatusSerializesEmptyEventsAsArray(t *testing.T) {
+	root := t.TempDir()
+	controller, err := NewRecoveryController(&fakeRecoveryRuntime{}, NewJobManager(filepath.Join(root, "jobs")), filepath.Join(root, "state", "recovery.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := controller.Status()
+	if status.Events == nil || status.Services == nil {
+		t.Fatalf("fresh recovery collections must be empty arrays, got services=%#v events=%#v", status.Services, status.Events)
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded["events"]) != "[]" {
+		t.Fatalf("fresh recovery events JSON = %s, want []", decoded["events"])
+	}
+}

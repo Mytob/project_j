@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /web-content", s.dashboard)
 	mux.HandleFunc("GET /about", s.dashboard)
 	mux.HandleFunc("GET /system", s.dashboard)
+	mux.HandleFunc("GET /settings", s.dashboard)
 	mux.HandleFunc("GET /health", s.healthPage)
 	mux.HandleFunc("GET /access-control", s.accessControlPage)
 	mux.HandleFunc("GET /security", s.securityPage)

@@ -9,18 +9,25 @@ const pages = [
   ['/access-control', 'Access control'],
   ['/wireguard', 'WireGuard'],
   ['/security', 'Security'],
+  ['/settings', 'Settings'],
 ];
 
 test('admin navigation and charts work in desktop and mobile-sized browser layouts', async ({ page, browser, browserName }, testInfo) => {
   test.setTimeout(90000);
   const stylePolicyErrors = [];
   let bootstrapRequests = 0;
+  await page.route('**/system/recovery', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ operation_active: false, services: null, events: null }),
+  }));
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/api/initial') bootstrapRequests += 1;
   });
   await page.route('**/api/initial', async (route) => {
     const response = await route.fetch();
     const initial = await response.json();
+    initial.health_events = null;
     initial.wireguard_config_available = true;
     if (initial.wireguard_status) initial.wireguard_status.config_available = true;
     await route.fulfill({ response, json: initial });
@@ -87,6 +94,14 @@ test('admin navigation and charts work in desktop and mobile-sized browser layou
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   }
 
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.reload();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Health', exact: true }).click();
+  await expect(page.getByText('Recovery history · 0 recent events', { exact: true })).toBeVisible();
+  await expect(page.locator('.health-history-details summary')).toContainText('Health history');
+
   await page.getByRole('link', { name: 'System', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Stored backups', exact: true })).toBeVisible();
   const backupRow = page.locator('.system-backup-row').filter({ hasText: backup.name });
@@ -140,11 +155,11 @@ test('admin navigation and charts work in desktop and mobile-sized browser layou
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('jellyfin-proxy.conf');
   await expect(page.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
-  expect(bootstrapRequests).toBe(1);
+  expect(bootstrapRequests).toBe(2);
   await page.getByRole('link', { name: 'Overview', exact: true }).click();
   await page.getByRole('link', { name: 'WireGuard', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
-  expect(bootstrapRequests).toBe(1);
+  expect(bootstrapRequests).toBe(2);
   await page.unroute('**/wireguard/config');
 
   await page.getByRole('link', { name: 'Health', exact: true }).click();

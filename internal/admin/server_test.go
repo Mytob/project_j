@@ -1379,7 +1379,7 @@ func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) 
 	server.ConfigureComponentHealth(fixedCaddyHealth{}, heartbeat)
 	cookie := loginTestAdmin(t, server)
 
-	for _, route := range []string{"/dashboard", "/health", "/access-control", "/security", "/wireguard", "/statistics", "/about"} {
+	for _, route := range []string{"/dashboard", "/health", "/access-control", "/security", "/wireguard", "/statistics", "/settings", "/about"} {
 		response := request(handler, http.MethodGet, route, nil, cookie)
 		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(response.Body.String(), `id="root"`) {
 			t.Errorf("admin route %s did not serve the SPA shell: status=%d content-type=%q", route, response.Code, response.Header().Get("Content-Type"))
