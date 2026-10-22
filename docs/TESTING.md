@@ -1,5 +1,41 @@
 # Testing
 
+## v1.6.0-dev.17 maintenance self-restart fix — 2026-10-22
+
+- Source: commit `32c6bc15b01bb902bb22265e393f35da6ba08afe` on
+  `fix/v16-maintenance-self-restart`; draft [PR #79](https://github.com/Mytob/project_j/pull/79)
+  targets `dev`.
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.17 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0. The
+  initial sandboxed attempt could not access Docker Desktop's Linux-engine
+  pipe; the retry with Docker access passed. Go, frontend, four real-browser
+  checks, integration/security/streaming, offline package install/update/
+  rollback, retention and password-recovery gates passed. The generated report
+  records `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- Artifacts: `dist/jellyfin-proxy-1.6.0-dev.17.pkg`, 137,280,003 bytes,
+  SHA-256 `194bf444525f4fe9976db73bf83d3e8d44b16a9646c09c09ea8daf6efbd54fb6`;
+  standalone `proxyctl-linux-amd64`, 14,303,392 bytes, SHA-256
+  `0d465ad823714fb90fe32aa1b8663a2931c2db3d25e7db807dcd0f195ea40b9b`.
+  Report: `dist/release-validation-1.6.0-dev.17.json`.
+- Exact-package Ubuntu update: The package and independent checksum were
+  transferred to the disposable Ubuntu 26.04.1 VM
+  `D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx`. SHA-256 matched. CLI
+  `proxyctl update` moved the guest from dev.14 to dev.17, created the verified
+  pre-update backup, loaded the six packaged images, and completed health and
+  HTTPS checks. `proxyctl --version` reported dev.17/build `32c6bc15b01b`;
+  `sudo proxyctl doctor` passed; all five containers were healthy and the
+  maintenance service `ExecStart` pointed to the dev.17 binary.
+- Deferred refresh smoke: A five-second `systemd-run --on-active` unit
+  restarted the maintenance service while idle. Its invocation ID changed,
+  the service remained active, `proxyctl doctor` passed afterward, and all
+  five containers remained healthy.
+- Dashboard acceptance remains pending: this confirms CLI update and the
+  delayed service-refresh mechanism, but does not exercise the dashboard job
+  callback. The local admin browser currently requires a fresh sign-in before
+  dashboard update/rollback can be tested. No public or production VPS was
+  changed; public DNS/ACME/provider-firewall, internet WireGuard and native
+  Windows checks remain pending.
+
 ## v1.6.0-dev.15 clean-tree gate and Ubuntu update/reboot checks — 2026-10-22
 
 - Command: `pwsh -NoProfile -File .\build.ps1 release -Version

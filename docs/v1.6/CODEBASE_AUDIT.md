@@ -637,3 +637,24 @@ absent.
   WireGuard/playback and native Windows client/firewall checks remain
   unverified. No production VPS or stable release was used. See
   [`../TESTING.md`](../TESTING.md) for exact package and command evidence.
+
+### v1.6.0-dev.17 maintenance self-restart fix — 2026-10-22
+
+- A dashboard update previously restarted the restricted maintenance systemd
+  service from inside its own job process. The restart could terminate the
+  updater before the dashboard received durable terminal job state.
+- The dashboard path now updates the service definition without restarting the
+  active worker, persists the job's terminal state, then schedules a bounded,
+  job-ID-named systemd refresh. CLI maintenance retains immediate service
+  refresh behavior. Update, rollback, restore and interrupted-update recovery
+  pass the deferred-refresh signal through their deployment paths.
+- Focused Go tests and the clean dev.17 `build.ps1 release` gate passed. The
+  exact package updated a disposable Ubuntu 26.04.1 guest from dev.14 via CLI;
+  package checksum, pre-update backup, all five healthy containers, `proxyctl
+  doctor`, and the maintenance binary version passed. A delayed systemd-run
+  refresh changed the service invocation ID and the post-refresh doctor and
+  container checks passed.
+- The authenticated dashboard update/rollback flow has not yet been repeated
+  on the VM because the test browser session expired and needs a fresh admin
+  sign-in. Public provider/DNS/ACME and Windows client checks remain pending;
+  the production VPS was not touched. The change is draft PR #79 into `dev`.

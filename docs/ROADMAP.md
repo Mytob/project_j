@@ -57,16 +57,24 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The clean-tree 1.6.0-dev.15 local release gate and exact-package
-update, doctor, host security checks, backup verification, and reboot recovery
-on a disposable Ubuntu clone passed. Stable release readiness remains blocked
-on public-network and native Windows evidence.**
+**Status: The clean dev.17 local release gate and exact-package Ubuntu CLI
+update, doctor, and maintenance-service refresh smoke passed. Dashboard
+update/rollback acceptance remains open pending a fresh admin sign-in; public
+network and native Windows evidence are also pending.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
 432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
 from clean dev commit 78dfb7987946f011e88dc7cde4660c2d24b12142. The clean
 dev.15 candidate was built from dev commit
 `ebd767615ded1abc6fe776a7c229e8c0784c971b`.
+
+The dashboard maintenance worker now saves its terminal job state before
+scheduling a delayed refresh of the restricted maintenance service, preventing
+the service from killing its own update process. The clean dev.17 package
+passed the local release gate and exact CLI update on a disposable Ubuntu
+26.04.1 clone; a delayed systemd refresh smoke also passed. Dashboard update
+and rollback remain unverified until the local test admin signs in again. The
+fix is in draft [PR #79](https://github.com/Mytob/project_j/pull/79).
 
 On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
 1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` passed. Go tests,
