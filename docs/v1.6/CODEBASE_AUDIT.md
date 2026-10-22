@@ -2,10 +2,12 @@
 
 **Audit date:** 2026-10-22
 
-**Baseline commit:** `8562b23` (`dev` / `origin/dev`)
-**Working tree:** `feature/v1.6-fresh-install`. Started with 43 tracked or
-untracked v1.5 follow-up paths; those were preserved on the v1.6 branch. The
-v1.6 installer is a fresh-install path; it must not migrate v1.5.1 state.
+**Baseline commit:** `8562b23` (v1.6 branch start)
+**Current tested dev commit:** `432b0db7bc7429f0daa2de83ccfd1b219cffb654`
+**Implementation PR:** #71 merged into dev at c8e279a.
+**Documentation PR:** #72 merged into dev at 432b0db.
+
+The original v1.6 branch began with 43 tracked or untracked v1.5 follow-up paths; they were preserved. The v1.6 installer is a fresh-install path and must not migrate v1.5.1 state.
 
 This audit reviewed the current repository structure and the actual command,
 package, deployment, authentication, statistics, security-event and proxy
@@ -221,8 +223,7 @@ absent.
 - The successful local release report means only local gates passed. It does
   not mean every v1.6 deliverable or host-specific check is complete. PR #71
   merged the implementation into `dev` at `c8e279a`; no stable release or
-  production deployment is claimed. The clean-tree rerun is blocked by the
-  unavailable Docker Desktop/WSL test environment.
+  production deployment is claimed. The clean-tree dev.13 release gate later passed after Docker Desktop Linux engine access was restored.
 
 ### Maintenance backup-job and update-unit verification — 2026-10-22
 
@@ -537,3 +538,32 @@ absent.
   internet WireGuard or native Windows playback. No production VPS/domain or
   original VM was used. See [`../TESTING.md`](../TESTING.md) for the complete
   command and result record.
+
+### v1.6.0-dev.13 clean-tree release gate and exact Ubuntu update — 2026-10-22
+
+- The clean dev checkout at 432b0db7bc7429f0daa2de83ccfd1b219cffb654 passed
+  pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.13
+  -SupportedUpgradeSources 1.6.0-dev.12. Go,
+  integration/security/streaming, four browser checks, frontend validation and
+  offline package gates passed. The report records local_gate: passed and
+  release_readiness: blocked_host_checks_pending.
+- Package: 137,276,733 bytes; SHA-256
+  2c72872dbc1cf5f3e100618fe8295e533b1387e1d859231758d09b4b6c9b4e9e.
+  Standalone utility: 14,303,392 bytes; SHA-256
+  db53f20494b826156adf545ab36f88cb80e4f1d70b76f52de947792afb496e6f. Both are
+  generated locally under dist; neither is committed.
+- On the disposable Ubuntu 26.04.1 clone
+  D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx (192.168.145.136), the transferred
+  package checksum passed. The proxyctl updater completed from dev.12 to
+  dev.13, created its pre-update backup, loaded its bundled images, passed
+  readiness, and retained both active and previous releases.
+- The subsequent proxyctl doctor exited 0. It passed installation layout,
+  release metadata (version 1.6.0-dev.13, build 432b0db7bc74), Compose
+  configuration, all five application services, restore/update recovery
+  journals, Docker Engine, Compose, and host storage.
+- The full Ubuntu install/resume/recovery/update interruption/rollback/low-
+  disk/host-maintenance matrix was run against dev.12 before this exact-package
+  dev.13 update. It was not repeated against dev.13. No production VPS/domain
+  was touched. Public DNS, provider firewall, public ACME, internet WireGuard,
+  and native Windows client/firewall/playback checks remain blocked; no stable
+  release or GitHub release is claimed.
