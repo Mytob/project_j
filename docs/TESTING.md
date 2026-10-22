@@ -95,9 +95,11 @@
   OpenSSH server package update.
 - Public DNS/ACME/provider-firewall checks and native Windows WireGuard,
   firewall, and playback remain unverified. Only disposable VMware clones were
-  used; the original VM and production VPS/domain were not changed. No merge,
-  push, stable release, or production deployment occurred. The generated
-  release report remains blocked on public-network and Windows-client checks.
+  used; the original VM and production VPS/domain were not changed. At test
+  completion no merge or push had occurred; the source was later merged to
+  `dev` by [PR #71](https://github.com/Mytob/project_j/pull/71) at `c8e279a`.
+  No stable release or production deployment occurred. The generated release
+  report remains blocked on public-network and Windows-client checks.
 ## v1.6.0-dev.11 release gate and clean-guest SSH installation check — 2026-10-22
 
 - `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.11

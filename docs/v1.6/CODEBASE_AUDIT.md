@@ -219,8 +219,10 @@ absent.
   2.40.3 were installed for testing. It remains a private NAT Ubuntu 26.04.1
   guest with 2 CPUs, 5.2 GiB RAM, a 9.8 GiB root filesystem and no swap.
 - The successful local release report means only local gates passed. It does
-  not mean every v1.6 deliverable or host-specific check is complete. No stable
-  release, merge, GitHub publication or production deployment is claimed.
+  not mean every v1.6 deliverable or host-specific check is complete. PR #71
+  merged the implementation into `dev` at `c8e279a`; no stable release or
+  production deployment is claimed. The clean-tree rerun is blocked by the
+  unavailable Docker Desktop/WSL test environment.
 
 ### Maintenance backup-job and update-unit verification — 2026-10-22
 
