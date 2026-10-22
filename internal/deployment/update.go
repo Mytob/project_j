@@ -354,13 +354,6 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		return manifest, fmt.Errorf("updated services did not become healthy; the previous release was restored: %w", err)
 	}
 	progress(7, true, "Updated services are healthy")
-	progress(8, false, "Checking public HTTPS and retaining the active release")
-	if options.HTTPSCheck == nil {
-		options.HTTPSCheck = checkPublicHTTPS
-	}
-	if err := waitForHTTPS(ctx, environment.Domain, options.WaitInterval, options.WaitAttempts, options.HTTPSCheck); err != nil {
-		return manifest, fmt.Errorf("updated release public HTTPS check failed; the previous release was restored: %w", err)
-	}
 	if options.ConfigureHostServices {
 		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 			return manifest, fmt.Errorf("update restricted maintenance service: %w", err)
@@ -382,6 +375,22 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		if _, err := options.Runner.Run(ctx, filepath.Join(proxyctlDirectory, "proxyctl"), args...); err != nil {
 			return manifest, fmt.Errorf("refresh host service units with the updated proxyctl utility: %w", err)
 		}
+		// Host service reconciliation may replace the systemd RuntimeDirectory
+		// used for the restricted maintenance socket. Recreate admin only after
+		// that reconciliation so its bind mount attaches to the current directory.
+		if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+			return manifest, fmt.Errorf("refresh the admin maintenance socket mount: %w", err)
+		}
+		if err := waitForReadiness(ctx, InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
+			return manifest, fmt.Errorf("updated services did not become healthy after refreshing the admin maintenance socket mount; the previous release was restored: %w", err)
+		}
+	}
+	progress(8, false, "Checking public HTTPS and retaining the active release")
+	if options.HTTPSCheck == nil {
+		options.HTTPSCheck = checkPublicHTTPS
+	}
+	if err := waitForHTTPS(ctx, environment.Domain, options.WaitInterval, options.WaitAttempts, options.HTTPSCheck); err != nil {
+		return manifest, fmt.Errorf("updated release public HTTPS check failed; the previous release was restored: %w", err)
 	}
 	if err := retainActiveAndPrevious(options.InstallRoot, manifest.Version, current.Version); err != nil {
 		return manifest, fmt.Errorf("update succeeded, but release retention cleanup failed: %w", err)
