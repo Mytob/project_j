@@ -57,13 +57,15 @@
   worked through in-app navigation, but reloading `/settings` returned
   `404 page not found`. These are newly observed admin UI defects outside
   this frozen v1.6 change batch; no product code was changed.
-- Remaining acceptance: no Windows profile was downloaded or imported; no
-  WireGuard handshake, Windows firewall, Jellyfin health/playback, dashboard
-  update/rollback, authenticated backup download, scheduled backup execution,
-  provider-firewall review, ACME renewal, or equivalent-workload resource
-  comparison was performed. The one-time WireGuard profile remains available
-  for the operator's Windows test. No production deployment, merge, or stable
-  release is claimed.
+- Remaining acceptance: on 2026-10-22 the operator reported that playback
+  works. The client and route were not specified, and no supporting handshake,
+  Jellyfin health, or direct-public-isolation evidence was recorded. No Windows
+  profile was downloaded or imported, and the scoped Windows firewall was not
+  inspected. Dashboard update/rollback, authenticated backup download,
+  scheduled backup execution, provider-firewall review, ACME renewal, and
+  equivalent-workload resource comparison also remain unchecked. The one-time
+  WireGuard profile remains available for the operator's Windows test. No
+  production deployment, merge, or stable release is claimed.
 
 ## v1.6.0-dev.19 clean release gate and Ubuntu package update — 2026-10-22
 

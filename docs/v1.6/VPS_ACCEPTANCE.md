@@ -84,6 +84,9 @@ host, not production acceptance or a stable release.
 - [ ] Verify a recent peer handshake and bidirectional counters on the VPS.
 - [ ] Confirm Jellyfin `/health` and real playback through the public proxy over
   the tunnel; verify Jellyfin remains unreachable directly from the internet.
+  The operator reported that playback works on 2026-10-22, but the client,
+  route and supporting handshake/health observations were not recorded, so
+  this combined check remains incomplete.
 - [ ] Reboot the Windows test host and VPS separately; verify the tunnel and
   playback recover without exposing additional ports.
 
@@ -115,7 +118,7 @@ host, not production acceptance or a stable release.
 | Fresh install and recovery access | PASS | Installer, alternate SSH admin/sudo, doctor and post-reboot recovery passed; 2026-10-22 |
 | Provider firewall, DNS, public TLS | PARTIAL | Public HTTPS 200/200/403 with verified TLS; provider rules and ACME renewal not inspected/tested; 2026-10-22 |
 | Host firewall, Fail2ban, journal | PARTIAL | Fail2ban jails, host journal and IPv4/IPv6 nftables ban/unban passed; host UFW inactive and provider comparison pending; 2026-10-22 |
-| Windows WireGuard and Jellyfin playback | PENDING | No Windows import, peer handshake, scoped firewall or playback check; operator to perform |
+| WireGuard and Jellyfin playback | PARTIAL | Operator reported playback works on 2026-10-22; client and route were not specified. Windows profile import, scoped firewall, recent handshake, `/health`, direct-public isolation and reboot recovery remain unverified. |
 | Backups, update, rollback, repair | PARTIAL | Manual CLI backup verified; dashboard update/rollback, authenticated download, scheduled execution and repair not tested on public VPS; 2026-10-22 |
 | Resource measurements | PARTIAL | Install and post-reboot disk/swap observed; no comparable steady-state workload sample; 2026-10-22 |
 
