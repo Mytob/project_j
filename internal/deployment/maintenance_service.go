@@ -110,6 +110,7 @@ User=root
 Group=root
 RuntimeDirectory=jellyfin-proxy-maintenance
 RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 StateDirectory=jellyfin-proxy-maintenance
 StateDirectoryMode=0700
 UMask=0007

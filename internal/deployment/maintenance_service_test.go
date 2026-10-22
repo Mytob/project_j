@@ -36,6 +36,7 @@ func TestConfigureHostMaintenanceWritesRestrictedOwnedUnit(t *testing.T) {
 		"CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
 		"RuntimeDirectoryMode=0750",
+		"RuntimeDirectoryPreserve=yes",
 		"StateDirectory=jellyfin-proxy-maintenance",
 		"ReadWritePaths=" + root + " /usr/local/sbin /usr/local/lib/jellyfin-proxy " + unitDir + " /var/backups/jellyfin-proxy",
 		"ReadOnlyPaths=/var/run/docker.sock",
