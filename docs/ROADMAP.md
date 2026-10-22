@@ -57,37 +57,40 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The clean-tree 1.6.0-dev.13 local release gate, exact-package update,
-doctor, and version-matched Ubuntu host security checks on a disposable clone
-passed. Stable release readiness remains blocked on public-network and native
-Windows evidence.**
+**Status: The clean-tree 1.6.0-dev.14 local release gate, exact-package
+update/rollback/update cycle, doctor, and version-matched Ubuntu host security
+checks on a disposable clone passed. Stable release readiness remains blocked
+on public-network and native Windows evidence.**
 
-The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean candidate was built from dev commit 432b0db7bc7429f0daa2de83ccfd1b219cffb654.
+The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
+432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
+from clean dev commit 78dfb7987946f011e88dc7cde4660c2d24b12142.
 
-On 2026-10-22, pwsh -NoProfile -File .\build.ps1 release -Version
-1.6.0-dev.13 -SupportedUpgradeSources 1.6.0-dev.12 passed. Go tests,
+On 2026-10-22, `pwsh -NoProfile -File .\build.ps1 release -Version
+1.6.0-dev.14 -SupportedUpgradeSources 1.6.0-dev.13` passed. Go tests,
 browser/integration/security/streaming checks, frontend validation, and offline
 package installation, update, rollback and recovery passed. The report records
-local_gate: passed and release_readiness: blocked_host_checks_pending.
+`local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
 
-The exact dev.13 package updated the disposable Ubuntu 26.04.1 VMware clone
-D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx from dev.12. The transferred package
-checksum passed, the updater created its pre-update backup, loaded bundled
-images, passed service and HTTPS readiness, and retained the active and
-previous releases. The post-update proxyctl doctor passed all checks and
-identified version 1.6.0-dev.13, build 432b0db7bc74. The earlier dev.12
-disposable-host run covered the full install/resume, recovery, updater
-interruption, rollback, restore interruption, low-storage, host journal,
-Fail2ban, nftables and host-maintenance checks. On the dev.13 clone, all five
-containers were healthy; the security container read real host sshd journal
-records; both Fail2ban jails were active; and the host SSH nftables chain
-contained the expected IPv4 and IPv6 rules. Reserved documentation IPv4/IPv6
-addresses were banned and unbanned successfully, leaving the jail's banned
-list empty. The WireGuard server interface listened on UDP/51820 and had its
-peer configured, but no current peer handshake was observed. The user-specified
-`D:\VM\Ubuntu` VM was inspected read-only and found on dev.5; it was not changed
-because the dev.13 package only accepts dev.12 as a source. The exact dev.13
-package did not repeat the entire destructive failure matrix.
+The exact dev.14 package updated the disposable Ubuntu 26.04.1 VMware clone
+`D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` from dev.13. Its transferred
+checksum passed; the updater created its pre-update backup, loaded
+bundled images, passed service readiness, and retained active and previous
+releases. The clone then rolled back to dev.13 with a verified pre-rollback
+backup and healthy HTTPS readiness, and updated back to dev.14 using the same
+package. The post-update `proxyctl doctor` passed all checks and identified
+version 1.6.0-dev.14, build 78dfb7987946. All five containers were healthy;
+the maintenance service and scheduled backup timer were active. The security
+container reported exactly the `jp-admin` and `jp-ssh` Fail2ban jails, read
+actual host sshd journal records, and its host SSH nftables chain contained
+the expected IPv4 and IPv6 TCP/22 rules. Reserved documentation IPv4/IPv6
+addresses were banned and unbanned successfully, leaving zero active bans.
+The WireGuard server interface listened on UDP/51820 and had its peer
+configured, but no current peer handshake was observed. The earlier dev.12
+disposable-host run covered fresh install/resume, recovery, updater
+interruption, restore interruption, low-storage and host-maintenance checks;
+the dev.14 package did not repeat that entire destructive failure matrix. The
+user-specified `D:\VM\Ubuntu` VM was found on dev.5 and remains unchanged.
 
 The current candidate adds a resumable keyboard installer, schema-2 .pkg
 archives with independent whole-file SHA-256 validation, persistent proxyctl
@@ -101,18 +104,18 @@ implementation audit and remaining work are tracked in
 
 | Area | Status | Remaining gate |
 | --- | --- | --- |
-| Go, frontend and browser regression checks | **Passed on clean dev.13** | Host-specific release checks remain open. |
+| Go, frontend and browser regression checks | **Passed on clean dev.14** | Host-specific release checks remain open. |
 | Offline .pkg install/update/rollback | **Passed in local isolated Docker gate** | Six bundled images loaded without registry access. |
-| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; exact dev.13 update, doctor and host security probes passed** | Full destructive failure matrix was not repeated against dev.13. |
+| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; exact dev.14 update/rollback/update, doctor and host security probes passed** | Full destructive failure matrix was not repeated against dev.14. |
 | Public DNS, provider firewall and ACME | **Blocked** | Requires a separate disposable public VPS and test domain. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires Windows client and scoped firewall/playback verification. |
-| Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.13 as stable. |
+| Complete v1.6 stable release | **Not ready** | Public DNS/provider firewall/ACME/internet WireGuard and Windows checks remain unverified. Do not promote or publish dev.14 as stable. |
 
-The clean dev.13 package SHA-256 is
-2c72872dbc1cf5f3e100618fe8295e533b1387e1d859231758d09b4b6c9b4e9e.
+The clean dev.14 package SHA-256 is
+20bacf089d92b4d71b87333004b1f72c83397e5832d0326d8da7c21dbf553601.
 Standalone proxyctl SHA-256 is
-db53f20494b826156adf545ab36f88cb80e4f1d70b76f52de947792afb496e6f. The report
-is dist/release-validation-1.6.0-dev.13.json. Generated artifacts remain local
+9f79399ff2abfac87e70807582db64d44be4791070f64d98d507d5b814bee719. The report
+is `dist/release-validation-1.6.0-dev.14.json`. Generated artifacts remain local
 under dist; no stable release or production deployment is claimed. See
 [TESTING.md](TESTING.md) and [v1.6/VPS_ACCEPTANCE.md](v1.6/VPS_ACCEPTANCE.md)
 for evidence and remaining acceptance checks.

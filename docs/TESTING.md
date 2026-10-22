@@ -1,5 +1,57 @@
 # Testing
 
+## v1.6.0-dev.14 clean-tree gate and Ubuntu update/rollback/update — 2026-10-22
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.14 -SupportedUpgradeSources 1.6.0-dev.13` — PASS, exit 0, from
+  clean dev commit `78dfb7987946f011e88dc7cde4660c2d24b12142`. Go tests,
+  M1–M6 integration/security/streaming, frontend validation, four browser
+  checks, and offline package install/update/rollback/recovery passed. Six
+  bundled images loaded without registry access.
+- Report: `dist/release-validation-1.6.0-dev.14.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  Public-network and native Windows checks remain pending; this is not a
+  stable release.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.14.pkg`, 137,278,900 bytes, SHA-256
+  `20bacf089d92b4d71b87333004b1f72c83397e5832d0326d8da7c21dbf553601`.
+  Standalone `proxyctl-linux-amd64` is 14,303,392 bytes, SHA-256
+  `9f79399ff2abfac87e70807582db64d44be4791070f64d98d507d5b814bee719`.
+- Exact-package update: On the disposable Ubuntu 26.04.1 VMware clone
+  `D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` (`192.168.145.136`), the
+  transferred package checksum passed. `proxyctl update
+  /tmp/jellyfin-proxy-1.6.0-dev.14.pkg` updated dev.13 to dev.14, created its
+  pre-update backup, loaded bundled images, passed service
+  readiness, and retained active and previous releases.
+- Rollback and restore-to-candidate: `proxyctl rollback` returned the clone
+  from dev.14 to dev.13, created a verified pre-rollback backup, passed
+  release and HTTPS readiness, and retained current data and the newer
+  release. The same dev.14 package then updated dev.13 back to dev.14; its
+  update readiness passed and active/previous releases were retained.
+- Post-update doctor: `sudo proxyctl doctor` exited 0 and passed installation
+  files, release metadata (`1.6.0-dev.14`, build `78dfb7987946`), Compose
+  configuration, all five application services, restore/update recovery,
+  Docker Engine, Compose, and host storage. `docker ps` reported admin,
+  securityd, Caddy, WireGuard and hostmetrics all healthy; the maintenance
+  service and scheduled backup timer were active.
+- Version-matched Ubuntu host security checks: the security container reported
+  exactly `jp-admin` and `jp-ssh` using
+  `fail2ban-client --socket /tmp/fail2ban.sock status`. Host `sshd` records
+  were returned by its read-only journal mount. The host nftables SSH chain
+  contained the IPv4 and IPv6 TCP/22 drop rules. Reserved documentation
+  addresses `192.0.2.44` and `2001:db8::44` were banned into their matching
+  nftables sets and unbanned; final `jp-ssh` status reported zero active bans.
+- WireGuard: `wg show` reported the server interface listening on UDP/51820
+  and the configured peer `10.66.66.2/32`. No recent peer handshake was
+  reported, so this does not verify internet connectivity or Jellyfin
+  playback.
+- The broader fresh-install/resume, forced interruption, restore recovery,
+  low-storage and manual host-maintenance matrix was run against dev.12 on
+  disposable clones; it was not repeated against dev.14. The specified
+  `D:\VM\Ubuntu` VM was found on dev.5 and left unchanged. No production
+  VPS/domain was used. Public DNS/provider firewall/public ACME, internet
+  WireGuard, and native Windows client/firewall/playback checks remain
+  unverified. No stable GitHub release was published.
+
 ## v1.6.0-dev.13 clean-tree release gate and Ubuntu update — 2026-10-22
 
 - Command: pwsh -NoProfile -File .\build.ps1 release -Version
