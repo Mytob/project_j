@@ -1,5 +1,48 @@
 # Testing
 
+## v1.6.0-dev.23 maintenance socket remount — 2026-10-23
+
+- Changes: preserve the maintenance runtime directory across service restarts,
+  and recreate the admin container after host-service reconciliation so its
+  read-only maintenance socket bind mount follows the current host socket.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/deployment ./internal/maintenance ./internal/admin ./internal/containerhealth`
+  — PASS.
+- Full command:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.23 -SupportedUpgradeSources 1.6.0-dev.22`
+  — PASS, exit 0 on the final run. An earlier attempt could not access Docker
+  Desktop; a subsequent attempt stopped on a credential-fixture rename
+  collision. After Docker access was restored and the generated fixture was
+  absent, the complete rerun passed. Go tests, frontend typecheck/unit/build,
+  four browser tests, M1–M6 integration,
+  Fail2ban/nftables and Caddy isolation, streaming/WireGuard, and offline
+  install/update/rollback/data-preservation checks passed.
+  `dist/release-validation-1.6.0-dev.23.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- Package `dist/jellyfin-proxy-1.6.0-dev.23.pkg` SHA-256:
+  `4e8dfe502d314c0527498bfb8c490013301842d60b53039378b746992686eb69`.
+  Standalone proxyctl SHA-256:
+  `e46c4029dd838d5be8392e61b750fdf7dc6fcbbed40f06c3a924967d527e13cc`.
+  The artifacts were built from commit `01252d5268f5`; this remains a test
+  candidate, not a published or stable release.
+- Disposable public VPS: exact package checksum matched before
+  `TERM=dumb /usr/local/sbin/proxyctl update /root/jellyfin-proxy-1.6.0-dev.23.pkg`.
+  The updater created a dev.22 pre-update backup, loaded bundled images,
+  completed readiness checks, and retained the active and previous releases.
+  `proxyctl doctor` passed; all five product containers were healthy. The
+  maintenance unit reports `RuntimeDirectoryPreserve=yes`; host and admin
+  container socket/directory bind mounts had matching device/inode pairs
+  (`29:19583` for the directory and `29:23704` for the socket). Public TLS
+  checks returned 200/200/403 for `darkcry.com`, `admin.darkcry.com`, and
+  `access.darkcry.com`. Authenticated browser Health and Settings verification
+  is pending operator sign-in after the update restarted the admin container.
+- Native Windows WireGuard/firewall checks, provider firewall review, public
+  ACME renewal, admin-panel update/rollback, and playback on this exact build
+  remain pending. Health telemetry should be checked in the signed-in browser;
+  the socket mount repair is proven at the host/container filesystem level,
+  not yet by the displayed Health page. No production deployment, merge, or
+  stable release is claimed.
+
 ## v1.6.0-dev.21 Health and Settings fixes — 2026-10-23
 
 - Changes: Health now tolerates null/empty recovery and health-history arrays,

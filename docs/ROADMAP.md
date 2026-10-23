@@ -57,18 +57,18 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The dev.21 local release gate passes, including browser coverage for
-fresh/null Health history and direct Settings reload. The package was updated
-on the user-authorized disposable public VPS; `proxyctl doctor`, all five
-containers, and public HTTPS readiness passed. Authenticated Health and direct
-plus reloaded Settings pages render on the VPS. However, its Health UI reports
-Host metrics Degraded and four container components Unknown while the updater
-and `proxyctl doctor` report all five containers healthy; this telemetry
-discrepancy needs investigation. Provider-firewall review, ACME renewal,
-dashboard update/rollback, and Windows profile/firewall/handshake checks remain
-pending. The operator reported playback works before this update; post-update
-playback has not been retested. v1.6 is not complete and stable release
-readiness remains blocked.**
+**Status: The dev.23 local release gate passes, and the exact package was
+updated on the user-authorized disposable public VPS. The updater and
+`proxyctl doctor` passed; all five containers, public HTTPS routes, and
+matching host/admin maintenance-socket mount identities were verified. The earlier Unknown container
+telemetry was traced to a stale admin bind mount and addressed by preserving the
+systemd runtime directory and remounting admin after host-service updates. The
+signed-in Health page still needs rechecking after dev.23 because the update
+restarted admin and invalidated the prior browser session. Provider-firewall
+review, ACME renewal, dashboard update/rollback, and Windows profile/firewall/
+handshake checks remain pending. The operator reported playback works before
+this update; playback on dev.23 has not been retested. v1.6 is not complete and
+stable release readiness remains blocked.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
 432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
@@ -848,3 +848,4 @@ merge commit `7470ef3`.
 | 2026-10-22 | v1.6.0-dev.15 clean release gate and Ubuntu exact-package update/reboot check. | Clean dev commit `ebd767615ded1abc6fe776a7c229e8c0784c971b`; docs-only PR #77 was merged before the build. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0; local gate passed and public/Windows host checks remain blocked. Exact package updated the disposable Ubuntu 26.04.1 clone from dev.14; checksum, pre-update backup, all five healthy containers, doctor, verified 21-file backup, maintenance/backup units, actual SSH journal access, Fail2ban, and IPv4/IPv6 nftables ban/unban passed. Normal reboot recovered all five containers and host security state. WireGuard listens, but no peer handshake. Package SHA-256 `ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`; standalone proxyctl SHA-256 `69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`. No public VPS, production deployment, or stable publication. |
 | 2026-10-22 | v1.6.0-dev.19 fresh install and reboot on the user-authorized disposable public VPS. | `fix/v16-maintenance-self-restart`; dev.19 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79). | Installer, exact package checksums, `proxyctl doctor`, five healthy containers, maintenance/backup units, host journal, Fail2ban and IPv4/IPv6 nftables ban/unban, verified 25-file backup, 2 GiB persistent swap and reboot recovery passed. External TLS routes returned 200/200/403 with TLS verification; base missing route 404 and unauthenticated admin API 401. Admin browser: Overview, Statistics, System, Security, Access control, WireGuard, Web Content and About rendered. Health throws a null `.length` TypeError on fresh history; Settings reload returns 404. Operator reported playback works on 2026-10-22; client/route and handshake evidence were not recorded. Windows profile/firewall checks, provider-firewall inspection, ACME renewal, and dashboard update/rollback remain pending. No production deployment, merge or stable release. See [TESTING.md](TESTING.md). |
 | 2026-10-23 | Fix Health empty-history rendering and Settings reload; update the disposable public VPS to dev.21. | `fix/v16-maintenance-self-restart`; candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79). | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.21 -SupportedUpgradeSources 1.6.0-dev.19` — PASS; browser, integration, security, streaming and offline package gates passed. Exact package SHA-256 `4e6b65e47bbd5450e0dfc6a61e84c5e5acc418331c02ec56149d9e8697528615` updated the disposable public VPS; updater backup, bundled images, service health, HTTPS readiness and `proxyctl doctor` passed; all five containers healthy. Unauthenticated `/settings` and `/health` redirected to sign-in (303), not 404. Authenticated page verification awaits operator sign-in after update. Native Windows, provider firewall, ACME renewal, admin-panel update/rollback and post-update playback remain pending. No production deployment, merge or stable release. See [TESTING.md](TESTING.md). |
+| 2026-10-23 | Fix the stale admin maintenance-socket bind after host-service updates; release gate and exact-package update to the disposable public VPS. | `fix/v16-maintenance-self-restart`; dev.23 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79), code commit `01252d5268f5`. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.23 -SupportedUpgradeSources 1.6.0-dev.22` — PASS, exit 0; local gate passed and host-specific readiness remains blocked. Exact package SHA-256 `4e8dfe502d314c0527498bfb8c490013301842d60b53039378b746992686eb69`; exact package updated the disposable VPS. `proxyctl doctor`, five healthy containers, public TLS routes 200/200/403, `RuntimeDirectoryPreserve=yes`, and matching host/admin socket mount device/inode pairs passed. Browser Health/Settings recheck awaits operator sign-in. Native Windows, provider-firewall, ACME renewal, dashboard update/rollback, and post-update playback remain pending. No production deployment, merge or stable release. See [TESTING.md](TESTING.md). |
