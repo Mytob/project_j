@@ -108,6 +108,8 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   const activeSecurityBan = page.locator('.security-ban').filter({ hasText: process.env.SECURITY_TEST_BAN_IP });
   await expect(activeSecurityBan).toBeVisible();
   await expect(activeSecurityBan).toContainText('ADMIN');
+  await expect(activeSecurityBan.locator('.security-ban-meta')).toContainText('remaining');
+  await expect(activeSecurityBan.locator('dl')).toHaveCount(0);
   await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
   const securityActivity = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Failures and bans over time' }) });
   await securityActivity.getByLabel('Time range').selectOption('7d');
