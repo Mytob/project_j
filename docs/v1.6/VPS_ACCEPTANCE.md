@@ -20,10 +20,10 @@ The exact dev.26 package passed the local release gate and was updated on this
 VPS on 2026-10-23. The updater and `proxyctl doctor` passed, all five product
 containers were healthy, and updater HTTPS readiness passed. The authenticated
 Health and Settings checks from dev.25 remain the latest page-level telemetry
-acceptance. The admin session expired on browser refresh after dev.26; visual
-acceptance of the compact Security ban rows awaits a fresh sign-in. These checks
-do not close the provider firewall, ACME renewal, or native Windows acceptance
-items below.
+acceptance. After signing in again following the dev.26 refresh, the Security
+page displayed nine active bans in compact rows with remaining duration,
+failure/escalation details, and Unban actions. These checks do not close the
+provider firewall, ACME renewal, or native Windows acceptance items below.
 
 ## Before installation
 

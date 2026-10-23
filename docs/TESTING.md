@@ -32,12 +32,14 @@
   public HTTPS readiness. `TERM=dumb /usr/local/sbin/proxyctl doctor` passed
   release metadata, Compose, application services, update recovery, Docker,
   and host-storage checks.
-- Live browser acceptance is still pending: the already-open tab showed its
-  pre-refresh layout; refreshing loaded the deployed app but redirected to
-  sign-in. The operator needs to sign in again before the compact dev.26 rows
-  can be visually verified. Laptop `curl.exe` DNS checks also could not resolve
-  the three hostnames in this tool environment; the deployment readiness check
-  passed, but no separate laptop route result is claimed here.
+- Live browser acceptance: after operator sign-in, the refreshed
+  `https://admin.darkcry.com/security` page displayed nine active bans as
+  compact rows with address/service, remaining duration, failure count,
+  escalation level, and Unban action. The former Started/Remaining/Failed
+  attempts/Escalation detail columns are no longer shown. Laptop `curl.exe` DNS
+  checks could not resolve the three hostnames in this tool environment; the
+  deployment readiness check passed, but no separate laptop route result is
+  claimed here.
 - Real-host journal/nftables enforcement, provider-firewall review, ACME
   renewal, native Windows client/firewall, and post-update playback remain
   pending. No production deployment, merge, or stable release is claimed.
