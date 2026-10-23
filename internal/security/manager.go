@@ -208,11 +208,14 @@ func (m *Manager) applyLocked(event Event) []HistoryEvent {
 func (m *Manager) Sweep() ([]HistoryEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := m.now().UTC()
+	if !m.sweepNeededLocked(now) {
+		return nil, nil
+	}
 	before, err := cloneState(m.state)
 	if err != nil {
 		return nil, err
 	}
-	now := m.now().UTC()
 	created := make([]HistoryEvent, 0)
 	for identifier, ban := range m.state.Active {
 		if !ban.ExpiresAt.After(now) {
@@ -231,6 +234,27 @@ func (m *Manager) Sweep() ([]HistoryEvent, error) {
 		m.publishLocked()
 	}
 	return created, nil
+}
+
+func (m *Manager) sweepNeededLocked(now time.Time) bool {
+	for _, ban := range m.state.Active {
+		if !ban.ExpiresAt.After(now) {
+			return true
+		}
+	}
+	historyCutoff := now.Add(-m.state.Config.HistoryRetention)
+	for _, event := range m.state.History {
+		if event.At.Before(historyCutoff) {
+			return true
+		}
+	}
+	processedCutoff := now.Add(-365 * 24 * time.Hour)
+	for _, at := range m.state.Processed {
+		if at.Before(processedCutoff) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) UpdateConfig(config Config) error {

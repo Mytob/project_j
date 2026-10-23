@@ -179,14 +179,20 @@ type Controller struct {
 	Logger         *slog.Logger
 	CaddyHTTP      *http.Client
 
-	enforcementMu    sync.Mutex
-	mu               sync.RWMutex
-	journalStatus    string
-	journalError     string
-	adminEventStatus string
-	adminEventError  string
-	lastError        string
+	reconcileRequests chan struct{}
+	enforcementMu     sync.Mutex
+	mu                sync.RWMutex
+	journalStatus     string
+	journalError      string
+	adminEventStatus  string
+	adminEventError   string
+	lastError         string
 }
+
+const (
+	controllerMaintenanceInterval = time.Second
+	controllerReconcileInterval   = 15 * time.Second
+)
 
 func NewController(manager *Manager, eventsDir string, eventKey []byte, caddySocket, cursorPath string, logger *slog.Logger) (*Controller, error) {
 	if manager == nil || strings.TrimSpace(eventsDir) == "" || len(eventKey) < 32 || strings.TrimSpace(caddySocket) == "" || strings.TrimSpace(cursorPath) == "" {
@@ -199,38 +205,66 @@ func NewController(manager *Manager, eventsDir string, eventKey []byte, caddySoc
 	if err != nil {
 		return nil, err
 	}
-	return &Controller{Manager: manager, EventsDir: eventsDir, EventKey: append([]byte(nil), eventKey...), CaddySocket: caddySocket, JournalCursor: cursorPath, Fail2banClient: NewFail2banClient("/usr/bin/fail2ban-client"), Fail2banServer: "/usr/bin/fail2ban-server", Journalctl: "/usr/bin/journalctl", Nft: "/usr/sbin/nft", Logger: logger, CaddyHTTP: client, journalStatus: "starting", adminEventStatus: "starting"}, nil
+	return &Controller{Manager: manager, EventsDir: eventsDir, EventKey: append([]byte(nil), eventKey...), CaddySocket: caddySocket, JournalCursor: cursorPath, Fail2banClient: NewFail2banClient("/usr/bin/fail2ban-client"), Fail2banServer: "/usr/bin/fail2ban-server", Journalctl: "/usr/bin/journalctl", Nft: "/usr/sbin/nft", Logger: logger, CaddyHTTP: client, reconcileRequests: make(chan struct{}, 1), journalStatus: "starting", adminEventStatus: "starting"}, nil
 }
 
 func (c *Controller) Run(ctx context.Context) error {
 	go c.superviseFail2ban(ctx)
 	go c.followSSHJournal(ctx)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	maintenanceTicker := time.NewTicker(controllerMaintenanceInterval)
+	defer maintenanceTicker.Stop()
+	reconcileTicker := time.NewTicker(controllerReconcileInterval)
+	defer reconcileTicker.Stop()
+	// Load any durable authentication events and establish the initial
+	// enforcement and health snapshot before waiting for periodic recovery.
+	c.processAdminSpool()
+	c.reconcile(ctx)
 	for {
-		c.processAdminSpool()
-		expired, err := c.Manager.Sweep()
-		if err != nil {
-			c.setError("persist ban expiration", err)
-		} else {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-maintenanceTicker.C:
+			c.processAdminSpool()
+			expired, err := c.Manager.Sweep()
+			if err != nil {
+				c.setError("persist ban expiration", err)
+				continue
+			}
 			for _, event := range expired {
 				if event.Service == SSH || event.Service == Admin {
-					ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-					err := c.Fail2banClient.Unban(ctx, event.Service, event.IP)
+					unbanCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+					err := c.Fail2banClient.Unban(unbanCtx, event.Service, event.IP)
 					cancel()
 					if err != nil {
 						c.setError("expire fail2ban ticket", err)
 					}
+					if event.Service == Admin {
+						c.requestReconcile()
+					}
 				}
 			}
-		}
-		c.reconcile(ctx)
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
+		case <-c.reconcileRequests:
+			c.reconcile(ctx)
+		case <-reconcileTicker.C:
+			c.reconcile(ctx)
 		}
 	}
+}
+
+func (c *Controller) requestReconcile() {
+	select {
+	case c.reconcileRequests <- struct{}{}:
+	default:
+	}
+}
+
+func containsNewBan(events []HistoryEvent) bool {
+	for _, event := range events {
+		if event.Type == "ban" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) processAdminSpool() {
@@ -260,10 +294,14 @@ func (c *Controller) processAdminSpool() {
 	for _, item := range items {
 		events = append(events, item.Event)
 	}
-	if _, err := c.Manager.ApplyBatch(events); err != nil {
+	created, err := c.Manager.ApplyBatch(events)
+	if err != nil {
 		c.setAdminEvent("degraded", err)
 		c.setError("process administrator authentication events", err)
 		return
+	}
+	if containsNewBan(created) {
+		c.requestReconcile()
 	}
 	for _, item := range items {
 		if c.Manager.Processed(item.Event.ID) {
@@ -661,11 +699,15 @@ func (c *Controller) processSSHJournalRecord(record sshJournalRecord) error {
 	}
 	identifier := sha256.Sum256([]byte(record.Cursor))
 	event := Event{ID: "ssh:" + hex.EncodeToString(identifier[:]), Service: SSH, Kind: kind, IP: ip, At: at}
-	if _, err := c.Manager.Apply(event); err != nil {
+	created, err := c.Manager.Apply(event)
+	if err != nil {
 		if c.Manager.Processed(event.ID) {
 			return c.writeCursor(record.Cursor)
 		}
 		return err
+	}
+	if containsNewBan(created) {
+		c.requestReconcile()
 	}
 	return c.writeCursor(record.Cursor)
 }

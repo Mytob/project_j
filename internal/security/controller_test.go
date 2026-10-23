@@ -109,3 +109,50 @@ func TestProcessSSHJournalRecordPersistsCursorAndEvent(t *testing.T) {
 		t.Fatalf("replayed SSH journal event duplicated history: %d", got)
 	}
 }
+
+func TestProcessSSHJournalRecordRequestsReconcileOnlyWhenBanIsCreated(t *testing.T) {
+	now := time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC)
+	manager := newTestManager(t, &now)
+	controller := &Controller{Manager: manager, JournalCursor: filepath.Join(t.TempDir(), "ssh.cursor"), reconcileRequests: make(chan struct{}, 1)}
+	for i := 0; i < 3; i++ {
+		record := sshJournalRecord{
+			Message:  "Failed password for alice from 192.0.2.51 port 55000 ssh2",
+			Cursor:   fmt.Sprintf("s=auth-%d", i),
+			Realtime: fmt.Sprint(now.Add(time.Duration(i) * time.Second).UnixMicro()),
+		}
+		if err := controller.processSSHJournalRecord(record); err != nil {
+			t.Fatal(err)
+		}
+		if i < 2 && len(controller.reconcileRequests) != 0 {
+			t.Fatalf("requested enforcement before the ban threshold on failure %d", i+1)
+		}
+	}
+	if got := len(controller.reconcileRequests); got != 1 {
+		t.Fatalf("reconcile requests after ban creation = %d, want 1", got)
+	}
+}
+
+func TestProcessAdminSpoolRequestsReconcileOnlyWhenBanIsCreated(t *testing.T) {
+	now := time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC)
+	manager := newTestManager(t, &now)
+	key := []byte("01234567890123456789012345678901")
+	controller := &Controller{
+		Manager:           manager,
+		EventsDir:         filepath.Join(t.TempDir(), "events"),
+		EventKey:          key,
+		reconcileRequests: make(chan struct{}, 1),
+	}
+	for i := 0; i < 3; i++ {
+		event := authEvent(fmt.Sprintf("admin-%d", i), Admin, LoginFailure, "192.0.2.52", now.Add(time.Duration(i)*time.Second))
+		if _, err := AppendEvent(controller.EventsDir, event, key); err != nil {
+			t.Fatal(err)
+		}
+		controller.processAdminSpool()
+		if i < 2 && len(controller.reconcileRequests) != 0 {
+			t.Fatalf("requested enforcement before the ban threshold on failure %d", i+1)
+		}
+	}
+	if got := len(controller.reconcileRequests); got != 1 {
+		t.Fatalf("reconcile requests after ban creation = %d, want 1", got)
+	}
+}
