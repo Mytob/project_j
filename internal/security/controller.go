@@ -94,6 +94,34 @@ func (f *Fail2banClient) JailStatus(ctx context.Context, jail string) error {
 	return err
 }
 
+func (f *Fail2banClient) Banned(ctx context.Context, jail string) (map[string]struct{}, error) {
+	output, err := f.command(ctx, "get", jail, "banned")
+	if err != nil {
+		return nil, err
+	}
+	output = strings.TrimSpace(output)
+	if len(output) < 2 || output[0] != '[' || output[len(output)-1] != ']' {
+		return nil, errors.New("fail2ban returned a malformed banned-address list")
+	}
+	addresses := strings.TrimSpace(output[1 : len(output)-1])
+	result := make(map[string]struct{})
+	if addresses == "" {
+		return result, nil
+	}
+	for _, entry := range strings.Split(addresses, ",") {
+		entry = strings.TrimSpace(entry)
+		if len(entry) < 2 || (entry[0] != '\'' && entry[0] != '"') || entry[len(entry)-1] != entry[0] {
+			return nil, errors.New("fail2ban returned a malformed banned address")
+		}
+		ip, err := canonicalIP(entry[1 : len(entry)-1])
+		if err != nil {
+			return nil, fmt.Errorf("fail2ban returned an invalid banned address: %w", err)
+		}
+		result[ip] = struct{}{}
+	}
+	return result, nil
+}
+
 func (f *Fail2banClient) IsBanned(ctx context.Context, jail, ip string) (bool, error) {
 	output, err := f.command(ctx, "get", jail, "banned", ip)
 	if err != nil {
@@ -115,6 +143,60 @@ func (f *Fail2banClient) EnsureBan(ctx context.Context, ban Ban) error {
 	if banned {
 		return nil
 	}
+	return f.applyBan(ctx, jail, ban)
+}
+
+func (f *Fail2banClient) EnsureBans(ctx context.Context, bans []Ban) error {
+	neededJails := map[string]struct{}{}
+	now := time.Now
+	if f.Now != nil {
+		now = f.Now
+	}
+	for _, ban := range bans {
+		if ban.ExpiresAt.After(now()) {
+			neededJails[jailFor(ban.Service)] = struct{}{}
+		}
+	}
+	active := make(map[string]map[string]struct{}, len(neededJails))
+	for _, jail := range []string{SSHJail, AdminJail} {
+		if _, needed := neededJails[jail]; !needed {
+			continue
+		}
+		addresses, err := f.Banned(ctx, jail)
+		if err != nil {
+			return fmt.Errorf("inspect %s banned addresses: %w", jail, err)
+		}
+		active[jail] = addresses
+	}
+	return f.restoreBans(ctx, bans, active)
+}
+
+func (f *Fail2banClient) restoreBans(ctx context.Context, bans []Ban, active map[string]map[string]struct{}) error {
+	now := time.Now
+	if f.Now != nil {
+		now = f.Now
+	}
+	for _, ban := range bans {
+		if !ban.ExpiresAt.After(now()) {
+			continue
+		}
+		jail := jailFor(ban.Service)
+		addresses := active[jail]
+		if addresses == nil {
+			return fmt.Errorf("%s banned-address list was not inspected", jail)
+		}
+		if _, exists := addresses[ban.IP]; exists {
+			continue
+		}
+		if err := f.applyBan(ctx, jail, ban); err != nil {
+			return fmt.Errorf("restore %s ban for %s: %w", jail, ban.IP, err)
+		}
+		addresses[ban.IP] = struct{}{}
+	}
+	return nil
+}
+
+func (f *Fail2banClient) applyBan(ctx context.Context, jail string, ban Ban) error {
 	now := time.Now
 	if f.Now != nil {
 		now = f.Now
@@ -133,7 +215,7 @@ func (f *Fail2banClient) EnsureBan(ctx context.Context, ban Ban) error {
 	if _, err := f.command(ctx, "set", jail, "bantime", strconv.FormatInt(seconds, 10)); err != nil {
 		return err
 	}
-	_, err = f.command(ctx, "set", jail, "banip", ban.IP)
+	_, err := f.command(ctx, "set", jail, "banip", ban.IP)
 	return err
 }
 
@@ -375,8 +457,8 @@ func (c *Controller) reconcile(ctx context.Context) {
 		c.setError("connect to fail2ban", err)
 	} else {
 		health.Fail2ban = "healthy"
-		sshErr := c.Fail2banClient.JailStatus(ctx, SSHJail)
-		adminErr := c.Fail2banClient.JailStatus(ctx, AdminJail)
+		sshBanned, sshErr := c.Fail2banClient.Banned(ctx, SSHJail)
+		adminBanned, adminErr := c.Fail2banClient.Banned(ctx, AdminJail)
 		if sshErr != nil || adminErr != nil {
 			health.Fail2ban = "degraded"
 			health.Firewall = "degraded"
@@ -389,21 +471,10 @@ func (c *Controller) reconcile(ctx context.Context) {
 			c.setError("inspect SSH nftables enforcement chain", errors.New("the Fail2ban chain does not contain a TCP port 22 drop rule"))
 		} else {
 			health.Firewall = "healthy"
-			for _, ban := range snapshot.ActiveBans {
-				if err := c.Fail2banClient.EnsureBan(ctx, ban); err != nil {
-					health.Firewall = "degraded"
-					c.setError("restore active fail2ban ban", err)
-					break
-				}
-				active, err := c.Fail2banClient.IsBanned(ctx, jailFor(ban.Service), ban.IP)
-				if err != nil || !active {
-					health.Firewall = "degraded"
-					if err == nil {
-						err = errors.New("Fail2ban did not retain a persisted active ban")
-					}
-					c.setError("verify active fail2ban ban", err)
-					break
-				}
+			active := map[string]map[string]struct{}{SSHJail: sshBanned, AdminJail: adminBanned}
+			if err := c.Fail2banClient.restoreBans(ctx, snapshot.ActiveBans, active); err != nil {
+				health.Firewall = "degraded"
+				c.setError("restore active fail2ban bans", err)
 			}
 		}
 	}
@@ -461,12 +532,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	var result error
 	if err := c.Fail2banClient.Ping(ctx); err != nil {
 		result = errors.Join(result, err)
-	} else {
-		for _, ban := range c.Manager.Snapshot().ActiveBans {
-			if err := c.Fail2banClient.EnsureBan(ctx, ban); err != nil {
-				result = errors.Join(result, err)
-			}
-		}
+	} else if err := c.Fail2banClient.EnsureBans(ctx, c.Manager.Snapshot().ActiveBans); err != nil {
+		result = errors.Join(result, err)
 	}
 	if err := c.syncCaddy(ctx, c.Manager.Snapshot().ActiveBans); err != nil {
 		result = errors.Join(result, err)

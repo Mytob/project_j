@@ -87,6 +87,60 @@ func TestFail2banCommandsUseSupportedQueriesAndRestoreBanExpiry(t *testing.T) {
 	}
 }
 
+func TestFail2banBannedParsesWholeAddressList(t *testing.T) {
+	client := &Fail2banClient{Path: "test-fail2ban", Socket: "", run: func(_ context.Context, _ string, args ...string) (string, error) {
+		return "['203.0.113.8', '2001:db8::8']", nil
+	}}
+	addresses, err := client.Banned(context.Background(), SSHJail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 2 {
+		t.Fatalf("banned-address count = %d, want 2", len(addresses))
+	}
+	for _, ip := range []string{"203.0.113.8", "2001:db8::8"} {
+		if _, ok := addresses[ip]; !ok {
+			t.Fatalf("banned-address set omitted %s: %v", ip, addresses)
+		}
+	}
+}
+
+func TestEnsureBansListsEachJailOnceAndRestoresOnlyMissingAddresses(t *testing.T) {
+	now := time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC)
+	var calls [][]string
+	client := &Fail2banClient{Path: "test-fail2ban", Socket: "/tmp/fail2ban.sock", Now: func() time.Time { return now }}
+	client.run = func(_ context.Context, executable string, args ...string) (string, error) {
+		if executable != client.Path {
+			t.Fatalf("unexpected executable %q", executable)
+		}
+		calls = append(calls, append([]string(nil), args...))
+		withoutSocket := args[2:]
+		if len(withoutSocket) == 3 && withoutSocket[0] == "get" && withoutSocket[2] == "banned" {
+			if withoutSocket[1] == SSHJail {
+				return "['203.0.113.8']", nil
+			}
+			return "[]", nil
+		}
+		return "ok", nil
+	}
+	bans := []Ban{
+		{Service: SSH, IP: "203.0.113.8", StartedAt: now, ExpiresAt: now.Add(15 * time.Minute)},
+		{Service: Admin, IP: "2001:db8::9", StartedAt: now, ExpiresAt: now.Add(15*time.Minute + time.Nanosecond)},
+	}
+	if err := client.EnsureBans(context.Background(), bans); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"--socket", "/tmp/fail2ban.sock", "get", SSHJail, "banned"},
+		{"--socket", "/tmp/fail2ban.sock", "get", AdminJail, "banned"},
+		{"--socket", "/tmp/fail2ban.sock", "set", AdminJail, "bantime", "901"},
+		{"--socket", "/tmp/fail2ban.sock", "set", AdminJail, "banip", "2001:db8::9"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("batched Fail2ban commands = %#v, want %#v", calls, want)
+	}
+}
+
 func TestProcessSSHJournalRecordPersistsCursorAndEvent(t *testing.T) {
 	now := time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC)
 	manager := newTestManager(t, &now)
