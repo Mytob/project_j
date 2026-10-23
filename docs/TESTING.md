@@ -1,5 +1,78 @@
 # Testing
 
+## v1.6.0-dev.25 Fail2ban batching, release gate and VPS verification — 2026-10-23
+
+- Changes: each security reconciliation reads the complete banned-address list
+  once per needed Fail2ban jail and restores only missing bans. This removes
+  repeated per-address client calls while retaining immediate securityd startup
+  reconciliation and the separate fast Caddy ban refresh.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/security ./internal/deployment ./internal/maintenance ./internal/admin ./internal/containerhealth`
+  — PASS; all five packages passed. The first default-sandbox invocation was
+  denied access to Docker Desktop; rerunning the same command with Docker access
+  passed.
+- Full gate:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.25 -SupportedUpgradeSources 1.6.0-dev.24`
+  — PASS, exit 0. Go tests, frontend typecheck/unit/build, four browser tests,
+  M1–M6 browser/monitoring/security/streaming/WireGuard integration, and offline
+  package installation/update/rollback/preservation checks passed.
+  `dist/release-validation-1.6.0-dev.25.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.25.pkg`, 137,468,889 bytes, SHA-256
+  `15a71f204cb59ed4aa7465efe8ed3aa2a90dc249992b48e50907090c8da774df`.
+  Built from commit `4d7ba8e80c6a`.
+- Disposable VPS update: uploaded the package to
+  `/root/jellyfin-proxy-1.6.0-dev.25.pkg`; remote `sha256sum` matched the local
+  digest before running
+  `TERM=dumb /usr/local/sbin/proxyctl update /root/jellyfin-proxy-1.6.0-dev.25.pkg`.
+  The updater retained a dev.24 backup, loaded bundled images, completed
+  readiness checks, and retained active and previous releases. The five product
+  containers report healthy. `TERM=dumb /usr/local/sbin/proxyctl doctor` passed
+  all listed checks, including release metadata, Compose, service state, update
+  recovery, Docker, and host storage.
+- Public route command:
+  `foreach ($url in @('https://darkcry.com/','https://admin.darkcry.com/','https://access.darkcry.com/')) { curl.exe --max-time 20 -sS -o NUL -w "%{url_effective} %{http_code} tls=%{ssl_verify_result}`n" $url }`
+  — PASS: 200, 200, and 403 respectively; all reported `tls=0`.
+- Authenticated browser verification on this deployed build: Health loaded and
+  showed a 5.1% latest CPU sample, 63.7% memory (515.6 MB of 809.3 MB), and all
+  health components/container rows Healthy, including Windows peer and Jellyfin
+  endpoint. Settings loaded directly and its storage values resolved to a 5.1 MB
+  statistics database, 1,205 retained proxy samples, and 2.2 GB disk available.
+  The single CPU sample is not a long-term performance measurement. Streaming
+  and tunnel recovery passed in the integration gate; native Windows playback
+  was not retested on dev.25.
+- Real-host journal/nftables enforcement, native Windows client/firewall checks,
+  provider-firewall inspection, and ACME renewal remain pending. No production
+  deployment, merge, or stable publication is claimed.
+
+## v1.6.0-dev.24 security-controller CPU reduction and Caddy ban recovery — 2026-10-23
+
+- Changes: expensive Fail2ban/nftables reconciliation no longer runs on every
+  one-second maintenance tick. Full reconciliation runs every 15 seconds, at
+  startup, and on new ban events; Caddy's active ban/block snapshot is refreshed
+  separately every second so Caddy restart restores bans promptly. Sweep/count
+  updates also avoid cloning state when nothing changed.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/security ./internal/deployment ./internal/maintenance ./internal/admin ./internal/containerhealth`
+  — PASS.
+- Full gate:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.24 -SupportedUpgradeSources 1.6.0-dev.23`
+  — PASS on the corrected candidate. An earlier gate run caught delayed
+  restoration of Caddy bans after restart; the Caddy-only fast refresh was added
+  and the complete gate rerun passed. The report records the local gate passed
+  and host-specific checks blocked.
+- Package `dist/jellyfin-proxy-1.6.0-dev.24.pkg`, 137,462,968 bytes, SHA-256
+  `c6f9d9a4f2586736d8a5cc7700966510c3eb13f39f9f3d0061419a46174b8039`, built
+  from `84ad8e69ebeb`.
+- The exact package updated the disposable VPS from dev.23. `proxyctl doctor`,
+  all five containers, TLS routes 200/200/403, `RuntimeDirectoryPreserve=yes`,
+  and matching host/admin mount identities for the maintenance directory and
+  socket passed. CPU samples after this deployment no longer showed continuous
+  100% use, but a later `docker stats --no-stream` snapshot showed securityd at
+  103.88% CPU while individual Fail2ban queries ran; this led to dev.25 batching.
+- No production deployment, merge, or stable publication. See the dev.25 entry
+  for final browser verification and remaining host checks.
+
 ## v1.6.0-dev.23 maintenance socket remount — 2026-10-23
 
 - Changes: preserve the maintenance runtime directory across service restarts,

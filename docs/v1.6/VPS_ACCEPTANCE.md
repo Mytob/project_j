@@ -16,6 +16,13 @@ production VPS. Public acceptance was performed on the user-authorized
 disposable public VPS and is recorded below. This remains a development test
 host, not production acceptance or a stable release.
 
+The exact dev.25 package passed the local release gate and was updated on this
+VPS on 2026-10-23. The updater and `proxyctl doctor` passed, all five product
+containers were healthy, and external TLS routes returned 200/200/403. The
+authenticated Health page reported all components healthy; Settings loaded
+directly and returned storage values. These checks do not close the provider
+firewall, ACME renewal, or native Windows acceptance items below.
+
 ## Before installation
 
 - [x] VPS is disposable, Ubuntu Server 26.04.1 LTS x86-64, and had no data that
@@ -114,13 +121,13 @@ host, not production acceptance or a stable release.
 
 | Check | Result | Evidence / date |
 | --- | --- | --- |
-| Release and checksums | PASS | dev.19 package and standalone proxyctl sidecars verified; 2026-10-22 |
-| Fresh install and recovery access | PASS | Installer, alternate SSH admin/sudo, doctor and post-reboot recovery passed; 2026-10-22 |
-| Provider firewall, DNS, public TLS | PARTIAL | Public HTTPS 200/200/403 with verified TLS; provider rules and ACME renewal not inspected/tested; 2026-10-22 |
-| Host firewall, Fail2ban, journal | PARTIAL | Fail2ban jails, host journal and IPv4/IPv6 nftables ban/unban passed; host UFW inactive and provider comparison pending; 2026-10-22 |
-| WireGuard and Jellyfin playback | PARTIAL | Operator reported playback works on 2026-10-22; client and route were not specified. Windows profile import, scoped firewall, recent handshake, `/health`, direct-public isolation and reboot recovery remain unverified. |
-| Backups, update, rollback, repair | PARTIAL | Manual CLI backup verified; dashboard update/rollback, authenticated download, scheduled execution and repair not tested on public VPS; 2026-10-22 |
-| Resource measurements | PARTIAL | Install and post-reboot disk/swap observed; no comparable steady-state workload sample; 2026-10-22 |
+| Release and checksums | PASS | dev.25 local gate passed; package SHA-256 matched before update; 2026-10-23 |
+| Fresh install and recovery access | PASS | dev.19 fresh install/reboot and recovery access passed; dev.25 updater, doctor and five-container health passed; 2026-10-23 |
+| Provider firewall, DNS, public TLS | PARTIAL | dev.25 external routes returned HTTPS 200/200/403 with `tls=0`; provider rules and ACME renewal remain unverified; 2026-10-23 |
+| Host firewall, Fail2ban, journal | PARTIAL | dev.19 host journal, Fail2ban jails and IPv4/IPv6 nftables ban/unban passed; dev.25 Health reports components healthy. Provider comparison and a repeated live ban/unban check remain pending. |
+| WireGuard and Jellyfin playback | PARTIAL | dev.25 Health reports Windows peer and Jellyfin endpoint healthy; tunnel/streaming integration passed. Native Windows playback, scoped firewall, and reboot recovery were not retested on dev.25. |
+| Backups, update, rollback, repair | PARTIAL | dev.25 CLI update passed and local offline package update/rollback/preservation checks passed; public-host backup/restore, dashboard update/rollback and repair remain untested. |
+| Resource measurements | PARTIAL | dev.25 Health showed CPU 5.1%, memory 515.6 MB of 809.3 MB, and 2.2 GB disk available; this single sample is not comparable steady-state workload evidence. |
 
 Passing this checklist is environment-specific deployment acceptance. It does
 not replace the local release suite, disposable Ubuntu failure tests, or
