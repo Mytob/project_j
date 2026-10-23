@@ -238,11 +238,9 @@ func (c *Controller) Run(ctx context.Context) error {
 					if err != nil {
 						c.setError("expire fail2ban ticket", err)
 					}
-					if event.Service == Admin {
-						c.requestReconcile()
-					}
 				}
 			}
+			c.refreshCaddySnapshot(ctx)
 		case <-c.reconcileRequests:
 			c.reconcile(ctx)
 		case <-reconcileTicker.C:
@@ -255,6 +253,40 @@ func (c *Controller) requestReconcile() {
 	select {
 	case c.reconcileRequests <- struct{}{}:
 	default:
+	}
+}
+
+func (c *Controller) refreshCaddySnapshot(ctx context.Context) {
+	c.enforcementMu.Lock()
+	defer c.enforcementMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	snapshot := c.Manager.Snapshot()
+	message, err := c.syncCaddyState(ctx, snapshot.ActiveBans)
+	health := snapshot.Health
+	if err != nil {
+		health.CaddySync = "degraded"
+		if health.LastError == "" || isCaddySyncHealthError(health.LastError) {
+			health.LastError = message
+		}
+	} else {
+		health.CaddySync = "healthy"
+		if isCaddySyncHealthError(health.LastError) {
+			health.LastError = ""
+		}
+	}
+	if health != snapshot.Health {
+		c.Manager.SetHealth(health)
+	}
+}
+
+func isCaddySyncHealthError(message string) bool {
+	switch message {
+	case "Caddy blocked-request counters are unavailable", "Blocked-request totals could not be persisted", "Caddy ban synchronization is unavailable":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -393,19 +425,11 @@ func (c *Controller) reconcile(ctx context.Context) {
 		health.LastError = c.adminEventError
 	}
 	c.mu.RUnlock()
-	counts, countErr := c.caddyBlocked(ctx)
-	if countErr != nil {
+	caddyMessage, caddyErr := c.syncCaddyState(ctx, snapshot.ActiveBans)
+	if caddyErr != nil {
 		health.CaddySync = "degraded"
-		health.LastError = "Caddy blocked-request counters are unavailable"
-		c.setError("read Caddy blocked-request counters", countErr)
-	} else if err := c.Manager.IngestBlockedCounts(counts, time.Now().UTC()); err != nil {
-		health.CaddySync = "degraded"
-		health.LastError = "Blocked-request totals could not be persisted"
-		c.setError("persist Caddy blocked-request counters", err)
-	} else if err := c.syncCaddy(ctx, snapshot.ActiveBans); err != nil {
-		health.CaddySync = "degraded"
-		health.LastError = "Caddy ban synchronization is unavailable"
-		c.setError("synchronize Caddy admin bans", err)
+		health.LastError = caddyMessage
+		c.setError(caddyMessage, caddyErr)
 	} else {
 		health.CaddySync = "healthy"
 	}
@@ -413,6 +437,20 @@ func (c *Controller) reconcile(ctx context.Context) {
 		health.LastError = "Fail2ban is unavailable; existing administrator bans remain active in Caddy until expiry"
 	}
 	c.Manager.SetHealth(health)
+}
+
+func (c *Controller) syncCaddyState(ctx context.Context, bans []Ban) (string, error) {
+	counts, err := c.caddyBlocked(ctx)
+	if err != nil {
+		return "Caddy blocked-request counters are unavailable", err
+	}
+	if err := c.Manager.IngestBlockedCounts(counts, time.Now().UTC()); err != nil {
+		return "Blocked-request totals could not be persisted", err
+	}
+	if err := c.syncCaddy(ctx, bans); err != nil {
+		return "Caddy ban synchronization is unavailable", err
+	}
+	return "", nil
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {

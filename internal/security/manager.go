@@ -311,6 +311,20 @@ func (m *Manager) Unban(service Service, rawIP string) (bool, error) {
 func (m *Manager) IngestBlockedCounts(counts map[string]uint64, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	needsUpdate := false
+	for rawIP, count := range counts {
+		ip, err := canonicalIP(rawIP)
+		if err != nil {
+			continue
+		}
+		if count != m.state.Blocked[ip] {
+			needsUpdate = true
+			break
+		}
+	}
+	if !needsUpdate {
+		return nil
+	}
 	before, err := cloneState(m.state)
 	if err != nil {
 		return err
