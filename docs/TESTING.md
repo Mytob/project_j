@@ -1,5 +1,47 @@
 # Testing
 
+## v1.6.0-dev.26 Security active-ban layout — 2026-10-23
+
+- Changes: active bans use compact rows showing address/service, time remaining,
+  failure count, escalation level, and the Unban action. The row stays compact
+  on desktop and stacks its metadata responsively on narrow screens.
+- Focused frontend checks (Node 24.22.0 Alpine):
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src/internal/admin/frontend node:24.22.0-alpine3.24 npm run typecheck`,
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src/internal/admin/frontend node:24.22.0-alpine3.24 npm test -- --reporter=dot`,
+  and `docker run --rm -v D:/Projects/Project_J2:/src -w /src/internal/admin/frontend node:24.22.0-alpine3.24 npm run build` — PASS;
+  1 test file, 7 unit tests. `pwsh -NoProfile -File .\tests\integration\run.ps1
+  -UpdateBrowserSnapshots` — PASS, four browser tests; updated only the two
+  Security snapshots.
+- Full release gate:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.26 -SupportedUpgradeSources 1.6.0-dev.25`
+  — PASS, exit 0. An earlier run stopped on the expected Security screenshot
+  height change; after refreshing the snapshots, the final gate passed.
+  `dist/release-validation-1.6.0-dev.26.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`. Go, frontend, M1–M6 browser,
+  monitoring/security/streaming, and offline package install/update/rollback/
+  preservation gates passed.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.26.pkg`, 137,633,346 bytes, SHA-256
+  `C5D224435B20C42F223100E12D379B3EB26E8C4EB207EBE3225BCB9FC62CA75D`.
+  Built from the working tree based on commit `43c569f` before the UI change
+  was committed as `ed101cc`; the package build identifier includes `-dirty`.
+- Disposable VPS update: the remote checksum matched before
+  `TERM=dumb /usr/local/sbin/proxyctl update
+  /root/jellyfin-proxy-1.6.0-dev.26.pkg`. The updater retained the dev.25
+  pre-update backup, preserved persistent config, loaded the bundled images,
+  restarted services, reported all five product containers healthy, and passed
+  public HTTPS readiness. `TERM=dumb /usr/local/sbin/proxyctl doctor` passed
+  release metadata, Compose, application services, update recovery, Docker,
+  and host-storage checks.
+- Live browser acceptance is still pending: the already-open tab showed its
+  pre-refresh layout; refreshing loaded the deployed app but redirected to
+  sign-in. The operator needs to sign in again before the compact dev.26 rows
+  can be visually verified. Laptop `curl.exe` DNS checks also could not resolve
+  the three hostnames in this tool environment; the deployment readiness check
+  passed, but no separate laptop route result is claimed here.
+- Real-host journal/nftables enforcement, provider-firewall review, ACME
+  renewal, native Windows client/firewall, and post-update playback remain
+  pending. No production deployment, merge, or stable release is claimed.
+
 ## v1.6.0-dev.25 Fail2ban batching, release gate and VPS verification — 2026-10-23
 
 - Changes: each security reconciliation reads the complete banned-address list

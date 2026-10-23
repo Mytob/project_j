@@ -16,12 +16,14 @@ production VPS. Public acceptance was performed on the user-authorized
 disposable public VPS and is recorded below. This remains a development test
 host, not production acceptance or a stable release.
 
-The exact dev.25 package passed the local release gate and was updated on this
+The exact dev.26 package passed the local release gate and was updated on this
 VPS on 2026-10-23. The updater and `proxyctl doctor` passed, all five product
-containers were healthy, and external TLS routes returned 200/200/403. The
-authenticated Health page reported all components healthy; Settings loaded
-directly and returned storage values. These checks do not close the provider
-firewall, ACME renewal, or native Windows acceptance items below.
+containers were healthy, and updater HTTPS readiness passed. The authenticated
+Health and Settings checks from dev.25 remain the latest page-level telemetry
+acceptance. The admin session expired on browser refresh after dev.26; visual
+acceptance of the compact Security ban rows awaits a fresh sign-in. These checks
+do not close the provider firewall, ACME renewal, or native Windows acceptance
+items below.
 
 ## Before installation
 
@@ -121,9 +123,9 @@ firewall, ACME renewal, or native Windows acceptance items below.
 
 | Check | Result | Evidence / date |
 | --- | --- | --- |
-| Release and checksums | PASS | dev.25 local gate passed; package SHA-256 matched before update; 2026-10-23 |
-| Fresh install and recovery access | PASS | dev.19 fresh install/reboot and recovery access passed; dev.25 updater, doctor and five-container health passed; 2026-10-23 |
-| Provider firewall, DNS, public TLS | PARTIAL | dev.25 external routes returned HTTPS 200/200/403 with `tls=0`; provider rules and ACME renewal remain unverified; 2026-10-23 |
+| Release and checksums | PASS | dev.26 local gate passed; exact package SHA-256 matched before update; updater public HTTPS readiness passed; 2026-10-23 |
+| Fresh install and recovery access | PASS | dev.19 fresh install/reboot and recovery access passed; dev.26 updater, doctor and five-container health passed; 2026-10-23 |
+| Provider firewall, DNS, public TLS | PARTIAL | dev.25 external routes returned HTTPS 200/200/403 with `tls=0`; dev.26 updater HTTPS readiness passed, but independent route check could not resolve DNS in the workstation environment. Provider rules and ACME renewal remain unverified; 2026-10-23 |
 | Host firewall, Fail2ban, journal | PARTIAL | dev.19 host journal, Fail2ban jails and IPv4/IPv6 nftables ban/unban passed; dev.25 Health reports components healthy. Provider comparison and a repeated live ban/unban check remain pending. |
 | WireGuard and Jellyfin playback | PARTIAL | dev.25 Health reports Windows peer and Jellyfin endpoint healthy; tunnel/streaming integration passed. Native Windows playback, scoped firewall, and reboot recovery were not retested on dev.25. |
 | Backups, update, rollback, repair | PARTIAL | dev.25 CLI update passed and local offline package update/rollback/preservation checks passed; public-host backup/restore, dashboard update/rollback and repair remain untested. |

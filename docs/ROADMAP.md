@@ -57,17 +57,14 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The `1.6.0-dev.25` local release gate passed and the exact package was
+**Status: The `1.6.0-dev.26` local release gate passed and the exact package was
 updated on the user-authorized disposable VPS. `proxyctl doctor`, all five
-containers, and public TLS routes passed. The authenticated Health page reports
-all components healthy, with a latest CPU sample of 5.1%; Settings loads directly
-and reports storage details. Earlier continuous CPU saturation was reduced by
-separating fast Caddy ban refresh from full security reconciliation, then batching
-Fail2ban banned-address lookups. The single post-update CPU sample is not a
-long-term performance measurement. Real-host journal/nftables enforcement,
-provider-firewall review, ACME renewal, and native Windows client/firewall checks
-remain pending. Streaming passed in the local integration gate; native Windows
-playback was not retested on dev.25. v1.6 is not complete and stable release
+containers, and updater HTTPS readiness passed. The Security active-ban rows
+are condensed to address/service, remaining duration, failure/escalation, and
+Unban. The refreshed admin browser session now requires sign-in, so visual
+acceptance of the new live layout is pending. Real-host journal/nftables
+enforcement, provider-firewall review, ACME renewal, and native Windows
+client/firewall checks remain pending. v1.6 is not complete and stable release
 readiness remains blocked.**
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
@@ -851,3 +848,4 @@ merge commit `7470ef3`.
 | 2026-10-23 | Fix the stale admin maintenance-socket bind after host-service updates; release gate and exact-package update to the disposable public VPS. | `fix/v16-maintenance-self-restart`; dev.23 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79), code commit `01252d5268f5`. | `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.23 -SupportedUpgradeSources 1.6.0-dev.22` — PASS, exit 0; local gate passed and host-specific readiness remains blocked. Exact package SHA-256 `4e8dfe502d314c0527498bfb8c490013301842d60b53039378b746992686eb69`; exact package updated the disposable VPS. `proxyctl doctor`, five healthy containers, public TLS routes 200/200/403, `RuntimeDirectoryPreserve=yes`, and matching host/admin socket mount device/inode pairs passed. Browser Health/Settings recheck awaits operator sign-in. Native Windows, provider-firewall, ACME renewal, dashboard update/rollback, and post-update playback remain pending. No production deployment, merge or stable release. See [TESTING.md](TESTING.md). |
 | 2026-10-23 | Reduce repeated v1.6 security reconciliation load and restore Caddy bans promptly after restarts. | `fix/v16-maintenance-self-restart`; dev.24 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79), commits `876052b` and `84ad8e6`. | The corrected `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.24 -SupportedUpgradeSources 1.6.0-dev.23` gate passed after an initial run caught delayed Caddy ban restoration on restart. The exact dev.24 package updated the disposable VPS; doctor, five healthy containers, TLS routes, and maintenance socket bind identities passed. Full security reconciliation was moved off the one-second maintenance tick and Caddy-only ban refresh remained one-second. Host CPU no longer stayed at 100%, though a later `docker stats --no-stream` snapshot showed a transient securityd spike from per-IP Fail2ban queries; this led to dev.25 batching. See [TESTING.md](TESTING.md). |
 | 2026-10-23 | Batch Fail2ban ban lookups; pass the dev.25 release gate and update the disposable VPS. | `fix/v16-maintenance-self-restart`; dev.25 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79), code commit `4d7ba8e`. | Focused security/deployment/maintenance/admin/containerhealth Go tests passed. `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.25 -SupportedUpgradeSources 1.6.0-dev.24` — PASS, exit 0; the report records local gate passed and remaining host checks blocked. Package SHA-256 `15a71f204cb59ed4aa7465efe8ed3aa2a90dc249992b48e50907090c8da774df`. Exact package update, `proxyctl doctor`, five healthy containers, and public TLS routes 200/200/403 passed. Authenticated Health and Settings pages loaded; Health showed all components healthy and CPU 5.1% at its latest sample. Real-host journal/nftables, ACME renewal, provider-firewall, and native Windows checks remain pending. No production release, merge, or publication. See [TESTING.md](TESTING.md). |
+| 2026-10-23 | Condense active ban rows on the Security page; pass dev.26 release gate and update the disposable VPS. | `fix/v16-maintenance-self-restart`; change commit `ed101cc` in draft [PR #79](https://github.com/Mytob/project_j/pull/79). The deployed package was built before commit from the equivalent working tree based on `43c569f` (dirty build identifier). | Frontend typecheck, 7 unit tests, build, and four browser tests passed. `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.26 -SupportedUpgradeSources 1.6.0-dev.25` — PASS, exit 0; local gate passed, host checks blocked. Package SHA-256 `C5D224435B20C42F223100E12D379B3EB26E8C4EB207EBE3225BCB9FC62CA75D`. Exact package update, updater readiness, `proxyctl doctor`, and five healthy containers passed. The browser had to be reloaded to fetch the new bundle; it then redirected to sign-in, so the dev.26 live layout has not yet been visually accepted. No production release, merge, or publication. See [TESTING.md](TESTING.md). |
