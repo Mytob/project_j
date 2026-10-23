@@ -1,6 +1,7 @@
 package maintenance
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,6 +30,35 @@ func TestBackupJobPersistsProgressAndResult(t *testing.T) {
 	persisted, ok := reloaded.Get(started.ID)
 	if !ok || persisted.State != "completed" || persisted.Result != "backup.bak" {
 		t.Fatalf("persisted job = %+v, found=%v", persisted, ok)
+	}
+}
+
+func TestOperationCompletionHookRunsAfterTerminalStateIsPersisted(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "jobs")
+	manager := NewJobManager(dir)
+	completed := make(chan Job, 1)
+	started, err := manager.StartOperationWithCompletion("update", 2, func(progress func(int, string)) (string, error) {
+		progress(1, "Updating release")
+		return "1.6.0-dev.2", nil
+	}, func(job Job) error {
+		reloaded := NewJobManager(dir)
+		persisted, ok := reloaded.Get(job.ID)
+		if !ok || persisted.State != "completed" || persisted.Result != "1.6.0-dev.2" {
+			return fmt.Errorf("completion hook ran before terminal state persisted: %+v, found=%v", persisted, ok)
+		}
+		completed <- job
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case job := <-completed:
+		if job.State != "completed" || job.ID != started.ID {
+			t.Fatalf("completion hook received job %+v", job)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("completion hook did not run")
 	}
 }
 

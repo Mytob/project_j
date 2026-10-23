@@ -434,6 +434,11 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	if !strings.Contains(commands, filepath.Join(proxyctlDir, "proxyctl")+" sync-host-services") {
 		t.Fatalf("update did not use the newly installed proxyctl to reconcile host unit templates: %s", commands)
 	}
+	syncHostServices := strings.Index(commands, filepath.Join(proxyctlDir, "proxyctl")+" sync-host-services")
+	adminMountRefresh := strings.LastIndex(commands, "up --detach --no-deps --force-recreate --pull never admin")
+	if adminMountRefresh <= syncHostServices {
+		t.Fatalf("update did not recreate admin after host service reconciliation to refresh its maintenance socket mount: %s", commands)
+	}
 	unit, err := os.ReadFile(filepath.Join(unitDir, maintenanceServiceName))
 	if err != nil || !strings.Contains(string(unit), "StateDirectory=jellyfin-proxy-maintenance") || !strings.Contains(string(unit), "ReadWritePaths=") || !strings.Contains(string(unit), " "+backupDir) {
 		t.Fatalf("updated maintenance unit lacks persistent backup-job storage: %s, %v", unit, err)

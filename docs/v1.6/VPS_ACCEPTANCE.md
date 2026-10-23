@@ -7,53 +7,67 @@ upgrade, rollback, firewall, restore, or failure-injection testing. Record only
 observed results and redact credentials, tokens, private keys, and backup
 contents.
 
-The clean-tree 1.6.0-dev.15 candidate passed the local release gate and an
-exact-package update from dev.14 on a disposable Ubuntu 26.04.1 clone.
-Version-matched doctor, all five container health checks, backup verification,
-host journal, Fail2ban, IPv4/IPv6 nftables ban/unban, and normal reboot recovery
-passed. It remains a development candidate, not a stable release. Do not
-deploy it to the production VPS. This public VPS checklist remains pending
-until a separate disposable public VPS and test domain are available.
+The clean-tree 1.6.0-dev.19 candidate passed the local release gate and an
+exact-package update from dev.18 on a disposable Ubuntu VM. Its checksum,
+pre-update backup, service/HTTPS readiness, version-matched doctor, five
+container health checks, and default error-page migration passed. It remains a
+development candidate, not a stable release. Do not deploy it to the
+production VPS. Public acceptance was performed on the user-authorized
+disposable public VPS and is recorded below. This remains a development test
+host, not production acceptance or a stable release.
+
+The exact dev.26 package passed the local release gate and was updated on this
+VPS on 2026-10-23. The updater and `proxyctl doctor` passed, all five product
+containers were healthy, and updater HTTPS readiness passed. The authenticated
+Health and Settings checks from dev.25 remain the latest page-level telemetry
+acceptance. After signing in again following the dev.26 refresh, the Security
+page displayed nine active bans in compact rows with remaining duration,
+failure/escalation details, and Unban actions. These checks do not close the
+provider firewall, ACME renewal, or native Windows acceptance items below.
 
 ## Before installation
 
-- [ ] VPS is disposable, Ubuntu Server 26.04 LTS x86-64, and has no data that
+- [x] VPS is disposable, Ubuntu Server 26.04.1 LTS x86-64, and had no data that
   needs preserving.
 - [ ] Provider-console access works and a recovery route is available if SSH
   or the host firewall is misconfigured.
-- [ ] Record baseline CPU, memory, swap, disk, and network usage.
-- [ ] Point dedicated base, admin, and access test hostnames at this VPS; verify
-  their A and, if enabled, AAAA records from outside the VPS.
+- [ ] Record comparable baseline CPU, memory, swap, disk, and network usage.
+  Initial memory, swap and disk were noted; comparable workload measurements
+  were not taken.
+- [x] Point base, admin, and access hostnames at this VPS; external HTTPS
+  requests reached all three names.
 - [ ] Confirm the provider firewall allows only required ingress: TCP 22, 80,
   and 443; UDP 51820 only when the WireGuard endpoint is enabled. Keep Jellyfin
   TCP 8096 private to the tunnel.
-- [ ] Record the release version, build identifier, package SHA-256, standalone
+- [x] Record the release version, build identifier, package SHA-256, standalone
   `proxyctl` SHA-256, and supported source versions from an independently
-  obtained release page.
+  obtained release page. See [TESTING.md](../TESTING.md).
 
 ## Fresh installation
 
-- [ ] Transfer the `.pkg` and sidecar checksums to the VPS; verify them before
+- [x] Transfer the `.pkg` and sidecar checksums to the VPS; verify them before
   starting the installer.
-- [ ] Complete the full-screen installer over SSH, including resource and
+- [x] Complete the full-screen installer over SSH, including resource and
   capability checks, domain review, administrator/allowlist configuration,
   backup policy, and final review.
-- [ ] Confirm any Docker/prerequisite installation is explicitly approved.
-- [ ] Confirm a separate administrator can sign in and use `sudo` before any
+- [x] Confirm any Docker/prerequisite installation is explicitly approved.
+- [x] Confirm a separate administrator can sign in and use `sudo` before any
   root SSH restriction is applied; retain provider-console recovery.
 - [ ] Confirm firewall changes preserve unrelated rules and the installer does
   not expose Docker, Caddy administration, Jellyfin, or the monitoring
-  collector publicly.
-- [ ] Verify the installer reports completion only after all managed services
-  and public HTTPS are ready. Run `sudo proxyctl doctor` and record every
+  collector publicly. External probes found the tested ports unreachable and
+  Docker publishes only 80/443 and UDP 51820. The provider rules were not
+  reviewed after the rebuild.
+- [x] Verify the installer reports completion only after all managed services
+  and public HTTPS are ready. Run `proxyctl doctor` and record every
   result.
-- [ ] Confirm all expected containers are healthy, maintenance and scheduled
+- [x] Confirm all expected containers are healthy, maintenance and scheduled
   backup units are active, and the host SSH journal is readable by the
   restricted security service.
 
 ## Public routes and security
 
-- [ ] From an external network, verify valid publicly trusted TLS for the base
+- [x] From an external network, verify valid publicly trusted TLS for the base
   and admin hostnames and the expected default-deny response for the access
   hostname.
 - [ ] Verify the admin allowlist blocks an untrusted address and permits only
@@ -61,12 +75,14 @@ until a separate disposable public VPS and test domain are available.
   enabled.
 - [ ] Confirm the provider firewall and host nftables rules agree, and that
   SSH protection has the expected Fail2ban jail and exact-address ban/unban
-  behavior.
-- [ ] Confirm no host or collector metrics port, Docker socket, Caddy admin
+  behavior. The host jails and IPv4/IPv6 ban/unban passed; provider comparison
+  remains pending.
+- [x] Confirm no host or collector metrics port, Docker socket, Caddy admin
   endpoint, or Jellyfin TCP 8096 is reachable from the public internet.
 - [ ] Verify Caddy obtains a trusted certificate and renews it using the
   documented ACME flow. Use an isolated test hostname and respect CA rate
-  limits; do not force production renewals on an unrelated domain.
+  limits; do not force production renewals on an unrelated domain. Initial
+  public TLS passed; renewal was not tested.
 
 ## WireGuard and Jellyfin
 
@@ -77,6 +93,9 @@ until a separate disposable public VPS and test domain are available.
 - [ ] Verify a recent peer handshake and bidirectional counters on the VPS.
 - [ ] Confirm Jellyfin `/health` and real playback through the public proxy over
   the tunnel; verify Jellyfin remains unreachable directly from the internet.
+  The operator reported that playback works on 2026-10-22, but the client,
+  route and supporting handshake/health observations were not recorded, so
+  this combined check remains incomplete.
 - [ ] Reboot the Windows test host and VPS separately; verify the tunnel and
   playback recover without exposing additional ports.
 
@@ -104,13 +123,13 @@ until a separate disposable public VPS and test domain are available.
 
 | Check | Result | Evidence / date |
 | --- | --- | --- |
-| Release and checksums | Pending | |
-| Fresh install and recovery access | Pending | |
-| Provider firewall, DNS, public TLS | Pending | |
-| Host firewall, Fail2ban, journal | Pending | |
-| Windows WireGuard and Jellyfin playback | Pending | |
-| Backups, update, rollback, repair | Pending | |
-| Resource measurements | Pending | |
+| Release and checksums | PASS | dev.26 local gate passed; exact package SHA-256 matched before update; updater public HTTPS readiness passed; 2026-10-23 |
+| Fresh install and recovery access | PASS | dev.19 fresh install/reboot and recovery access passed; dev.26 updater, doctor and five-container health passed; 2026-10-23 |
+| Provider firewall, DNS, public TLS | PARTIAL | dev.25 external routes returned HTTPS 200/200/403 with `tls=0`; dev.26 updater HTTPS readiness passed, but independent route check could not resolve DNS in the workstation environment. Provider rules and ACME renewal remain unverified; 2026-10-23 |
+| Host firewall, Fail2ban, journal | PARTIAL | dev.19 host journal, Fail2ban jails and IPv4/IPv6 nftables ban/unban passed; dev.25 Health reports components healthy. Provider comparison and a repeated live ban/unban check remain pending. |
+| WireGuard and Jellyfin playback | PARTIAL | dev.25 Health reports Windows peer and Jellyfin endpoint healthy; tunnel/streaming integration passed. Native Windows playback, scoped firewall, and reboot recovery were not retested on dev.25. |
+| Backups, update, rollback, repair | PARTIAL | dev.25 CLI update passed and local offline package update/rollback/preservation checks passed; public-host backup/restore, dashboard update/rollback and repair remain untested. |
+| Resource measurements | PARTIAL | dev.25 Health showed CPU 5.1%, memory 515.6 MB of 809.3 MB, and 2.2 GB disk available; this single sample is not comparable steady-state workload evidence. |
 
 Passing this checklist is environment-specific deployment acceptance. It does
 not replace the local release suite, disposable Ubuntu failure tests, or

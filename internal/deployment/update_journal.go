@@ -39,6 +39,7 @@ type UpdateRecoveryOptions struct {
 	ConfigureHostServices bool
 	SystemdUnitDir        string
 	BackupDirectory       string
+	MaintenanceUpdated    func()
 }
 
 func updateJournalPath(root string) string { return filepath.Join(root, updateJournalName) }
@@ -308,7 +309,7 @@ func RecoverInterruptedUpdate(ctx context.Context, options UpdateRecoveryOptions
 		}
 	}
 	if options.ConfigureHostServices {
-		if err := ConfigureHostMaintenance(ctx, options.InstallRoot, journal.PreviousVersion, options.SystemdUnitDir, options.Runner); err != nil {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, journal.PreviousVersion, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 			return false, fmt.Errorf("restore previous maintenance service: %w", err)
 		}
 		if err := ConfigureAutomaticBackups(ctx, options.InstallRoot, journal.PreviousVersion, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {

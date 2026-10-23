@@ -3,10 +3,11 @@ package maintenance
 import "context"
 
 type OperationRequest struct {
-	Action     string `json:"action"`
-	UploadID   string `json:"upload_id,omitempty"`
-	SHA256     string `json:"sha256,omitempty"`
-	BackupName string `json:"backup_name,omitempty"`
+	Action             string `json:"action"`
+	UploadID           string `json:"upload_id,omitempty"`
+	SHA256             string `json:"sha256,omitempty"`
+	BackupName         string `json:"backup_name,omitempty"`
+	MaintenanceUpdated func() `json:"-"`
 }
 
 type OperationProgress struct {
@@ -40,7 +41,8 @@ type ReleaseVersion struct {
 // binary. HTTP callers can select only these named operations and bounded
 // identifiers; they cannot pass commands, paths, or arbitrary arguments.
 type Operations struct {
-	Run            func(context.Context, OperationRequest, func(OperationProgress)) (string, error)
-	ValidateUpdate func(context.Context, string, string) (UpdateReview, error)
-	ReleaseState   func(context.Context) (ReleaseState, error)
+	Run                func(context.Context, OperationRequest, func(OperationProgress)) (string, error)
+	ValidateUpdate     func(context.Context, string, string) (UpdateReview, error)
+	ReleaseState       func(context.Context) (ReleaseState, error)
+	RestartMaintenance func(context.Context, string) error
 }

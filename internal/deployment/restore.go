@@ -33,6 +33,7 @@ type RestoreOptions struct {
 	ConfigureHostServices bool
 	SystemdUnitDir        string
 	BackupDirectory       string
+	MaintenanceUpdated    func()
 	Progress              func(UpdateProgress)
 }
 
@@ -159,7 +160,7 @@ func Restore(ctx context.Context, options RestoreOptions) (manifest backup.Manif
 		return manifest, fmt.Errorf("validate active restored Compose configuration: %w", err)
 	}
 	if options.ConfigureHostServices {
-		if err := ConfigureHostMaintenance(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.Runner); err != nil {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 			return manifest, fmt.Errorf("configure restricted maintenance service for restored release: %w", err)
 		}
 	}

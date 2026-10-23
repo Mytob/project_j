@@ -60,8 +60,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return manualHostUpdate(ctx, stdin, stdout)
 	}
 	if args[0] == "sync-host-services" {
-		if len(args) != 1 || !runningAsRoot() {
+		if !runningAsRoot() || (len(args) != 1 && !(len(args) == 2 && args[1] == "--defer-maintenance-restart")) {
 			return errors.New("host service reconciliation must be run as root")
+		}
+		if len(args) == 2 {
+			return deployment.RefreshHostServicesDeferred(ctx, deployment.DefaultInstallRoot, "", "", deployment.ExecRunner{})
 		}
 		return deployment.RefreshHostServices(ctx, deployment.DefaultInstallRoot, "", "", deployment.ExecRunner{})
 	}

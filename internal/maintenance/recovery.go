@@ -230,7 +230,7 @@ func (c *RecoveryController) Status() RecoveryStatus {
 			services = append(services, RecoveryService{Service: name, State: "unknown", Health: "unknown", Detail: "no recovery check has completed"})
 		}
 	}
-	events := append([]RecoveryEvent(nil), c.document.Events...)
+	events := append([]RecoveryEvent{}, c.document.Events...)
 	sort.Slice(events, func(i, j int) bool { return events[i].At.After(events[j].At) })
 	return RecoveryStatus{CheckedAt: c.document.CheckedAt, OperationActive: c.jobs.HasActiveOperation(), Services: services, Events: events}
 }

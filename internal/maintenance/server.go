@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Mytob/project_j/internal/containerhealth"
@@ -119,7 +120,9 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 	}
 	total := operationTotal(request.Action)
 	operation := OperationRequest{Action: request.Action, UploadID: request.UploadID, SHA256: strings.ToLower(request.SHA256), BackupName: request.BackupName}
-	job, err := s.jobs.StartOperation(request.Action, total, func(report func(int, string)) (string, error) {
+	var maintenanceUpdated atomic.Bool
+	operation.MaintenanceUpdated = func() { maintenanceUpdated.Store(true) }
+	job, err := s.jobs.StartOperationWithCompletion(request.Action, total, func(report func(int, string)) (string, error) {
 		if s.operations.Run == nil {
 			report(1, "Creating and verifying backup")
 			return s.createBackup()
@@ -127,6 +130,14 @@ func (s *Server) startJob(w http.ResponseWriter, r *http.Request) {
 		return s.operations.Run(context.Background(), operation, func(progress OperationProgress) {
 			report(progress.Step, progress.Message)
 		})
+	}, func(job Job) error {
+		if !maintenanceUpdated.Load() {
+			return nil
+		}
+		if s.operations.RestartMaintenance == nil {
+			return errors.New("maintenance service refresh is unavailable")
+		}
+		return s.operations.RestartMaintenance(context.Background(), job.ID)
 	})
 	if err != nil {
 		status := http.StatusServiceUnavailable
