@@ -174,11 +174,21 @@ func (f *Feed) Current() LiveData {
 }
 
 func (f *Feed) HistoryRange(name string, now time.Time) ([]Snapshot, bool) {
-	duration, ok := map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour, "90d": HistoryRetention}[name]
+	duration, ok := map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour, "90d": 90 * 24 * time.Hour, "180d": MaximumHistoryRetention}[name]
 	if !ok {
 		return nil, false
 	}
 	return f.history.Range(now.Add(-duration), now, 900), true
+}
+
+func (f *Feed) StorageSettings() (retentionDays int, databaseBytes, retainedSamples int64, err error) {
+	retentionDays = int(f.history.Retention() / (24 * time.Hour))
+	databaseBytes, retainedSamples, err = f.history.StorageInfo()
+	return
+}
+
+func (f *Feed) SetRetentionDays(days int) error {
+	return f.history.SetRetention(time.Duration(days) * 24 * time.Hour)
 }
 
 func (f *Feed) Subscribe() (uint64, <-chan LiveData, error) {

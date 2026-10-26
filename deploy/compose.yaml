@@ -31,30 +31,6 @@ services:
     labels:
       jellyfin.proxy.role: application
 
-  containerhealth:
-    image: "jellyfin-proxy/containerhealth:${RELEASE_VERSION:-1.0.0-dev}"
-    read_only: true
-    user: "0:0"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - type: bind
-        source: /var/run/docker.sock
-        target: /var/run/docker.sock
-        read_only: true
-    expose:
-      - "8282"
-    networks:
-      - admin_observer
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8282/healthz"]
-      interval: 15s
-      timeout: 3s
-      retries: 3
-    restart: unless-stopped
-
   wireguard:
     image: "jellyfin-proxy/wireguard:${RELEASE_VERSION:-1.0.0-dev}"
     cap_add:
@@ -76,6 +52,10 @@ services:
     restart: unless-stopped
     labels:
       jellyfin.proxy.role: application
+    networks:
+      default: {}
+      admin_ingress:
+        ipv4_address: 172.30.253.2
 
   caddy:
     image: "jellyfin-proxy/caddy:${RELEASE_VERSION:-1.0.0-dev}"
@@ -85,11 +65,12 @@ services:
     volumes:
       - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./config/whitelist.caddy:/etc/caddy/whitelist.caddy:ro
-      - ./site:/srv/site:ro
+      - ./data/site-content:/srv/site:ro
       - caddy_admin_socket:/run/caddy-admin
       - caddy_data:/data
       - caddy_config:/config
       - proxy_metrics:/run/proxy-metrics
+      - caddy_security_control:/run/caddy-security
     depends_on:
       wireguard:
         condition: service_healthy
@@ -97,8 +78,10 @@ services:
         condition: service_completed_successfully
       proxy-metrics-init:
         condition: service_completed_successfully
+      caddy-security-socket-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "caddy validate --config /etc/caddy/Caddyfile && test -S /run/caddy-admin/admin.sock"]
+      test: ["CMD-SHELL", "caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null && test -S /run/caddy-admin/admin.sock && test -S /run/caddy-security/control.sock"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -121,8 +104,122 @@ services:
       - proxy_metrics:/run/proxy-metrics
     command: ["sh", "-c", "mkdir -p /run/proxy-metrics && chown 1000:1000 /run/proxy-metrics && chmod 0755 /run/proxy-metrics"]
 
+  caddy-security-socket-init:
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    user: "0:0"
+    volumes:
+      - caddy_security_control:/run/caddy-security
+    command: ["sh", "-c", "chown 1000:1000 /run/caddy-security && chmod 2770 /run/caddy-security"]
+
+  security-state-init:
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    user: "0:0"
+    volumes:
+      - ./data/security-state:/state
+      - ./data/fail2ban:/fail2ban
+    command: ["sh", "-c", "chown 0:0 /state /fail2ban && chmod 0700 /state /fail2ban && touch /fail2ban/admin-events-disabled.log && chmod 0600 /fail2ban/admin-events-disabled.log"]
+
+  security-events-init:
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    user: "0:0"
+    volumes:
+      - ./data/security-events:/events
+    command: ["sh", "-c", "chown 65532:0 /events && chmod 2770 /events"]
+
+  security-key-init:
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    user: "0:0"
+    volumes:
+      - ./config/security-event-key:/key
+    command: ["sh", "-c", "if [ ! -f /key/event.key ]; then dd if=/dev/urandom of=/key/event.key bs=32 count=1 2>/dev/null && chown 0:65532 /key/event.key && chmod 0440 /key/event.key; fi"]
+
+  security-control-init:
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    user: "0:0"
+    volumes:
+      - security_control:/run/jellyfin-proxy-security
+    command: ["sh", "-c", "chown 0:65532 /run/jellyfin-proxy-security && chmod 2770 /run/jellyfin-proxy-security"]
+
+  securityd:
+    image: "jellyfin-proxy/security:${RELEASE_VERSION:-1.0.0-dev}"
+    network_mode: host
+    read_only: true
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    group_add:
+      - "1000"
+      - "${SYSTEMD_JOURNAL_GID:-0}"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TMPDIR: /tmp
+    volumes:
+      - ./data/security-state:/var/lib/jellyfin-proxy/security
+      - ./data/fail2ban:/var/lib/fail2ban
+      - ./data/security-events:/var/lib/jellyfin-proxy/security-events
+      - ./config/security-event-key:/run/jellyfin-proxy-security/key:ro
+      - security_control:/run/jellyfin-proxy-security
+      - caddy_security_control:/run/caddy-security
+      - type: bind
+        source: /run/log/journal
+        target: /run/log/journal
+        read_only: true
+      - type: bind
+        source: /var/log/journal
+        target: /var/log/journal
+        read_only: true
+      - type: bind
+        source: /etc/machine-id
+        target: /etc/machine-id
+        read_only: true
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 16777216
+    command:
+      - --state
+      - /var/lib/jellyfin-proxy/security/state.json
+      - --events
+      - /var/lib/jellyfin-proxy/security-events
+      - --event-key
+      - /run/jellyfin-proxy-security/key/event.key
+      - --control-socket
+      - /run/jellyfin-proxy-security/control.sock
+      - --caddy-socket
+      - /run/caddy-security/control.sock
+    depends_on:
+      security-state-init:
+        condition: service_completed_successfully
+      security-events-init:
+        condition: service_completed_successfully
+      security-key-init:
+        condition: service_completed_successfully
+      security-control-init:
+        condition: service_completed_successfully
+      caddy-security-socket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/securityd", "--healthcheck", "--control-socket", "/run/jellyfin-proxy-security/control.sock"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    labels:
+      jellyfin.proxy.role: application
+
   admin:
     image: "jellyfin-proxy/admin:${RELEASE_VERSION:-1.0.0-dev}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16777216
     command:
       - --listen
       - :8080
@@ -142,14 +239,24 @@ services:
       - /opt/jellyfin-proxy/data/wireguard-client/windows.conf
       - --wireguard-control-socket
       - /run/wireguard-control/control.sock
+      - --install-metadata
+      - /opt/jellyfin-proxy/data/install-info.json
       - --wireguard-health
       - /run/wireguard-health/current
       - --host-metrics-url
       - http://hostmetrics:8181
-      - --container-health-url
-      - http://containerhealth:8282
+      - --container-health-socket
+      - /run/jp-maintenance/maintenance.sock
       - --proxy-metrics
       - /run/proxy-metrics/current.json
+      - --security-events
+      - /opt/jellyfin-proxy/data/security-events
+      - --security-event-key
+      - /opt/jellyfin-proxy/config/security-event-key/event.key
+      - --security-control-socket
+      - /run/jellyfin-proxy-security/control.sock
+      - --trusted-proxy-cidrs
+      - 172.30.253.2/32
     volumes:
       - ./config/admin.json:/opt/jellyfin-proxy/config/admin.json:ro
       - ./config/totp.key:/opt/jellyfin-proxy/config/totp.key:ro
@@ -159,6 +266,13 @@ services:
       - caddy_admin_socket:/run/caddy-admin
       - proxy_metrics:/run/proxy-metrics:ro
       - wireguard_health:/run/wireguard-health:ro
+      - ./data/security-events:/opt/jellyfin-proxy/data/security-events
+      - ./config/security-event-key:/opt/jellyfin-proxy/config/security-event-key:ro
+      - security_control:/run/jellyfin-proxy-security
+      - type: bind
+        source: /run/jellyfin-proxy-maintenance
+        target: /run/jp-maintenance
+        read_only: true
     group_add:
       - "65532"
     expose:
@@ -166,10 +280,10 @@ services:
     depends_on:
       caddy:
         condition: service_healthy
+      securityd:
+        condition: service_started
       hostmetrics:
         condition: service_started
-      containerhealth:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
       interval: 10s
@@ -180,8 +294,11 @@ services:
     labels:
       jellyfin.proxy.role: application
     networks:
-      - default
-      - admin_observer
+      default: {}
+      admin_ingress:
+        ipv4_address: 172.30.253.3
+        aliases:
+          - admin-origin
     environment:
       WIREGUARD_ENDPOINT: "${BASE_DOMAIN:-example.invalid}:${WIREGUARD_PORT:-51820}"
 
@@ -190,9 +307,14 @@ volumes:
   caddy_data:
   caddy_config:
   proxy_metrics:
+  security_control:
+  caddy_security_control:
   wireguard_health:
   wireguard_control:
 
 networks:
-  admin_observer:
+  admin_ingress:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.253.0/24

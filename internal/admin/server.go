@@ -14,16 +14,22 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
 	"github.com/Mytob/project_j/internal/containerhealth"
+	"github.com/Mytob/project_j/internal/maintenance"
 	"github.com/Mytob/project_j/internal/monitoring"
+	"github.com/Mytob/project_j/internal/security"
+	"github.com/Mytob/project_j/internal/webcontent"
 	"github.com/Mytob/project_j/internal/whitelist"
 	"github.com/Mytob/project_j/internal/wireguard"
 	"github.com/skip2/go-qrcode"
@@ -33,32 +39,46 @@ import (
 var templateFiles embed.FS
 
 type Server struct {
-	credential            *auth.Credential
-	sessions              *auth.Sessions
-	totpStore             *auth.TOTPStore
-	limiter               *auth.LoginLimiter
-	passwordLimiter       *auth.LoginLimiter
-	credentialPath        string
-	healthStatePath       string
-	healthMu              sync.Mutex
-	healthRecords         map[string]healthRecord
-	healthEvents          []healthEvent
-	whitelist             *WhitelistManager
-	wireguardClientConfig string
-	wireguardConfigMu     sync.Mutex
-	wireguardControl      wireguard.ControlClient
-	wireguardEndpoint     string
-	wireguardKeepalive    uint16
-	templates             *template.Template
-	logger                *slog.Logger
-	now                   func() time.Time
-	authTransitionMu      sync.Mutex
-	version               string
-	buildNumber           string
-	statistics            *monitoring.Feed
-	caddyHealth           interface{ CheckHealth() error }
-	containerHealth       *containerhealth.Client
-	wireguardHealthPath   string
+	credential               *auth.Credential
+	sessions                 *auth.Sessions
+	totpStore                *auth.TOTPStore
+	limiter                  *auth.LoginLimiter
+	passwordLimiter          *auth.LoginLimiter
+	credentialPath           string
+	healthStatePath          string
+	healthMu                 sync.Mutex
+	healthRecords            map[string]healthRecord
+	healthEvents             []healthEvent
+	componentHealthMu        sync.Mutex
+	componentHealthAt        time.Time
+	componentHealthCache     []componentStatus
+	componentHealthWireGuard *wireguard.PeerStatus
+	cpuPressure              cpuPressureState
+	whitelist                *WhitelistManager
+	wireguardClientConfig    string
+	wireguardConfigMu        sync.Mutex
+	wireguardControl         wireguard.ControlClient
+	wireguardEndpoint        string
+	wireguardKeepalive       uint16
+	templates                *template.Template
+	logger                   *slog.Logger
+	now                      func() time.Time
+	authTransitionMu         sync.Mutex
+	version                  string
+	buildNumber              string
+	statistics               *monitoring.Feed
+	caddyHealth              interface{ CheckHealth() error }
+	containerHealth          *containerhealth.Client
+	systemMaintenance        *maintenance.Client
+	wireguardHealthPath      string
+	securityEventDir         string
+	securityEventKey         []byte
+	trustedProxyNetworks     []netip.Prefix
+	securityControl          *security.Client
+	securityEventHealthy     atomic.Bool
+	webContentRoot           string
+	installMetadataPath      string
+	packageUploads           *PackageUploadStore
 }
 
 const totpReauthenticationLifetime = 5 * time.Minute
@@ -81,10 +101,12 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /robots.txt", s.robots)
 	mux.HandleFunc("GET /assets/admin.css", s.stylesheet)
 	mux.HandleFunc("GET /assets/statistics.js", s.statisticsScript)
 	mux.Handle("GET /app-assets/", http.StripPrefix("/app-assets/", http.FileServer(http.FS(frontend))))
 	mux.HandleFunc("GET /api/initial", s.apiInitial)
+	mux.HandleFunc("GET /api/about", s.apiAbout)
 	mux.HandleFunc("GET /", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /logout", s.logout)
@@ -94,19 +116,66 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /totp/disable", s.disableTOTP)
 	mux.HandleFunc("POST /password/change", s.changePassword)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
+	mux.HandleFunc("GET /backups", s.dashboard)
+	mux.HandleFunc("GET /web-content", s.dashboard)
+	mux.HandleFunc("GET /about", s.dashboard)
+	mux.HandleFunc("GET /system", s.dashboard)
+	mux.HandleFunc("GET /settings", s.dashboard)
 	mux.HandleFunc("GET /health", s.healthPage)
 	mux.HandleFunc("GET /access-control", s.accessControlPage)
 	mux.HandleFunc("GET /security", s.securityPage)
+	mux.HandleFunc("GET /security/protection", s.securityPage)
 	mux.HandleFunc("GET /wireguard", s.wireGuardPage)
 	mux.HandleFunc("GET /statistics", s.statisticsPage)
 	mux.HandleFunc("GET /statistics/events", s.statisticsEvents)
 	mux.HandleFunc("GET /statistics/history", s.statisticsHistory)
+	mux.HandleFunc("GET /statistics/settings", s.statisticsSettings)
+	mux.HandleFunc("POST /statistics/settings", s.updateStatisticsSettings)
+	mux.HandleFunc("GET /web-content/status", s.webContentStatus)
+	mux.HandleFunc("POST /web-content/upload", s.uploadWebContent)
+	mux.HandleFunc("POST /web-content/rollback", s.rollbackWebContent)
+	mux.HandleFunc("GET /system/backups", s.systemBackups)
+	mux.HandleFunc("GET /system/backups/{name}", s.downloadSystemBackup)
+	mux.HandleFunc("POST /system/uploads", s.createPackageUpload)
+	mux.HandleFunc("GET /system/uploads/{id}", s.packageUploadStatus)
+	mux.HandleFunc("PUT /system/uploads/{id}/{index}", s.putPackageUploadChunk)
+	mux.HandleFunc("POST /system/uploads/{id}/complete", s.completePackageUpload)
+	mux.HandleFunc("GET /system/jobs", s.systemJobs)
+	mux.HandleFunc("GET /system/jobs/{id}", s.systemJob)
+	mux.HandleFunc("POST /system/jobs", s.startSystemJob)
+	mux.HandleFunc("GET /system/releases", s.systemReleaseState)
+	mux.HandleFunc("GET /system/recovery", s.systemRecovery)
+	mux.HandleFunc("POST /system/packages/validate", s.validateSystemPackage)
+	mux.HandleFunc("GET /security/history", s.securityHistory)
+	mux.HandleFunc("POST /security/config", s.updateSecurityConfig)
+	mux.HandleFunc("POST /security/unban", s.unbanSecurityIP)
 	mux.HandleFunc("POST /whitelist/add", s.addWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/name", s.nameWhitelistEntry)
 	mux.HandleFunc("POST /whitelist/remove", s.removeWhitelistEntry)
-	mux.HandleFunc("GET /wireguard/config", s.downloadWireGuardConfig)
+	mux.HandleFunc("POST /wireguard/config", s.downloadWireGuardConfig)
 	mux.HandleFunc("POST /wireguard/rotate", s.rotateWireGuardConfig)
 	return s.securityHeaders(mux)
+}
+
+// ConfigureWebContent sets the persistent, isolated static-site root shared
+// read-only with Caddy. The administrator process writes only this subtree.
+func (s *Server) ConfigureWebContent(root string) error {
+	if !filepath.IsAbs(root) || filepath.Clean(root) == string(filepath.Separator) {
+		return errors.New("web content root must be an absolute non-root path")
+	}
+	s.webContentRoot = filepath.Clean(root)
+	if err := webcontent.EnsureDefaultErrorPages(s.webContentRoot); err != nil {
+		return fmt.Errorf("migrate built-in public error pages: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) ConfigureInstallMetadata(path string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) == string(filepath.Separator) {
+		return errors.New("installation metadata path must be absolute")
+	}
+	s.installMetadataPath = filepath.Clean(path)
+	return nil
 }
 
 // ConfigureCredentialPath sets the persistent override path used when an
@@ -172,6 +241,12 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, "ok\n")
 }
 
+func (s *Server) robots(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "User-agent: *\nDisallow: /\n")
+}
+
 // ConfigureWireGuardConfig verifies the protected retained Windows peer file
 // before making it available to authenticated administrators.
 func (s *Server) ConfigureWireGuardConfig(path string) error {
@@ -198,6 +273,7 @@ func (s *Server) ConfigureWireGuardControl(socketPath, endpoint string, keepaliv
 	s.wireguardControl = wireguard.ControlClient{SocketPath: socketPath}
 	s.wireguardEndpoint = endpoint
 	s.wireguardKeepalive = keepalive
+	s.invalidateComponentHealth()
 	return nil
 }
 
@@ -228,7 +304,97 @@ func (s *Server) ConfigureStatistics(feed *monitoring.Feed) error {
 		return errors.New("statistics feed is unavailable")
 	}
 	s.statistics = feed
+	s.invalidateComponentHealth()
 	return nil
+}
+
+// ConfigureSecurityEventWriter enables durable, signed administrator login
+// events. Trusted proxies are explicit network ranges on the private admin
+// ingress network; all other requests use their direct socket peer address.
+func (s *Server) ConfigureSecurityEventWriter(directory string, key []byte, trustedProxyCIDRs []string) error {
+	if strings.TrimSpace(directory) == "" || len(key) < 32 {
+		return errors.New("security event directory and a 256-bit event key are required")
+	}
+	networks := make([]netip.Prefix, 0, len(trustedProxyCIDRs))
+	for _, raw := range trustedProxyCIDRs {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("invalid trusted proxy network %q", raw)
+		}
+		networks = append(networks, prefix.Masked())
+	}
+	s.securityEventDir = directory
+	s.securityEventKey = append([]byte(nil), key...)
+	s.trustedProxyNetworks = networks
+	s.securityEventHealthy.Store(true)
+	return nil
+}
+
+// SecurityEventWriterHealthy reports whether the last authentication event was
+// durably appended and the writer was configured successfully.
+func (s *Server) SecurityEventWriterHealthy() bool {
+	return s.securityEventHealthy.Load()
+}
+
+// ConfigureSecurityControl connects the admin backend to the private security
+// daemon. Its Unix socket is mounted only into the admin service.
+func (s *Server) ConfigureSecurityControl(socket string) error {
+	client, err := security.NewClient(socket)
+	if err != nil {
+		return err
+	}
+	s.securityControl = client
+	return nil
+}
+
+const clientIPHeader = "X-JP-Client-IP"
+
+func (s *Server) clientIP(r *http.Request) (string, error) {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(peer))
+	if err != nil || address.Zone() != "" {
+		return "", errors.New("request socket peer is not a valid IP address")
+	}
+	address = address.Unmap()
+	for _, trusted := range s.trustedProxyNetworks {
+		if trusted.Contains(address) {
+			client, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get(clientIPHeader)))
+			if err != nil || client.Zone() != "" || client.IsUnspecified() || client.IsMulticast() {
+				return "", errors.New("trusted proxy did not provide a valid client IP")
+			}
+			return client.Unmap().String(), nil
+		}
+	}
+	if address.IsUnspecified() || address.IsMulticast() {
+		return "", errors.New("request socket peer is not a unicast address")
+	}
+	return address.String(), nil
+}
+
+func (s *Server) recordAdminAuthEvent(r *http.Request, kind security.EventKind) {
+	if len(s.securityEventKey) < 32 || s.securityEventDir == "" {
+		s.securityEventHealthy.Store(false)
+		return
+	}
+	ip, err := s.clientIP(r)
+	if err != nil {
+		s.securityEventHealthy.Store(false)
+		s.logger.Error("identify administrator authentication source", "error", err)
+		return
+	}
+	event, err := security.NewEvent(security.Admin, kind, ip, s.now().UTC())
+	if err == nil {
+		_, err = security.AppendEvent(s.securityEventDir, event, s.securityEventKey)
+	}
+	if err != nil {
+		s.securityEventHealthy.Store(false)
+		s.logger.Error("persist administrator authentication event", "error", err)
+		return
+	}
+	s.securityEventHealthy.Store(true)
 }
 
 // ConfigureComponentHealth connects private service checks to the Overview.
@@ -237,11 +403,54 @@ func (s *Server) ConfigureStatistics(feed *monitoring.Feed) error {
 func (s *Server) ConfigureComponentHealth(caddy interface{ CheckHealth() error }, wireguardHeartbeatPath string) {
 	s.caddyHealth = caddy
 	s.wireguardHealthPath = wireguardHeartbeatPath
+	s.invalidateComponentHealth()
 }
 
-// ConfigureContainerHealth connects the private, read-only Docker observer.
+// ConfigureContainerHealth connects the private HTTP observer used in isolated integration environments.
 func (s *Server) ConfigureContainerHealth(origin string) {
 	s.containerHealth = containerhealth.NewClient(origin)
+	s.invalidateComponentHealth()
+}
+
+// ConfigureContainerHealthSocket uses the host's restricted maintenance API.
+// The admin service never receives a Docker API socket or network endpoint.
+func (s *Server) ConfigureContainerHealthSocket(path string) {
+	s.containerHealth = containerhealth.NewUnixClient(path)
+	s.invalidateComponentHealth()
+}
+
+// ConfigureSystemMaintenanceSocket connects the authenticated dashboard to
+// the restricted host observer and fixed backup/release maintenance workflows.
+// The web process receives no host filesystem mount or Docker socket.
+func (s *Server) ConfigureSystemMaintenanceSocket(path string) error {
+	client, err := maintenance.NewUnixClient(path)
+	if err != nil {
+		return err
+	}
+	s.systemMaintenance = client
+	return nil
+}
+
+// ConfigurePackageUploads sets the dedicated private staging directory shared
+// through the persistent admin data volume with the host maintenance service.
+func (s *Server) ConfigurePackageUploads(directory string) error {
+	store, err := NewPackageUploadStore(directory)
+	if err != nil {
+		return err
+	}
+	s.packageUploads = store
+	return nil
+}
+
+// StartPackageUploadCleanup periodically removes stale resumable packages and
+// reports store failures through the configured admin logger.
+func (s *Server) StartPackageUploadCleanup(ctx context.Context) {
+	if s.packageUploads == nil {
+		return
+	}
+	s.packageUploads.StartCleanup(ctx, time.Hour, func(err error) {
+		s.logger.Error("clean expired release package uploads", "error", err)
+	})
 }
 
 func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
@@ -260,11 +469,12 @@ func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -321,6 +531,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	requireEnrollment := s.totpStore != nil && s.totpStore.RequiresEnrollment()
 	if !s.credential.Verify(r.FormValue("password")) {
 		s.limiter.Failed()
+		s.recordAdminAuthEvent(r, security.LoginFailure)
 		csrf, _, _ := s.sessions.State(oldID)
 		message := "The password was not accepted."
 		if requireTOTP {
@@ -336,11 +547,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil || !accepted {
 			s.limiter.Failed()
+			s.recordAdminAuthEvent(r, security.LoginFailure)
 			csrf, _, _ := s.sessions.State(oldID)
 			s.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]any{"CSRF": csrf, "Error": "The password or authenticator code was not accepted.", "TOTPRequired": true})
 			return
 		}
 	}
+	s.recordAdminAuthEvent(r, security.LoginSuccess)
 	if requireEnrollment {
 		if s.totpStore.Status() == auth.TOTPRecovery {
 			secret, err := s.totpStore.BeginEnrollment()
@@ -627,8 +840,20 @@ func (s *Server) apiInitial(w http.ResponseWriter, r *http.Request) {
 		"csrf": csrf, "version": s.version, "build_number": s.buildNumber,
 		"whitelist_enabled": s.whitelist != nil, "whitelist": entries, "whitelist_entries": namedEntries,
 		"wireguard_enabled": s.wireguardClientConfig != "", "wireguard_config_available": configAvailable, "totp_status": string(status),
-		"components": s.componentHealthObserved(entries, wireguardStatus), "health_events": s.recentHealthEvents(),
+		"components": s.cachedComponentHealth(entries, wireguardStatus), "health_events": s.recentHealthEvents(),
 		"current": monitoring.LiveData{Status: "disconnected"},
+	}
+	if s.securityControl == nil {
+		result["security_error"] = "Security monitoring is not configured."
+	} else {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		securitySnapshot, securityErr := s.securityControl.Snapshot(ctx)
+		cancel()
+		if securityErr != nil {
+			result["security_error"] = "Security monitoring is temporarily unavailable."
+		} else {
+			result["security"] = securitySnapshot
+		}
 	}
 	if wireguardStatus != nil {
 		result["wireguard_status"] = wireguardStatus
@@ -676,6 +901,17 @@ func (s *Server) wireguardConfigAvailable() bool {
 }
 
 func (s *Server) componentHealth(entries []string) []componentStatus {
+	items, _ := s.componentHealthSnapshot(entries)
+	return items
+}
+
+func (s *Server) componentHealthSnapshot(entries []string) ([]componentStatus, *wireguard.PeerStatus) {
+	s.componentHealthMu.Lock()
+	defer s.componentHealthMu.Unlock()
+	now := s.now().UTC()
+	if s.componentHealthCacheFresh(now) {
+		return cloneComponentStatuses(s.componentHealthCache), s.componentHealthWireGuard
+	}
 	var status *wireguard.PeerStatus
 	if s.wireguardControl.SocketPath != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -685,10 +921,58 @@ func (s *Server) componentHealth(entries []string) []componentStatus {
 			status = &observed
 		}
 	}
-	return s.componentHealthObserved(entries, status)
+	return s.observeAndCacheComponentHealth(now, entries, status), status
 }
 
-func (s *Server) componentHealthObserved(entries []string, wireguardStatus *wireguard.PeerStatus) []componentStatus {
+func (s *Server) cachedComponentHealth(entries []string, wireguardStatus *wireguard.PeerStatus) []componentStatus {
+	s.componentHealthMu.Lock()
+	defer s.componentHealthMu.Unlock()
+	now := s.now().UTC()
+	if s.componentHealthCacheFresh(now) {
+		return cloneComponentStatuses(s.componentHealthCache)
+	}
+	return s.observeAndCacheComponentHealth(now, entries, wireguardStatus)
+}
+
+func (s *Server) componentHealthCacheFresh(now time.Time) bool {
+	if len(s.componentHealthCache) == 0 {
+		return false
+	}
+	age := now.Sub(s.componentHealthAt)
+	return age >= 0 && age < 15*time.Second
+}
+
+func (s *Server) observeAndCacheComponentHealth(now time.Time, entries []string, wireguardStatus *wireguard.PeerStatus) []componentStatus {
+	items := s.observeComponentHealth(entries, wireguardStatus)
+	s.componentHealthAt = now
+	s.componentHealthCache = cloneComponentStatuses(items)
+	s.componentHealthWireGuard = wireguardStatus
+	return items
+}
+
+func (s *Server) invalidateComponentHealth() {
+	s.componentHealthMu.Lock()
+	s.componentHealthAt = time.Time{}
+	s.componentHealthCache = nil
+	s.componentHealthWireGuard = nil
+	s.componentHealthMu.Unlock()
+}
+
+func (s *Server) initializeCPUPressure() {
+	if s.cpuPressure.initialized {
+		return
+	}
+	s.healthMu.Lock()
+	previous := s.healthRecords["Host metrics"]
+	s.healthMu.Unlock()
+	s.cpuPressure.Initialize(previous.State == "Degraded")
+}
+
+func cloneComponentStatuses(items []componentStatus) []componentStatus {
+	return append([]componentStatus(nil), items...)
+}
+
+func (s *Server) observeComponentHealth(entries []string, wireguardStatus *wireguard.PeerStatus) []componentStatus {
 	now := s.now().UTC()
 	result := []componentStatus{}
 	add := func(name, state, detail string) {
@@ -739,12 +1023,30 @@ func (s *Server) componentHealthObserved(entries []string, wireguardStatus *wire
 		add("Host metrics", "Unknown", "The host collector has not supplied a fresh sample.")
 	} else {
 		state, detail := "Healthy", "A fresh host collector sample is available."
+		cpuState, cpuDetail := state, detail
+		if current.Host.CPUPercent != nil {
+			s.initializeCPUPressure()
+			degraded, phase := s.cpuPressure.Observe(*current.Host.CPUPercent)
+			switch phase {
+			case "confirming":
+				cpuDetail = fmt.Sprintf("CPU is %.1f%%; another high sample is required before marking sustained pressure.", *current.Host.CPUPercent)
+			case "recovering":
+				cpuState, cpuDetail = "Degraded", fmt.Sprintf("CPU has fallen to %.1f%%; another low sample is required to confirm recovery.", *current.Host.CPUPercent)
+			case "degraded":
+				cpuState, cpuDetail = "Degraded", fmt.Sprintf("Sustained CPU usage is %.1f%%; recovery requires two samples at or below 85%%.", *current.Host.CPUPercent)
+			case "recovered":
+				cpuDetail = "CPU pressure cleared after two fresh samples at or below 85%."
+			}
+			if degraded {
+				cpuState = "Degraded"
+			}
+		}
 		if current.Host.DiskUsedBytes != nil && current.Host.DiskTotalBytes != nil && *current.Host.DiskTotalBytes > 0 && float64(*current.Host.DiskUsedBytes)/float64(*current.Host.DiskTotalBytes) >= 0.9 {
 			state, detail = "Degraded", "Disk usage is at least 90% of measured capacity."
 		} else if current.Host.MemoryUsedBytes != nil && current.Host.MemoryTotalBytes != nil && *current.Host.MemoryTotalBytes > 0 && float64(*current.Host.MemoryUsedBytes)/float64(*current.Host.MemoryTotalBytes) >= 0.9 {
 			state, detail = "Degraded", "Memory usage is at least 90% of measured capacity."
-		} else if current.Host.CPUPercent != nil && *current.Host.CPUPercent >= 95 {
-			state, detail = "Degraded", "CPU usage is at least 95% in the latest host sample."
+		} else {
+			state, detail = cpuState, cpuDetail
 		}
 		add("Host metrics", state, detail)
 	}
@@ -889,6 +1191,15 @@ func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.statistics.Unsubscribe(subscription)
+	var securityUpdates <-chan security.Snapshot
+	if s.securityControl != nil {
+		updates, subscribeErr := s.securityControl.Subscribe(r.Context())
+		if subscribeErr != nil {
+			s.logger.Warn("subscribe to live security events", "error", subscribeErr)
+		} else {
+			securityUpdates = updates
+		}
+	}
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
 		s.logger.Debug("clear admin response deadline for statistics stream", "error", err)
 	}
@@ -921,11 +1232,27 @@ func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
 				return true
 			}
 		}
-		payload, err := json.Marshal(map[string]any{"components": s.componentHealth(entries), "health_events": s.recentHealthEvents()})
+		components, wireguardStatus := s.componentHealthSnapshot(entries)
+		payloadData := map[string]any{"components": components, "health_events": s.recentHealthEvents()}
+		if wireguardStatus != nil {
+			payloadData["wireguard_status"] = wireguardStatus
+		}
+		payload, err := json.Marshal(payloadData)
 		if err != nil {
 			return false
 		}
 		if _, err := fmt.Fprintf(w, "event: health\ndata: %s\n\n", payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	writeSecurity := func(snapshot security.Snapshot) bool {
+		payload, err := json.Marshal(snapshot)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: security\ndata: %s\n\n", payload); err != nil {
 			return false
 		}
 		flusher.Flush()
@@ -941,6 +1268,14 @@ func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
 	if !writeHealth() {
 		return
 	}
+	if s.securityControl != nil && securityUpdates == nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		current, snapshotErr := s.securityControl.Snapshot(ctx)
+		cancel()
+		if snapshotErr == nil && !writeSecurity(current) {
+			return
+		}
+	}
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 	for {
@@ -954,6 +1289,15 @@ func (s *Server) statisticsEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !ok || !write(current) {
+				return
+			}
+		case snapshot, ok := <-securityUpdates:
+			_, stillAuthenticated, sessionValid := s.sessions.State(id)
+			if !sessionValid || !stillAuthenticated {
+				writeAuthenticationRequired()
+				return
+			}
+			if !ok || !writeSecurity(snapshot) {
 				return
 			}
 		case <-keepalive.C:
@@ -992,6 +1336,205 @@ func (s *Server) statisticsHistory(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(points); err != nil {
 		s.logger.Error("encode statistics history response", "error", err)
 	}
+}
+
+type statisticsSettingsResponse struct {
+	ProxyRetentionDays    int    `json:"proxy_retention_days"`
+	SecurityRetentionDays int    `json:"security_retention_days"`
+	DatabaseBytes         int64  `json:"database_bytes"`
+	RetainedSamples       int64  `json:"retained_samples"`
+	DiskAvailableBytes    uint64 `json:"disk_available_bytes,omitempty"`
+}
+
+func (s *Server) statisticsSettings(w http.ResponseWriter, r *http.Request) {
+	if _, authenticated := s.session(r); !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return
+	}
+	if s.statistics == nil || s.securityControl == nil {
+		http.Error(w, "Statistics settings are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	proxyDays, databaseBytes, samples, err := s.statistics.StorageSettings()
+	if err != nil {
+		http.Error(w, "Statistics storage details are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	securitySnapshot, err := s.securityControl.Snapshot(ctx)
+	if err != nil {
+		http.Error(w, "Security retention settings are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	response := statisticsSettingsResponse{ProxyRetentionDays: proxyDays, SecurityRetentionDays: int(securitySnapshot.Config.HistoryRetention / (24 * time.Hour)), DatabaseBytes: databaseBytes, RetainedSamples: samples}
+	if host := s.statistics.Current().Host; host != nil && host.DiskTotalBytes != nil && host.DiskUsedBytes != nil && *host.DiskTotalBytes >= *host.DiskUsedBytes {
+		response.DiskAvailableBytes = *host.DiskTotalBytes - *host.DiskUsedBytes
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) updateStatisticsSettings(w http.ResponseWriter, r *http.Request) {
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.Header.Get("X-CSRF-Token")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return
+	}
+	if s.statistics == nil || s.securityControl == nil {
+		http.Error(w, "Statistics settings are unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var requested struct {
+		ProxyRetentionDays    int `json:"proxy_retention_days"`
+		SecurityRetentionDays int `json:"security_retention_days"`
+	}
+	if err := decoder.Decode(&requested); err != nil || requireAdminJSONEOF(decoder) != nil || !allowedRetentionDays(requested.ProxyRetentionDays) || !allowedRetentionDays(requested.SecurityRetentionDays) {
+		http.Error(w, "Retention must be 7, 14, 30, 60, 90, or 180 days", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	before, err := s.securityControl.Snapshot(ctx)
+	if err != nil {
+		http.Error(w, "Security settings could not be read", http.StatusServiceUnavailable)
+		return
+	}
+	config := before.Config
+	config.HistoryRetention = time.Duration(requested.SecurityRetentionDays) * 24 * time.Hour
+	if _, err := s.securityControl.UpdateConfig(ctx, config); err != nil {
+		http.Error(w, "Security retention could not be saved", http.StatusConflict)
+		return
+	}
+	if err := s.statistics.SetRetentionDays(requested.ProxyRetentionDays); err != nil {
+		if _, rollbackErr := s.securityControl.UpdateConfig(ctx, before.Config); rollbackErr != nil {
+			s.logger.Error("rollback security retention after statistics save failed", "error", rollbackErr)
+		}
+		http.Error(w, "Proxy retention could not be saved", http.StatusConflict)
+		return
+	}
+	s.statisticsSettings(w, r)
+}
+
+func allowedRetentionDays(days int) bool {
+	switch days {
+	case 7, 14, 30, 60, 90, 180:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) securityHistory(w http.ResponseWriter, r *http.Request) {
+	if _, authenticated := s.session(r); !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return
+	}
+	if s.securityControl == nil {
+		http.Error(w, "Security monitoring is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	rows, err := s.securityControl.History(ctx, r.URL.Query().Get("range"), r.URL.Query().Get("service"), r.URL.Query().Get("q"))
+	if err != nil {
+		http.Error(w, "Security history is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(rows)
+}
+
+func (s *Server) securityMutationSession(w http.ResponseWriter, r *http.Request) bool {
+	id, authenticated := s.session(r)
+	if !authenticated {
+		http.Error(w, "Administrator authentication required", http.StatusUnauthorized)
+		return false
+	}
+	if !s.sessions.CheckCSRF(id, r.Header.Get("X-CSRF-Token")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
+		return false
+	}
+	if s.securityControl == nil {
+		http.Error(w, "Security management is unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
+func (s *Server) updateSecurityConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.securityMutationSession(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var config security.Config
+	if err := decoder.Decode(&config); err != nil {
+		http.Error(w, "Invalid security configuration", http.StatusBadRequest)
+		return
+	}
+	if err := requireAdminJSONEOF(decoder); err != nil {
+		http.Error(w, "Invalid security configuration", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	snapshot, err := s.securityControl.UpdateConfig(ctx, config)
+	if err != nil {
+		http.Error(w, "Security configuration could not be applied. Check the values and protection health.", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(snapshot)
+}
+
+func (s *Server) unbanSecurityIP(w http.ResponseWriter, r *http.Request) {
+	if !s.securityMutationSession(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var request struct {
+		Service security.Service `json:"service"`
+		IP      string           `json:"ip"`
+	}
+	if err := decoder.Decode(&request); err != nil || requireAdminJSONEOF(decoder) != nil {
+		http.Error(w, "Invalid unban request", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	snapshot, err := s.securityControl.Unban(ctx, request.Service, request.IP)
+	if err != nil {
+		http.Error(w, "The address could not be unbanned. Refresh the security status and retry.", http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(snapshot)
+}
+
+func requireAdminJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON data")
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) {
@@ -1207,10 +1750,10 @@ func (s *Server) cancelTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 
 func totpProvisioningURI(secret []byte) string {
 	encodedSecret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
-	label := "Jellyfin Proxy:Administrator"
+	label := "Admin:Administrator"
 	query := url.Values{}
 	query.Set("secret", encodedSecret)
-	query.Set("issuer", "Jellyfin Proxy")
+	query.Set("issuer", "Admin")
 	query.Set("algorithm", "SHA1")
 	query.Set("digits", "6")
 	query.Set("period", "30")
@@ -1218,9 +1761,18 @@ func totpProvisioningURI(secret []byte) string {
 }
 
 func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request) {
-	_, authenticated := s.session(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusBadRequest)
+		return
+	}
+	id, authenticated := s.session(r)
 	if !authenticated {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if !s.sessions.CheckCSRF(id, r.FormValue("csrf")) {
+		http.Error(w, "Invalid form token", http.StatusForbidden)
 		return
 	}
 	if s.wireguardClientConfig == "" {
@@ -1237,8 +1789,10 @@ func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Windows WireGuard configuration is unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="jellyfin-proxy.conf"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="windows-peer.conf"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	written, writeErr := w.Write(data)
@@ -1352,6 +1906,7 @@ func (s *Server) changeWhitelist(w http.ResponseWriter, r *http.Request, action 
 		http.Error(w, err.Error(), status)
 		return
 	}
+	s.invalidateComponentHealth()
 	http.Redirect(w, r, "/access-control", http.StatusSeeOther)
 }
 

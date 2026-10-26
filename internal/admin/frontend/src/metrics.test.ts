@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chartPoints, formatBytes, formatNumber, formatPercent, formatRate, nearestChartPoint } from "./metrics";
+import { chartPoints, chartSegments, formatBytes, formatNumber, formatPercent, formatRate, nearestChartPoint } from "./metrics";
 
 describe("metric formatting", () => {
   it("keeps unavailable measurements distinct from zero", () => {
@@ -22,10 +22,17 @@ describe("metric formatting", () => {
 });
 
 describe("chart point mapping", () => {
-  it("bounds finite samples and ignores unavailable values", () => {
+  it("keeps original sample positions and ignores unavailable values", () => {
     expect(chartPoints([undefined, 0, 5])).toEqual([
-      { x: 0, y: 150, value: 0 },
-      { x: 600, y: 18, value: 5 },
+      { x: 300, y: 150, value: 0, index: 1 },
+      { x: 600, y: 18, value: 5, index: 2 },
+    ]);
+  });
+
+  it("keeps unavailable intervals as separate line segments", () => {
+    expect(chartSegments([2, undefined, 4, 8])).toEqual([
+      [{ x: 0, y: 117, value: 2, index: 0 }],
+      [{ x: 400, y: 84, value: 4, index: 2 }, { x: 600, y: 18, value: 8, index: 3 }],
     ]);
   });
 

@@ -1,5 +1,1345 @@
 # Testing
 
+## v1.6.0-dev.31 backup staging and restart progress recovery — 2026-10-24
+
+- **Backup fix:** Backup walks now prune `data/package-uploads` before staging,
+  preventing temporary `.pkg` files and upload records from consuming tmpfs or
+  being retained in backups. A deterministic archive/restore regression test
+  verifies uploads are omitted while persistent `data` remains.
+- **Progress fix:** The admin API now exposes a protected single-job status
+  route backed by the maintenance service's durable job record. The browser
+  polls the submitted job ID across service restarts, so it cannot follow a
+  newer unrelated job and can receive the persisted interrupted/completed
+  state after maintenance returns.
+- **Focused Go tests:**
+  `docker run --rm -v "${PWD}:/src" -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/backup ./internal/admin ./internal/maintenance`
+  — PASS; all three packages passed.
+- **Required full local release gate:**
+  `& .\build.ps1 release -Version '1.6.0-dev.31' -SupportedUpgradeSources @('1.6.0-dev.29','1.6.0-dev.30')`
+  — PASS, exit 0. Full Go tests, frontend typecheck/unit tests/build, four
+  browser tests, M1–M6 integration, isolated security/firewall, and offline
+  install/update/preservation/rollback/retention/recovery checks passed.
+- **Report and package:**
+  `dist/release-validation-1.6.0-dev.31.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`. Package size is
+  138,514,141 bytes; SHA-256 is
+  `5DDEC178CAF7D008A61EA3D89D41B2CBF858A10CD51C3BF005ECED97ADFA40BD`.
+- **Live acceptance on the disposable VPS (2026-10-24 UTC):** The first
+  dev.31 attempt stopped safely because the dev.30 pre-update backup ran out of
+  disk space; the active release stayed on dev.30. Three older, completed
+  package uploads were preserved in `/tmp` while the update ran, then restored
+  with their original contents and metadata. The exact dev.31 package passed
+  checksum and compatibility review and installed successfully. Its mandatory
+  dev.30 pre-update backup
+  `/var/backups/jellyfin-proxy/jellyfin-proxy-1.6.0-dev.30-a91567bf1ca0-dirty-20261024T235349.292414500Z.bak`
+  was 284,213,886 bytes and passed
+  `sudo -n proxyctl verify-backup /var/backups/jellyfin-proxy/jellyfin-proxy-1.6.0-dev.30-a91567bf1ca0-dirty-20261024T235349.292414500Z.bak`
+  (44 files).
+  Persistent maintenance job
+  `545fbbea9d91691ce3de5f024a8fa383` survived the Admin restart and was read
+  from its durable record as `completed`, step 8/8, result dev.31. The page
+  reconnected during restart, then required sign-in again; the authenticated
+  rendered result was not rechecked after sign-in.
+- **Live backup regression:** `sudo -n proxyctl backup
+  /tmp/jp-dev31-backup-test.bak` created a 7.0 MiB dev.31 archive. `sudo -n
+  proxyctl verify-backup /tmp/jp-dev31-backup-test.bak` passed with 40 files;
+  `sudo -n tar -tf /tmp/jp-dev31-backup-test.bak` listed no
+  `data/package-uploads` entries. The temporary archive was removed after
+  verification. Existing managed backups and the three temporarily moved
+  uploads were preserved; our two dev.31 staging uploads were removed. The VPS
+  reported all five containers healthy, `proxyctl version` returned dev.31,
+  and `sudo -n proxyctl doctor` passed all checks, including storage at 96% use.
+  After restoring the older uploads, `/` had 352 MiB available (96% used).
+  Safe unused-image cleanup removed zero images. Host journal/nftables,
+  provider firewall/ACME, rollback, and native Windows checks remain open; no
+  production deployment or v1.6 completion is claimed.
+
+## v1.6.0-dev.30 maintenance progress reconnect — 2026-10-24
+
+- **Changes:** When an update restarts the Admin service, the System page now
+  treats a temporary maintenance-status fetch failure as a reconnecting state,
+  retries until the job is visible again, clears that state after a successful
+  response, and refreshes release details when the job reaches a terminal
+  state. A session-expiry response stops polling and offers sign-in recovery.
+- **Browser regression:** The admin browser test aborts one maintenance poll
+  during an update and verifies the reconnect notice clears after completion
+  and the installed release details refresh.
+- **Required full local release gate:**
+  `& .\build.ps1 release -Version '1.6.0-dev.30' -SupportedUpgradeSources @('1.6.0-dev.28','1.6.0-dev.29')`
+  — PASS, exit 0. The first attempt failed on an ambiguous browser-test
+  locator; after narrowing the assertion to the running-release summary, the
+  same gate passed. Go, frontend typecheck/unit tests/build, four browser tests,
+  M1–M6 integration, isolated security/firewall, and offline package install,
+  update, preservation, rollback, retention, and recovery checks passed.
+- **Report and package:**
+  `dist/release-validation-1.6.0-dev.30.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`. Correct package SHA-256 is
+  `B70028B8DB8C6DB9BFC65F4DFCF41E54683BE4D8FC5EFF8A886686E410CE3FC8`; it
+  includes dev.28 and dev.29 as supported upgrade sources. The earlier
+  `F836...` package omitted dev.29 and was correctly rejected by compatibility
+  validation.
+- **Live acceptance:** After operator sign-in, the disposable public VPS was
+  observed on dev.29. Its host `/tmp` was a 405 MB tmpfs; package uploads
+  occupied 792 MB and the root filesystem had 821 MB free. I removed only my
+  rejected or superseded uploads, retaining older uploads I did not create.
+  A persistent systemd `tmp.mount` drop-in raised the tmpfs limit to 1 GiB;
+  both the host and maintenance service reported the larger limit. The
+  corrected package passed checksum and compatibility review for
+  `ubuntu-26.04`/`amd64`. The mandatory pre-update backup completed at
+  559,962,934 bytes, then the updater installed dev.30. All five containers
+  are healthy, `/usr/local/sbin/proxyctl doctor` passed, and verified public
+  TLS routes returned 200/200/403 for base/admin/access. The admin progress
+  panel remained on “Loading the bundled Docker images” with “Maintenance
+  progress is unavailable” after the Admin restart; page reload returned to
+  sign-in, so live progress recovery and dashboard rollback were not verified.
+  The successful package upload created for this update was removed after
+  installation. One 270.1 MB dev.28 backup, the new dev.29 pre-update backup,
+  and older uploads were retained. Actual-host journal/nftables, provider
+  firewall/ACME, and native Windows acceptance remain pending or blocked. No
+  production deployment, merge, or v1.6 completion is claimed.
+
+## v1.6.0-dev.27 admin interface, Security controls, and backup management — 2026-10-23
+
+- **Changes:** Refreshed shared admin styling and navigation; Overview now
+  reports concise system/security summaries and every component's health;
+  Health status columns align at desktop and mobile widths; active bans have
+  pagination and second-by-second countdowns; removed redundant Security
+  History copy; expanded the Statistics time scrubber to full width; removed
+  unnecessary product identity from admin/access pages and added crawler
+  exclusion headers/robots rules; enforced a ten-backup retention cap and
+  added individual backup deletion.
+- **Focused Go tests:**
+  `docker run --rm -v "D:/Projects/Project_J2:/src" -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/deployment ./internal/maintenance ./internal/admin`
+  — PASS; all three packages passed.
+- **Focused frontend checks:** In the isolated Node 24.22.0 frontend
+  environment, `npm run typecheck`, `npm test`, and `npm run build` — PASS;
+  2 test files and 12 unit tests passed, then Vite built the frontend.
+- **Integration/browser checks:**
+  `pwsh -NoProfile -File .\tests\integration\run.ps1 -UpdateBrowserSnapshots`
+  — PASS, exit 0. Four Playwright tests passed across Chromium, Firefox, and
+  WebKit, including responsive page navigation, TOTP/admin flows, Overview
+  component health, and refreshed desktop/mobile snapshots. Caddy security,
+  Fail2ban/nftables IPv4/IPv6 enforcement, monitoring/history, streaming, and
+  WireGuard lifecycle/recovery checks passed. The first browser attempt
+  exposed a stale assertion that expected Overview not to list Admin backend;
+  the assertion was updated to match the requested component-health summary
+  before this passing run.
+- **Required local release gate:**
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.27 -SupportedUpgradeSources 1.6.0-dev.26`
+  — PASS, exit 0. The full Go suite, browser/integration suite, frontend
+  typecheck/unit tests/build, and offline package install/update/rollback,
+  recovery, and retention checks passed. The report's install/package failure
+  scenario deliberately exercises port-collision rejection; the overall M8/M9
+  package checks passed.
+- **Report and package:** `dist/release-validation-1.6.0-dev.27.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  `dist/jellyfin-proxy-1.6.0-dev.27.pkg` is 137,816,330 bytes with SHA-256
+  `E1349E49C7BA5E212BEB6C705EBE339B930006B60286F3339682A5944C29A489`.
+  Build identifier: `a91567bf1ca0-dirty`.
+- **Disposable public VPS update:** The exact package and standalone updater
+  were transferred with sidecars; both remote SHA-256 checks passed. Ran
+  `TERM=dumb ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.6.0-dev.27.pkg`
+  from the transfer directory. The updater verified the current installation,
+  created the verified dev.26 pre-update backup
+  `/var/backups/jellyfin-proxy/jellyfin-proxy-1.6.0-dev.26-43c569f17010-dirty-20261023T214248.254470714Z.bak`,
+  loaded images, validated config and services, passed HTTPS readiness, and
+  completed successfully. `proxyctl doctor` passed on `1.6.0-dev.27`, build
+  `a91567bf1ca0-dirty`; all five containers were up and healthy, and the
+  maintenance service and scheduled backup timer were active. Root storage had
+  1.9 GB free (78% used) after the update.
+- **Public and browser checks:** With certificate verification enabled,
+  `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com` returned
+  200/200/403 with valid TLS. Admin responses included
+  `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet` and `/robots.txt`
+  disallowed crawling. The default-deny access hostname returned 403 for both
+  `/` and `/robots.txt`, with the same crawler header. After refreshing the
+  open admin page, the sign-in screen showed generic “Admin / Control panel”
+  wording. After operator sign-in, Overview showed all 12 component states as
+  Healthy. Security showed 10 active bans over two pages; a displayed ban
+  countdown changed from 47m 11s to 47m 10s over 1.3 seconds. System showed
+  the ten-backup retention policy and an individual Delete action for every
+  listed backup; no backup was deleted during verification.
+- **Remaining host checks and delivery:** Provider firewall review, ACME
+  renewal, real-host journal/nftables/Fail2ban enforcement, and native Windows
+  client/firewall/playback acceptance remain pending; they are not claimed as
+  passed. The test VPS is not production. No production deployment, merge, or
+  v1.6 completion is claimed. Working-tree changes are on
+  `fix/v16-maintenance-self-restart`; draft PR #79 remains open, and these
+  changes are not committed or pushed to GitHub.
+
+## v1.6.0-dev.26 Security active-ban layout — 2026-10-23
+
+- Changes: active bans use compact rows showing address/service, time remaining,
+  failure count, escalation level, and the Unban action. The row stays compact
+  on desktop and stacks its metadata responsively on narrow screens.
+- Focused frontend checks (Node 24.22.0 Alpine):
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src/internal/admin/frontend node:24.22.0-alpine3.24 npm run typecheck`,
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src/internal/admin/frontend node:24.22.0-alpine3.24 npm test -- --reporter=dot`,
+  and `docker run --rm -v D:/Projects/Project_J2:/src -w /src/internal/admin/frontend node:24.22.0-alpine3.24 npm run build` — PASS;
+  1 test file, 7 unit tests. `pwsh -NoProfile -File .\tests\integration\run.ps1
+  -UpdateBrowserSnapshots` — PASS, four browser tests; updated only the two
+  Security snapshots.
+- Full release gate:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.26 -SupportedUpgradeSources 1.6.0-dev.25`
+  — PASS, exit 0. An earlier run stopped on the expected Security screenshot
+  height change; after refreshing the snapshots, the final gate passed.
+  `dist/release-validation-1.6.0-dev.26.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`. Go, frontend, M1–M6 browser,
+  monitoring/security/streaming, and offline package install/update/rollback/
+  preservation gates passed.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.26.pkg`, 137,633,346 bytes, SHA-256
+  `C5D224435B20C42F223100E12D379B3EB26E8C4EB207EBE3225BCB9FC62CA75D`.
+  Built from the working tree based on commit `43c569f` before the UI change
+  was committed as `ed101cc`; the package build identifier includes `-dirty`.
+- Disposable VPS update: the remote checksum matched before
+  `TERM=dumb /usr/local/sbin/proxyctl update
+  /root/jellyfin-proxy-1.6.0-dev.26.pkg`. The updater retained the dev.25
+  pre-update backup, preserved persistent config, loaded the bundled images,
+  restarted services, reported all five product containers healthy, and passed
+  public HTTPS readiness. `TERM=dumb /usr/local/sbin/proxyctl doctor` passed
+  release metadata, Compose, application services, update recovery, Docker,
+  and host-storage checks.
+- Live browser acceptance: after operator sign-in, the refreshed
+  `https://admin.darkcry.com/security` page displayed nine active bans as
+  compact rows with address/service, remaining duration, failure count,
+  escalation level, and Unban action. The former Started/Remaining/Failed
+  attempts/Escalation detail columns are no longer shown. Laptop `curl.exe` DNS
+  checks could not resolve the three hostnames in this tool environment; the
+  deployment readiness check passed, but no separate laptop route result is
+  claimed here.
+- Real-host journal/nftables enforcement, provider-firewall review, ACME
+  renewal, native Windows client/firewall, and post-update playback remain
+  pending. No production deployment, merge, or stable release is claimed.
+
+## v1.6.0-dev.25 Fail2ban batching, release gate and VPS verification — 2026-10-23
+
+- Changes: each security reconciliation reads the complete banned-address list
+  once per needed Fail2ban jail and restores only missing bans. This removes
+  repeated per-address client calls while retaining immediate securityd startup
+  reconciliation and the separate fast Caddy ban refresh.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/security ./internal/deployment ./internal/maintenance ./internal/admin ./internal/containerhealth`
+  — PASS; all five packages passed. The first default-sandbox invocation was
+  denied access to Docker Desktop; rerunning the same command with Docker access
+  passed.
+- Full gate:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.25 -SupportedUpgradeSources 1.6.0-dev.24`
+  — PASS, exit 0. Go tests, frontend typecheck/unit/build, four browser tests,
+  M1–M6 browser/monitoring/security/streaming/WireGuard integration, and offline
+  package installation/update/rollback/preservation checks passed.
+  `dist/release-validation-1.6.0-dev.25.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.25.pkg`, 137,468,889 bytes, SHA-256
+  `15a71f204cb59ed4aa7465efe8ed3aa2a90dc249992b48e50907090c8da774df`.
+  Built from commit `4d7ba8e80c6a`.
+- Disposable VPS update: uploaded the package to
+  `/root/jellyfin-proxy-1.6.0-dev.25.pkg`; remote `sha256sum` matched the local
+  digest before running
+  `TERM=dumb /usr/local/sbin/proxyctl update /root/jellyfin-proxy-1.6.0-dev.25.pkg`.
+  The updater retained a dev.24 backup, loaded bundled images, completed
+  readiness checks, and retained active and previous releases. The five product
+  containers report healthy. `TERM=dumb /usr/local/sbin/proxyctl doctor` passed
+  all listed checks, including release metadata, Compose, service state, update
+  recovery, Docker, and host storage.
+- Public route command:
+  `foreach ($url in @('https://darkcry.com/','https://admin.darkcry.com/','https://access.darkcry.com/')) { curl.exe --max-time 20 -sS -o NUL -w "%{url_effective} %{http_code} tls=%{ssl_verify_result}`n" $url }`
+  — PASS: 200, 200, and 403 respectively; all reported `tls=0`.
+- Authenticated browser verification on this deployed build: Health loaded and
+  showed a 5.1% latest CPU sample, 63.7% memory (515.6 MB of 809.3 MB), and all
+  health components/container rows Healthy, including Windows peer and Jellyfin
+  endpoint. Settings loaded directly and its storage values resolved to a 5.1 MB
+  statistics database, 1,205 retained proxy samples, and 2.2 GB disk available.
+  The single CPU sample is not a long-term performance measurement. Streaming
+  and tunnel recovery passed in the integration gate; native Windows playback
+  was not retested on dev.25.
+- Real-host journal/nftables enforcement, native Windows client/firewall checks,
+  provider-firewall inspection, and ACME renewal remain pending. No production
+  deployment, merge, or stable publication is claimed.
+
+## v1.6.0-dev.24 security-controller CPU reduction and Caddy ban recovery — 2026-10-23
+
+- Changes: expensive Fail2ban/nftables reconciliation no longer runs on every
+  one-second maintenance tick. Full reconciliation runs every 15 seconds, at
+  startup, and on new ban events; Caddy's active ban/block snapshot is refreshed
+  separately every second so Caddy restart restores bans promptly. Sweep/count
+  updates also avoid cloning state when nothing changed.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/security ./internal/deployment ./internal/maintenance ./internal/admin ./internal/containerhealth`
+  — PASS.
+- Full gate:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.24 -SupportedUpgradeSources 1.6.0-dev.23`
+  — PASS on the corrected candidate. An earlier gate run caught delayed
+  restoration of Caddy bans after restart; the Caddy-only fast refresh was added
+  and the complete gate rerun passed. The report records the local gate passed
+  and host-specific checks blocked.
+- Package `dist/jellyfin-proxy-1.6.0-dev.24.pkg`, 137,462,968 bytes, SHA-256
+  `c6f9d9a4f2586736d8a5cc7700966510c3eb13f39f9f3d0061419a46174b8039`, built
+  from `84ad8e69ebeb`.
+- The exact package updated the disposable VPS from dev.23. `proxyctl doctor`,
+  all five containers, TLS routes 200/200/403, `RuntimeDirectoryPreserve=yes`,
+  and matching host/admin mount identities for the maintenance directory and
+  socket passed. CPU samples after this deployment no longer showed continuous
+  100% use, but a later `docker stats --no-stream` snapshot showed securityd at
+  103.88% CPU while individual Fail2ban queries ran; this led to dev.25 batching.
+- No production deployment, merge, or stable publication. See the dev.25 entry
+  for final browser verification and remaining host checks.
+
+## v1.6.0-dev.23 maintenance socket remount — 2026-10-23
+
+- Changes: preserve the maintenance runtime directory across service restarts,
+  and recreate the admin container after host-service reconciliation so its
+  read-only maintenance socket bind mount follows the current host socket.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/deployment ./internal/maintenance ./internal/admin ./internal/containerhealth`
+  — PASS.
+- Full command:
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.23 -SupportedUpgradeSources 1.6.0-dev.22`
+  — PASS, exit 0 on the final run. An earlier attempt could not access Docker
+  Desktop; a subsequent attempt stopped on a credential-fixture rename
+  collision. After Docker access was restored and the generated fixture was
+  absent, the complete rerun passed. Go tests, frontend typecheck/unit/build,
+  four browser tests, M1–M6 integration,
+  Fail2ban/nftables and Caddy isolation, streaming/WireGuard, and offline
+  install/update/rollback/data-preservation checks passed.
+  `dist/release-validation-1.6.0-dev.23.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- Package `dist/jellyfin-proxy-1.6.0-dev.23.pkg` SHA-256:
+  `4e8dfe502d314c0527498bfb8c490013301842d60b53039378b746992686eb69`.
+  Standalone proxyctl SHA-256:
+  `e46c4029dd838d5be8392e61b750fdf7dc6fcbbed40f06c3a924967d527e13cc`.
+  The artifacts were built from commit `01252d5268f5`; this remains a test
+  candidate, not a published or stable release.
+- Disposable public VPS: exact package checksum matched before
+  `TERM=dumb /usr/local/sbin/proxyctl update /root/jellyfin-proxy-1.6.0-dev.23.pkg`.
+  The updater created a dev.22 pre-update backup, loaded bundled images,
+  completed readiness checks, and retained the active and previous releases.
+  `proxyctl doctor` passed; all five product containers were healthy. The
+  maintenance unit reports `RuntimeDirectoryPreserve=yes`; host and admin
+  container socket/directory bind mounts had matching device/inode pairs
+  (`29:19583` for the directory and `29:23704` for the socket). Public TLS
+  checks returned 200/200/403 for `darkcry.com`, `admin.darkcry.com`, and
+  `access.darkcry.com`. Authenticated browser Health and Settings verification
+  is pending operator sign-in after the update restarted the admin container.
+- Native Windows WireGuard/firewall checks, provider firewall review, public
+  ACME renewal, admin-panel update/rollback, and playback on this exact build
+  remain pending. Health telemetry should be checked in the signed-in browser;
+  the socket mount repair is proven at the host/container filesystem level,
+  not yet by the displayed Health page. No production deployment, merge, or
+  stable release is claimed.
+
+## v1.6.0-dev.21 Health and Settings fixes — 2026-10-23
+
+- Changes: Health now tolerates null/empty recovery and health-history arrays,
+  and the backend serializes fresh recovery history as an empty array. Direct
+  `GET /settings` navigation and browser reload now serve the admin SPA.
+- Focused command:
+  `docker run --rm -v D:/Projects/Project_J2:/src -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/admin ./internal/maintenance`
+  — PASS; both packages passed.
+- Full command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.21 -SupportedUpgradeSources 1.6.0-dev.19` — PASS, exit 0. Go
+  tests, frontend typecheck/unit/build, four Playwright browser tests
+  (Firefox, WebKit, Chromium, and TOTP flow), M1–M6 integration, isolated
+  Fail2ban/nftables and Caddy checks, streaming/WireGuard checks, and offline
+  package install/update/rollback/retention/password-recovery checks passed.
+  `dist/release-validation-1.6.0-dev.21.json` records
+  `local_gate: passed`, `release_readiness: blocked_host_checks_pending`.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.21.pkg`, 137,465,696 bytes, SHA-256
+  `4e6b65e47bbd5450e0dfc6a61e84c5e5acc418331c02ec56149d9e8697528615`.
+  Standalone `dist/proxyctl-linux-amd64`, 14,307,488 bytes, SHA-256
+  `aac9d9c6a9928e62aa1ba407c0f29791badde746d8bf215ab4d11f80c6cb1854`.
+  This local artifact was built from the working tree at `c29bf990fbef-dirty`;
+  it is a test candidate, not a public release.
+- Disposable public VPS update: copied the package to `/root`, then ran
+  `proxyctl update /root/jellyfin-proxy-1.6.0-dev.21.pkg` and entered the
+  independently checked SHA-256 above. The updater verified the package,
+  created a pre-update backup, loaded all bundled images, restarted the
+  services, passed health and public HTTPS readiness, and retained the active
+  and previous releases. `proxyctl --version` reported dev.21;
+  `proxyctl doctor` passed and all five app containers were healthy. Docker and
+  `jellyfin-proxy-maintenance.service` were active. Public TLS checks returned
+  200/200/403 for `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com`,
+  each with `TLS_verify=0`. The public admin root returned 200; unauthenticated
+  `/settings` and `/health` redirected to the sign-in page (303), not 404. After
+  the operator signed in, `/health` rendered the Health page and `/settings`
+  rendered Settings on direct navigation; a full browser reload on `/settings`
+  also returned to Settings. The live Health view reported overall Degraded,
+  Host metrics Degraded, CPU 100%, and four container components Unknown,
+  while the updater and `proxyctl doctor` reported all five app containers
+  healthy. Treat Health rendering and Settings reload as passed; the live
+  component telemetry discrepancy remains open for investigation. This is the
+  user-authorized disposable test VPS; no production release or merge occurred.
+- The first dev.20 gate attempts stopped on overly strict test assumptions
+  (fresh history always being empty, then a single bootstrap despite the added
+  reload). The browser fixture/assertion was corrected; the final dev.21 gate
+  passed. Authenticated Health rendering and direct/reloaded Settings both
+  passed in the deployed browser. The Health page's Degraded/Unknown live
+  telemetry, native Windows acceptance, provider firewall, ACME renewal,
+  dashboard update/rollback, and post-update playback remain pending.
+
+## v1.6.0-dev.19 disposable public VPS fresh install and browser acceptance — 2026-10-22
+
+- Target: user-authorized disposable Ubuntu 26.04.1 VPS on `darkcry.com`;
+  no production installation was used. The candidate remains dev.19 on
+  `fix/v16-maintenance-self-restart`, draft [PR #79](https://github.com/Mytob/project_j/pull/79).
+- Artifact transfer: `sha256sum -c jellyfin-proxy-1.6.0-dev.19.pkg.sha256`
+  and `sha256sum -c proxyctl-linux-amd64.sha256` — PASS for both files.
+  `TERM=dumb /root/proxyctl-linux-amd64 install /root/jellyfin-proxy-1.6.0-dev.19.pkg`
+  — PASS; installer completed after public HTTPS readiness. A separate
+  `jpadmin` SSH account authenticated and passed `sudo -v` and
+  `sudo -n id -u`. Root SSH remained enabled; it was not restricted.
+- Host checks: `./proxyctl-linux-amd64 doctor` — PASS for installation files,
+  release metadata (1.6.0-dev.19, build `dd026e4a2faa`), Compose
+  configuration, all app services, restore/update recovery, Docker Engine,
+  Compose and host storage. `docker ps --format '{{.Names}} {{.Status}}'`
+  showed admin, securityd, Caddy, WireGuard and hostmetrics all healthy.
+  `systemctl is-active docker jellyfin-proxy-maintenance.service` returned
+  `active` for both; the scheduled backup timer was enabled and active.
+  `docker exec jellyfin-proxy-securityd-1 sh -c 'journalctl --no-pager --output=json -n 1 _COMM=sshd + _COMM=sshd-session | wc -l'`
+  returned `1`. Fail2ban status via
+  `docker exec jellyfin-proxy-securityd-1 fail2ban-client --socket /tmp/fail2ban.sock status`
+  reported both `jp-admin` and `jp-ssh` jails.
+- Host firewall: `nft list table inet jp_fail2ban` showed the IPv4 and IPv6
+  SSH drop rules. Fail2ban ban/unban checks for reserved test addresses
+  `203.0.113.23` and `2001:db8::23` passed; both nftables sets were empty
+  after unban. The exact commands included
+  `docker exec jellyfin-proxy-securityd-1 fail2ban-client --socket /tmp/fail2ban.sock set jp-ssh banip 203.0.113.23`,
+  `nft list table inet jp_fail2ban`, and the matching
+  `set jp-ssh unbanip 203.0.113.23`; the same ban/show/unban sequence passed
+  for `2001:db8::23`. Host UFW remained inactive. The provider firewall
+  settings were not inspected after the VPS rebuild.
+- Backup: `./proxyctl-linux-amd64 backup /root/jp16-vps-acceptance.bak`
+  and `./proxyctl-linux-amd64 verify-backup /root/jp16-vps-acceptance.bak`
+  — PASS; 25 files verified, mode `600 root:root`, SHA-256
+  `86e5e246e751dd6f452ad0b1984a6e8d3ebe7eb635b1baaadcb0c971a43dd0be`.
+- Reboot: `systemctl reboot` — PASS. After reconnect, the 2 GiB
+  `/swapfile` was active and listed in `/etc/fstab`; `proxyctl doctor`
+  passed, all five containers returned healthy, the maintenance service and
+  Fail2ban jails were active, and the SSH nftables chain was restored.
+- External route checks used
+  `curl.exe --connect-timeout 8 --max-time 20 -sS -o NUL -w "%{http_code} TLS_verify=%{ssl_verify_result}\n"`
+  against `https://darkcry.com/`, `https://admin.darkcry.com/`, and
+  `https://access.darkcry.com/` — PASS with 200, 200 and 403 respectively;
+  TLS verification returned 0 for all three. A missing base-domain route
+  returned 404; unauthenticated `/api/initial` returned 401.
+  External TCP probes found 8096, 8080, 8181 and 2019 timed out; 8443 and
+  8447 refused connections. Docker published only TCP 80/443 and UDP 51820.
+  These observations do not verify the provider firewall configuration or
+  certificate renewal.
+- Browser smoke check: admin sign-in passed. Overview, Statistics, System,
+  Security, Access control, WireGuard, Web Content and About rendered; About
+  reported dev.19/build `dd026e4a2faa`. The fresh-install Health page rendered
+  blank and the browser console logged
+  `TypeError: Cannot read properties of null (reading 'length')`. Settings
+  worked through in-app navigation, but reloading `/settings` returned
+  `404 page not found`. These are newly observed admin UI defects outside
+  this frozen v1.6 change batch; no product code was changed.
+- Remaining acceptance: on 2026-10-22 the operator reported that playback
+  works. The client and route were not specified, and no supporting handshake,
+  Jellyfin health, or direct-public-isolation evidence was recorded. No Windows
+  profile was downloaded or imported, and the scoped Windows firewall was not
+  inspected. Dashboard update/rollback, authenticated backup download,
+  scheduled backup execution, provider-firewall review, ACME renewal, and
+  equivalent-workload resource comparison also remain unchecked. The one-time
+  WireGuard profile remains available for the operator's Windows test. No
+  production deployment, merge, or stable release is claimed.
+
+## v1.6.0-dev.19 clean release gate and Ubuntu package update — 2026-10-22
+
+- Source: clean commit `dd026e4a2faa84285745c7cb63a05bf66174d6f4` on
+  `fix/v16-maintenance-self-restart`; draft [PR #79](https://github.com/Mytob/project_j/pull/79)
+  targets `dev`.
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.19 -SupportedUpgradeSources 1.6.0-dev.18` — PASS, exit 0. Go
+  tests, frontend typecheck/unit/build, four Chromium/Firefox/WebKit admin
+  checks, M1–M6 integration/security/streaming, and offline package
+  install/update/rollback/retention/password-recovery checks passed. The
+  release report records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Focused follow-up: `docker run --rm -v "${PWD}:/src" -w /src
+  golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
+  go test ./internal/admin ./internal/webcontent` — PASS, exit 0; both packages
+  passed. This ran against the same source candidate; no source changes were
+  made after the dev.19 full gate.
+- Artifacts: `dist/jellyfin-proxy-1.6.0-dev.19.pkg`, 137,289,488 bytes,
+  SHA-256 `a1c656f95fe91f5cd8aab5319d0e7cbbdfb36847077b7d301bf027b578a002df`;
+  standalone `proxyctl-linux-amd64`, 14,307,488 bytes, SHA-256
+  `e0614bf43e5553b0557bda400941eff1b4c2e1c33f02b85fc3f748e94243abe1`.
+  Report: `dist/release-validation-1.6.0-dev.19.json`.
+- Exact-package Ubuntu update: Transferred the `.pkg` and sidecar checksum to
+  the disposable Ubuntu VM `D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx`,
+  already running dev.18. `sha256sum -c` passed and `proxyctl update` accepted
+  the independently entered expected hash, created its pre-update backup,
+  loaded the bundled images, and completed service and HTTPS readiness checks.
+  `proxyctl doctor` passed and reported version dev.19/build `dd026e4a2faa`;
+  `proxyctl --version` reported dev.19; all five containers were healthy.
+- Legacy content migration: Before this fix, the dev.18 upgrade path left the
+  default `errors/` directory absent because the old updater performed the
+  migration before the new binary was installed. The dev.19 admin startup
+  migration created `403.html`, `404.html`, `502.html`, and `503.html` in the
+  active persistent site revision. The preexisting `index.html` remained.
+- Local Caddy error rendering on the same disposable VM: `curl -ksS -w
+  '\nSTATUS:%{http_code}\n' https://jp16.localhost/not-a-real-page` returned
+  the default Not found page with HTTP 404; `curl -ksS -w
+  '\nSTATUS:%{http_code}\n' https://access.jp16.localhost/` returned the
+  default Access denied page with HTTP 403. `-k` was used for the test-only
+  local CA. This does not establish public TLS or 502/503 runtime behavior.
+- The disposable public VPS and browser results are recorded above.
+  Dashboard update/rollback, provider-firewall inspection, ACME renewal,
+  internet WireGuard, native Windows client/firewall/playback, and two admin
+  UI defects remain unresolved. No production deployment or public release
+  was used.
+
+## v1.6.0-dev.17 maintenance self-restart fix — 2026-10-22
+
+- Source: commit `32c6bc15b01bb902bb22265e393f35da6ba08afe` on
+  `fix/v16-maintenance-self-restart`; draft [PR #79](https://github.com/Mytob/project_j/pull/79)
+  targets `dev`.
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.17 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0. The
+  initial sandboxed attempt could not access Docker Desktop's Linux-engine
+  pipe; the retry with Docker access passed. Go, frontend, four real-browser
+  checks, integration/security/streaming, offline package install/update/
+  rollback, retention and password-recovery gates passed. The generated report
+  records `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- Artifacts: `dist/jellyfin-proxy-1.6.0-dev.17.pkg`, 137,280,003 bytes,
+  SHA-256 `194bf444525f4fe9976db73bf83d3e8d44b16a9646c09c09ea8daf6efbd54fb6`;
+  standalone `proxyctl-linux-amd64`, 14,303,392 bytes, SHA-256
+  `0d465ad823714fb90fe32aa1b8663a2931c2db3d25e7db807dcd0f195ea40b9b`.
+  Report: `dist/release-validation-1.6.0-dev.17.json`.
+- Exact-package Ubuntu update: The package and independent checksum were
+  transferred to the disposable Ubuntu 26.04.1 VM
+  `D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx`. SHA-256 matched. CLI
+  `proxyctl update` moved the guest from dev.14 to dev.17, created the verified
+  pre-update backup, loaded the six packaged images, and completed health and
+  HTTPS checks. `proxyctl --version` reported dev.17/build `32c6bc15b01b`;
+  `sudo proxyctl doctor` passed; all five containers were healthy and the
+  maintenance service `ExecStart` pointed to the dev.17 binary.
+- Deferred refresh smoke: A five-second `systemd-run --on-active` unit
+  restarted the maintenance service while idle. Its invocation ID changed,
+  the service remained active, `proxyctl doctor` passed afterward, and all
+  five containers remained healthy.
+- Dashboard acceptance remains pending: this confirms CLI update and the
+  delayed service-refresh mechanism, but does not exercise the dashboard job
+  callback. The local admin browser currently requires a fresh sign-in before
+  dashboard update/rollback can be tested. No public or production VPS was
+  changed; public DNS/ACME/provider-firewall, internet WireGuard and native
+  Windows checks remain pending.
+
+## v1.6.0-dev.15 clean-tree gate and Ubuntu update/reboot checks — 2026-10-22
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.15 -SupportedUpgradeSources 1.6.0-dev.14` — PASS, exit 0, from
+  clean dev commit `ebd767615ded1abc6fe776a7c229e8c0784c971b`. Go tests,
+  M1–M6 integration/security/streaming, frontend validation, four browser
+  checks, and offline package installation/update/rollback/recovery passed.
+  Six bundled images loaded without registry access. The generated report
+  records `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.15.pkg`, 137,277,415 bytes, SHA-256
+  `ea14fd5864fcde11d45d23031adbb3abf9be2ee1d3a1fe0f0ceb3991be668064`.
+  Standalone `proxyctl-linux-amd64` is 14,303,392 bytes, SHA-256
+  `69bf06d16f5da11a475d5ca8cab6101323c6b78d636997a526ffb883868e4b22`.
+  Report: `dist/release-validation-1.6.0-dev.15.json`.
+- Exact-package update: On the disposable Ubuntu 26.04.1 VMware clone
+  `D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` (`192.168.145.136`), the
+  transferred package SHA-256 matched. `proxyctl update` from dev.14 to dev.15
+  completed, created its pre-update backup, loaded bundled images, passed
+  service readiness, and retained active and previous releases. Installed
+  `proxyctl --version` reported `1.6.0-dev.15`; `sudo proxyctl doctor` exited 0
+  and reported build `ebd767615ded`.
+- Host acceptance: All five app containers were healthy. The maintenance
+  service and scheduled backup timer were enabled and active. A manual backup
+  verified successfully and contained 21 files. The restricted security
+  container returned actual host `sshd` journal records and reported the
+  `jp-admin` and `jp-ssh` Fail2ban jails. The host `inet jp_fail2ban` SSH chain
+  contained one IPv4 and one IPv6 TCP/22 drop rule. Reserved documentation
+  addresses `192.0.2.44` and `2001:db8::44` were banned and unbanned; both sets
+  were empty and `jp-ssh` reported zero active bans. The WireGuard interface
+  listened on UDP/51820 with its configured peer, but no handshake was
+  recorded.
+- Reboot: After a normal `systemctl reboot`, SSH reconnected to the same clone.
+  `proxyctl doctor` passed, all five containers were healthy, maintenance and
+  backup units were active, post-boot SSH journal records were visible, and
+  Fail2ban plus the one-rule-per-family SSH nftables chain recovered. Both
+  address sets remained empty; WireGuard listened on UDP/51820 without a
+  recent peer handshake.
+- Limits: The broader destructive failure matrix remains the dev.12 evidence;
+  it was not repeated against dev.15. No public VPS, provider firewall,
+  public ACME, internet WireGuard, or native Windows client/firewall/playback
+  test was used. The production VPS and its domains were not changed. No stable
+  release or GitHub release is claimed.
+
+## v1.6.0-dev.14 clean-tree gate and Ubuntu update/rollback/update — 2026-10-22
+
+- Command: `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.14 -SupportedUpgradeSources 1.6.0-dev.13` — PASS, exit 0, from
+  clean dev commit `78dfb7987946f011e88dc7cde4660c2d24b12142`. Go tests,
+  M1–M6 integration/security/streaming, frontend validation, four browser
+  checks, and offline package install/update/rollback/recovery passed. Six
+  bundled images loaded without registry access.
+- Report: `dist/release-validation-1.6.0-dev.14.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  Public-network and native Windows checks remain pending; this is not a
+  stable release.
+- Package: `dist/jellyfin-proxy-1.6.0-dev.14.pkg`, 137,278,900 bytes, SHA-256
+  `20bacf089d92b4d71b87333004b1f72c83397e5832d0326d8da7c21dbf553601`.
+  Standalone `proxyctl-linux-amd64` is 14,303,392 bytes, SHA-256
+  `9f79399ff2abfac87e70807582db64d44be4791070f64d98d507d5b814bee719`.
+- Exact-package update: On the disposable Ubuntu 26.04.1 VMware clone
+  `D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` (`192.168.145.136`), the
+  transferred package checksum passed. `proxyctl update
+  /tmp/jellyfin-proxy-1.6.0-dev.14.pkg` updated dev.13 to dev.14, created its
+  pre-update backup, loaded bundled images, passed service
+  readiness, and retained active and previous releases.
+- Rollback and restore-to-candidate: `proxyctl rollback` returned the clone
+  from dev.14 to dev.13, created a verified pre-rollback backup, passed
+  release and HTTPS readiness, and retained current data and the newer
+  release. The same dev.14 package then updated dev.13 back to dev.14; its
+  update readiness passed and active/previous releases were retained.
+- Post-update doctor: `sudo proxyctl doctor` exited 0 and passed installation
+  files, release metadata (`1.6.0-dev.14`, build `78dfb7987946`), Compose
+  configuration, all five application services, restore/update recovery,
+  Docker Engine, Compose, and host storage. `docker ps` reported admin,
+  securityd, Caddy, WireGuard and hostmetrics all healthy; the maintenance
+  service and scheduled backup timer were active.
+- Version-matched Ubuntu host security checks: the security container reported
+  exactly `jp-admin` and `jp-ssh` using
+  `fail2ban-client --socket /tmp/fail2ban.sock status`. Host `sshd` records
+  were returned by its read-only journal mount. The host nftables SSH chain
+  contained the IPv4 and IPv6 TCP/22 drop rules. Reserved documentation
+  addresses `192.0.2.44` and `2001:db8::44` were banned into their matching
+  nftables sets and unbanned; final `jp-ssh` status reported zero active bans.
+- WireGuard: `wg show` reported the server interface listening on UDP/51820
+  and the configured peer `10.66.66.2/32`. No recent peer handshake was
+  reported, so this does not verify internet connectivity or Jellyfin
+  playback.
+- Fresh install and reboot acceptance: A separate clone of the Ubuntu
+  `Fresh Install` snapshot at `D:\VM\Ubuntu-v1.6-install-gate\Ubuntu 64-bit.vmx`
+  (`192.168.145.139`) started without the proxy or Docker installed. After an
+  apt mirror index hash mismatch, a retried package-index update succeeded;
+  Docker Engine and Compose were installed, and the exact dev.14 package and
+  sidecar checksums both passed. The installer completed with isolated
+  `.localhost` hostnames and a test-only local trust setup for its internal
+  HTTPS readiness checks. A separate SSH login as the created host
+  administrator succeeded. `proxyctl doctor` passed; all five containers
+  were healthy; `jellyfin-proxy-maintenance.service` and
+  `jellyfin-proxy-backup.timer` were active. TLS-verified responses were 200
+  for the site and admin hostnames and 403 for the access hostname. Backup
+  creation and verification passed for 21 files. The restricted container
+  observer returned five healthy containers to its authorized UID and 403 to
+  root. The two Fail2ban jails, host SSH journal access, and IPv4/IPv6 SSH
+  nftables rules passed; reserved test addresses were banned and unbanned.
+  After a normal reboot, SSH, doctor, routes, container health, observer
+  authorization, services, and security checks passed again. Stopping the
+  admin container triggered its bounded recovery job; the container returned
+  healthy, the recovery journal recorded the restart, and doctor passed after
+  recovery.
+- The broader fresh-install/resume, forced interruption, restore recovery,
+  low-storage and manual host-maintenance matrix was run against dev.12 on
+  disposable clones; it was not repeated against dev.14. The specified
+  `D:\VM\Ubuntu` VM was read-only inspected on dev.6; doctor, container health,
+  Fail2ban and SSH nftables checks passed, but its WireGuard peer had no recent
+  handshake or traffic. It was left unchanged. No production
+  VPS/domain was used. Public DNS/provider firewall/public ACME, internet
+  WireGuard, and native Windows client/firewall/playback checks remain
+  unverified. No stable GitHub release was published.
+
+## v1.6.0-dev.13 clean-tree release gate and Ubuntu update — 2026-10-22
+
+- Command: pwsh -NoProfile -File .\build.ps1 release -Version
+  1.6.0-dev.13 -SupportedUpgradeSources 1.6.0-dev.12 — PASS, exit 0, against
+  clean dev commit 432b0db7bc7429f0daa2de83ccfd1b219cffb654 after Docker Desktop
+  Linux engine access was restored. Go tests, M1–M6 integration/security/
+  streaming, frontend typecheck and unit tests, four Chromium/Firefox/WebKit
+  browser checks, and offline package install/update/rollback/recovery gates
+  passed. Six images loaded without registry access.
+- Report: dist/release-validation-1.6.0-dev.13.json records local_gate: passed
+  and release_readiness: blocked_host_checks_pending. Public-network and native
+  Windows checks remain pending; no stable release is claimed.
+- Package: dist/jellyfin-proxy-1.6.0-dev.13.pkg, 137,276,733 bytes, SHA-256
+  2c72872dbc1cf5f3e100618fe8295e533b1387e1d859231758d09b4b6c9b4e9e. Its
+  independent sidecar checksum passed on the Ubuntu guest.
+- Utility: dist/proxyctl-linux-amd64, 14,303,392 bytes, SHA-256
+  db53f20494b826156adf545ab36f88cb80e4f1d70b76f52de947792afb496e6f. The
+  package build also produced its separate checksum sidecar.
+- Exact-package update: On the disposable VMware Ubuntu 26.04.1 clone
+  D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx (192.168.145.136), sha256sum -c
+  passed for the transferred package. proxyctl update from dev.12 to dev.13
+  completed, created its verified pre-update backup, loaded bundled images,
+  passed update readiness, and retained the active and previous releases.
+- Post-update doctor: sudo proxyctl doctor exited 0. Installation files,
+  release metadata (1.6.0-dev.13, build 432b0db7bc74), Compose configuration,
+  all five application services, restore/update recovery state, Docker Engine,
+  Compose, and host storage all passed.
+- Version-matched Ubuntu host checks on that dev.13 clone: `sudo docker ps`
+  showed all five services healthy. `sudo docker exec jellyfin-proxy-securityd-1
+  fail2ban-client --socket /tmp/fail2ban.sock status` reported the `jp-ssh` and
+  `jp-admin` jails. From the same security container,
+  `journalctl --no-pager --output=short-iso -n 3 _COMM=sshd` returned actual
+  host sshd records and `nft list chain inet jp_fail2ban jp_ssh_input` showed
+  the IPv4 and IPv6 TCP/22 drop rules. Reserved test addresses `192.0.2.44`
+  and `2001:db8::44` were added to their matching Fail2ban/nftables sets and
+  removed; the final `jp-ssh` banned list was empty. `docker exec
+  jellyfin-proxy-wireguard-1 wg show` confirmed the server interface listening
+  on UDP/51820 and its configured peer; no recent peer handshake was reported.
+- Earlier dev.12 testing on disposable clones covered fresh install/resume,
+  recovery, rollback, updater interruption, restore interruption, low
+  storage, host maintenance, journal, Fail2ban and nftables. The exact dev.13
+  package did not repeat that entire destructive failure matrix. The separate
+  user-specified `D:\VM\Ubuntu` instance was read-only checked and found on
+  dev.5; it was left unchanged because dev.13 only accepts dev.12 as an update
+  source. Public DNS, provider firewall, publicly trusted ACME issuance/renewal,
+  internet WireGuard, and native Windows client/firewall/playback remain
+  unverified. No production VPS/domain was used and no GitHub release was
+  published.
+## v1.6.0-dev.12 release gate, recovery and update interruption checks — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.12
+  -SupportedUpgradeSources 1.6.0-dev.11` — PASS, exit 0. Go tests,
+  Chromium/Firefox/WebKit browser checks, M1–M6 integration, streaming,
+  security/nftables, frontend, and offline package install/update/rollback/
+  retention/recovery checks passed. Six bundled images loaded without registry
+  access. `dist/release-validation-1.6.0-dev.12.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  Package SHA-256:
+  `f5262ded5603f7a02f21edd6d1e5472a9c081371a3c08d853e7f6ec9dc4f2df3`;
+  utility SHA-256:
+  `7c3f2b9b369fda01e04ca4bd5f23cc1f8b8f3c9ac2449eb47eecd50e7627786c`.
+  The candidate identifies build `8562b23f0da2-dirty` and was built from a
+  dirty working tree.
+- After the source commit, `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.6.0-dev.13 -SupportedUpgradeSources 1.6.0-dev.12` — BLOCKED before
+  tests ran. Docker returned permission denied for the Docker Desktop Linux
+  engine named pipe. `docker desktop start` then reported that Docker Desktop
+  terminated unexpectedly; `wsl.exe --list --verbose` returned
+  `Wsl/E_ACCESSDENIED`, and Go is not installed on the Windows PATH. The
+  generated `dist/release-validation-1.6.0-dev.13.json` records
+  `local_gate: failed`. The v1.6 implementation had already passed the full
+  dev.12 gate above; the clean-tree rerun and a clean dev.13 package could not
+  be produced in this resumed environment.
+- The recovery run exposed a real bug: the `admin-writer.health` heartbeat was
+  counted as a security-event file even though it is not an event JSON record.
+  Recovery rejected the otherwise valid backup. `internal/deployment` now
+  validates signed JSON records separately, accepts only a safe heartbeat
+  marker, and skips that stale marker when restoring events. The regression
+  test covers a backup containing both the marker and a signed event. Focused
+  `go test ./internal/deployment ./internal/security` and the complete release
+  gate passed after the fix.
+- Used only the disposable Ubuntu 26.04.1 VMware clones
+  `D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` (`192.168.145.136`) and
+  `D:\VM\Ubuntu-v1.6-recovery\Ubuntu 64-bit.vmx` (`192.168.145.137`). The
+  original `D:\VM\Ubuntu` VM and production VPS/domain were not used. On the
+  recovery clone, the dev.12 package, utility and checksum sidecars verified
+  with `sha256sum -c`; `proxyctl verify-backup` accepted the dev.11 recovery
+  backup (21 files). `sudo proxyctl recover <dev.12 package> <backup>` then
+  completed using test-only `.localhost` names and a guest-local Caddy CA.
+  A separate SSH session verified the new password-auth administrator and
+  `sudo -v` before recovery continued.
+- After recovery, all five product containers were Docker-healthy and
+  `proxyctl doctor` passed. Recovered public-site files and the SQLite
+  statistics database were present. Base/admin/access HTTPS returned
+  200/200/403 with certificate verification result 0. The maintenance service
+  and scheduled-backup timer were active. The security daemon read actual host
+  `ssh.service` journal records; its full health check passed. Reserved IPv4
+  and IPv6 test bans appeared in the host's `inet jp_fail2ban` sets, were
+  removed, and left both sets empty. After a normal guest reboot, the five
+  containers, doctor, maintenance service, backup timer, journal access,
+  nftables rules and 200/200/403 HTTPS checks passed again.
+- On the separate dev.11 clone, the exact dev.12 package checksum verified.
+  `proxyctl update` completed, created a verified 21-file pre-update backup,
+  and passed container plus HTTPS readiness. All five containers were
+  healthy, `proxyctl doctor` passed, and TLS responses remained 200/200/403.
+  `proxyctl rollback` returned to dev.11 and passed its HTTPS readiness checks.
+  Forced process termination was injected at each durable update state:
+  `prepared`, `stopping`, `replacing`, `starting`, `verifying`, and
+  `committing`. Each interrupted transaction was recovered with
+  `proxyctl repair`; the committing-stage repair finalized dev.12, while the
+  earlier stages returned to dev.11. Forced guest reboots at the same six
+  states preserved the corresponding journal, and repair plus `proxyctl
+  doctor` passed afterward. A test-only `tests/deployment/vm_fault_injector.py`
+  watcher captured the fast committing transition by tracking the updater PID
+  before the journal changed. The clone was returned to a healthy dev.12 state.
+- A third, linked disposable clone was made from the original VM's `Fresh
+  Install` snapshot at `D:\VM\Ubuntu-v1.6-install-interruption\Ubuntu 64-bit.vmx`
+  (`192.168.145.138`). The full installer verified the dev.12 package and
+  utility checksums, installed Docker Engine and Compose only after approval,
+  created and separately verified a password-auth SSH administrator, then
+  disabled root SSH login. A forced reboot at the durable install checkpoint
+  `ready` preserved the checkpoint and all five healthy containers. After
+  locally trusting the clone's Caddy test CA, `sudo proxyctl install --resume`
+  completed; `proxyctl doctor` passed and a fresh SSH login plus `sudo -v`
+  as the installer-created administrator passed after reboot. Contextual
+  `sshd -T -C user=root,...` reported `permitrootlogin no`.
+- On that installed clone, a verified 21-file backup was restored with a forced
+  process termination at restore journal state `replacing`. The persisted
+  `.restore-transaction.json` was observed before repair;
+  `proxyctl repair` rolled back to the previous stack, all five services were
+  healthy, and `proxyctl doctor` passed.
+- A separate 16 KiB tmpfs was filled to exhaustion. `proxyctl backup` then
+  failed with `no space left on device`; the application filesystem was not
+  filled, the temporary mount was removed, and `proxyctl doctor` still passed.
+  The manual `proxyctl host-update` preview listed 35 Ubuntu upgrades (one
+  package deferred by phasing); after approval, application and Docker checks
+  passed and Ubuntu reported no reboot requirement. `proxyctl doctor` passed;
+  both Fail2ban jails were active and the SSH nftables table contained the
+  expected IPv4/IPv6 port-22 rules. A new password-auth SSH connection as the
+  installer-created administrator and a fresh `sudo -v` succeeded after the
+  OpenSSH server package update.
+- Public DNS/ACME/provider-firewall checks and native Windows WireGuard,
+  firewall, and playback remain unverified. Only disposable VMware clones were
+  used; the original VM and production VPS/domain were not changed. At test
+  completion no merge or push had occurred; the source was later merged to
+  `dev` by [PR #71](https://github.com/Mytob/project_j/pull/71) at `c8e279a`.
+  No stable release or production deployment occurred. The generated release
+  report remains blocked on public-network and Windows-client checks.
+## v1.6.0-dev.11 release gate and clean-guest SSH installation check — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.11
+  -SupportedUpgradeSources 1.6.0-dev.10` — PASS. Go tests, M1–M6 integration,
+  Chromium/Firefox/WebKit browser checks, security/network checks, and isolated
+  package install/update/rollback/retention/recovery all passed. The generated
+  `dist/release-validation-1.6.0-dev.11.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  Package SHA-256:
+  `f880b5a41ddfe81663d24cd56933aabdf540be6fcc38189462dfb0179e4eef25`;
+  utility SHA-256:
+  `bbd7d0362321dae3ad2b78dd4f5a3daf6617471de5d127bb7aa8bdf8b5a2037a`.
+- Created and used only the disposable clone
+  `D:\VM\Ubuntu-v1.6-clean\Ubuntu 64-bit.vmx` (guest `192.168.145.136`),
+  based on the `Fresh Install` snapshot of `D:\VM\Ubuntu`. The original VM and
+  production VPS were not used. The clone reported Ubuntu 26.04.1 LTS x86-64,
+  2 CPUs, 5.2 GiB RAM, and a 9.8 GiB root filesystem.
+- Transferred the dev.11 `.pkg`, package checksum, `proxyctl-linux-amd64`, and
+  utility checksum to a new `/tmp/jp-v16-dev11` directory. On the guest,
+  `sha256sum -c jellyfin-proxy-1.6.0-dev.11.pkg.sha256` and
+  `sha256sum -c proxyctl-linux-amd64.sha256` both returned `OK`.
+- The first Docker prerequisite attempt stopped before SSH configuration
+  because `gb.archive.ubuntu.com` returned mismatched/404 Ubuntu package index
+  files while the mirror was syncing. In the clone only, the Ubuntu source was
+  temporarily changed to `archive.ubuntu.com`; `sudo apt-get update` then
+  completed successfully. The installer installed Docker Engine and Compose
+  from Docker's official Ubuntu APT repository. The guest reported Docker
+  Engine 29.9.2 and Compose v5.6.1, and the Docker service was active. The
+  Ubuntu source URL was restored after the test; Docker remains installed in
+  the disposable clone.
+- Ran `TERM=dumb sudo ./proxyctl-linux-amd64 install
+  ./jellyfin-proxy-1.6.0-dev.11.pkg` interactively with the verified checksum.
+  Test-only `jp16.invalid`, `admin.jp16.invalid`, and `access.jp16.invalid`
+  entries mapped to the guest in its `/etc/hosts`; public DNS was unchanged.
+  The installer reached the separate-SSH-session gate and created a
+  password-authenticated test administrator. A new PuTTY SSH session logged in
+  as that account; `sudo -v` returned exit status 0. `sshd -T` showed password
+  authentication enabled for that account and root remained at its original
+  `prohibit-password` policy in the first run.
+- A second run selected the optional root-login-disable choice. Afterwards,
+  `sshd -T` reported `permitrootlogin no`; a newly opened PuTTY session still
+  logged in as the dedicated administrator and its fresh `sudo -v` returned
+  exit status 0. The account-specific authentication settings remained active.
+- After confirming the verified SSH session, all five product containers
+  reached Docker `healthy`. Installation then failed at the expected public
+  HTTPS check: Let's Encrypt rejected the reserved `.invalid` names and local
+  HTTPS returned a TLS internal error. `proxyctl` reported that installation
+  was rolled back. Afterwards, no `jellyfin-proxy` Compose containers or
+  `/opt/jellyfin-proxy` remained. The test account and its product-managed SSH
+  drop-in were removed, the test `/etc/hosts` entry and temporary Ubuntu mirror
+  change were removed, `sshd -t` passed, and effective root policy returned to
+  its original `prohibit-password` value. This is evidence for Docker
+  prerequisite installation, the
+  password-based alternate SSH login/sudo checkpoint, container health and
+  application rollback; it is **not** a successful public-domain fresh install.
+- Public DNS, provider firewall ingress, publicly trusted ACME issuance and
+  renewal, internet WireGuard to Windows, native Windows client/firewall,
+  clean-host disaster recovery, public-key SSH login, and the full
+  forced-interruption/resume matrix remain unverified. The release report is
+  intentionally conservative and remains blocked on host checks.
+
+## v1.6.0-dev.10 release gate, Ubuntu update and image cleanup — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.10
+  -SupportedUpgradeSources 1.6.0-dev.7` — PASS, exit 0. Go tests, M1–M6
+  integration, Chromium/Firefox/WebKit browser checks, frontend typecheck and
+  build, security/streaming/WireGuard coverage, and offline package install,
+  update, rollback, retention and recovery passed. All six bundled images
+  loaded into the isolated package-validation daemon without registry access.
+  `dist/release-validation-1.6.0-dev.10.json` records
+  `local_gate: passed`; release readiness remains blocked on host-specific
+  checks.
+- Candidate package `dist/jellyfin-proxy-1.6.0-dev.10.pkg` is 137,168,582
+  bytes with SHA-256
+  `b5a6ef17bf61900266867618493c64a1ae995dd85568b4b7e84cd7f82cb69600`;
+  `dist/proxyctl-linux-amd64` SHA-256 is
+  `4556619332c1d9ad489a49dfdac317a8f5f9f8e9295e09834ddd467df0fa3921`.
+  Both were built from working-tree revision `8562b23f0da2-dirty`; they are
+  test candidates, not clean or publishable release artifacts.
+- The exact package was checksum-verified by `proxyctl update` on the
+  disposable Ubuntu Server 26.04.1 clone at
+  `D:\VM\Ubuntu-v1.6-fresh\Ubuntu 64-bit.vmx` (`192.168.145.135`). It updated
+  from dev.7 to dev.10, retained dev.7 as rollback, created its mandatory
+  pre-update backup, and passed service and local HTTPS readiness. The cloned
+  VM was the only target changed; the source VM and production VPS were not
+  used.
+- The cleanup job was invoked through the maintenance Unix socket with peer
+  UID 65532. A disposable app-labeled image with no container reference was
+  removed; an app-labeled image referenced by a stopped container remained;
+  all active and rollback image references remained; and an unrelated image
+  and stopped container remained. The completed job reported one image
+  removed and one protected/in-use image kept. Temporary test containers,
+  images, script, package and updater were removed after the check.
+- After cleanup, `proxyctl doctor` passed, all five application containers
+  were running/healthy, and the maintenance service and backup timer were
+  active. The public DNS/provider-firewall/ACME and native Windows client
+  checks remain unverified. Installer SSH administrator setup, clean-host
+  recovery, and exhaustive forced interruption/resume coverage also remain
+  open. No production deployment, merge, push, or publication occurred.
+
+## v1.6.0-dev.9 full release gate and exact-package Ubuntu update/rollback — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.9
+  -SupportedUpgradeSources 1.6.0-dev.7` — PASS, exit 0. Go tests, frontend
+  typecheck/build and seven unit tests, four Playwright tests across
+  Chromium/Firefox/WebKit at desktop/mobile sizes, M1–M6 integration,
+  WireGuard/tunnel recovery, streaming, isolated Fail2ban/nftables IPv4/IPv6,
+  and offline package install/update/rollback/retention/recovery passed. The
+  package checker loaded all six bundled images into an isolated daemon without
+  registry access. The report records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Package `dist/jellyfin-proxy-1.6.0-dev.9.pkg`, 136,987,885 bytes, SHA-256
+  `5da7f7fc90c975ca9d6b38f8361c8fc703eb210781325ad7863e695bef8eb1d9`;
+  standalone `dist/proxyctl-linux-amd64`, SHA-256
+  `fdfbe8834064619b38f8ca081189153f9e51f50c106cbe2b7d2f5e6df6028ab3`.
+  Both are built from working-tree source revision `8562b23f0da2-dirty` and
+  are test candidates, not clean or publishable release artifacts.
+- The disposable Ubuntu Server 26.04.1 clone at
+  `D:\VM\Ubuntu-v1.6-fresh\Ubuntu 64-bit.vmx` was on dev.7 after rollback.
+  The exact dev.9 package checksum was verified inside the guest before use.
+  `proxyctl update` completed to dev.9, retained the previous release, and
+  passed its container and local HTTPS readiness checks. `proxyctl doctor`
+  passed afterward. `proxyctl rollback` then completed to dev.7 and passed its
+  service and local HTTPS checks. A post-rollback `proxyctl doctor` passed;
+  all five product containers reported healthy, and the maintenance service
+  and backup timer were active. Both the mandatory pre-update backup and
+  pre-rollback safety backup passed `proxyctl verify-backup` with 21 files.
+- Two earlier dev.8 candidate attempts were stopped safely before activation:
+  the first package omitted dev.7 from its supported upgrade sources; a later
+  package with that compatibility entry was rejected because another package
+  with the same dev.8 version but a different hash was already retained. The
+  dev.9 test used a distinct version and preserved the retained-release guard.
+- On the rolled-back dev.7 clone, `sudo docker stop jellyfin-proxy-admin-1`
+  exercised the persistent maintenance recovery controller. Its state record
+  logged `restart_requested` and `restart_sent`; within about 22 seconds the
+  admin container was running and healthy again. All five product containers
+  were healthy, and `sudo proxyctl doctor` passed. The persisted attempt count
+  already included earlier recovery history, so this observation proves
+  service restart/readiness, not a fresh retry-limit or backoff sequence.
+- This was a private VMware NAT test using local `.localhost` hostnames and the
+  existing local test CA; it was not a public DNS/ACME or production VPS test.
+  Native Windows WireGuard/firewall/playback, clean-host disaster recovery,
+  SSH hardening/alternate-admin verification, clean-host disaster recovery,
+  exhaustive fault-injected interruption/resume, safe unused-image cleanup,
+  and public provider networking remain unverified. The bounded admin-service
+  recovery observation above passed on the disposable VM.
+  No production VPS, merge, GitHub publication, or stable release was used.
+
+## v1.6.0-dev.7 full local gate and fresh Ubuntu installation — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0. Go packages,
+  M1–M6 integration, admin browser checks, and security/streaming/WireGuard
+  regressions passed. The first rerun exposed a test cleanup race in the
+  maintenance job fixture; the fixture now waits for persisted terminal job
+  state, and the complete command passed on rerun.
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.7` — PASS,
+  exit 0. This repeated the Go, frontend typecheck/build and seven unit tests,
+  four Playwright tests across Chromium/Firefox/WebKit and desktop/mobile,
+  M1–M6 integration, streaming/range/WebSocket, WireGuard recovery, isolated
+  Fail2ban/nftables checks, and offline install/update/rollback/retention and
+  credential-recovery checks. The offline package test loaded all six images.
+  The report records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`.
+- Package `dist/jellyfin-proxy-1.6.0-dev.7.pkg`, 136,984,897 bytes, SHA-256
+  `a6625aa1277f58bcdfaf3452e32cad4a749c101254d8655c167b396a0caf1319`;
+  standalone `proxyctl-linux-amd64` SHA-256
+  `68e59b8deb46b705d7ded91071d1786da70561cb0c43eb10a5e96d84be8abf33`.
+  The candidate identifies source `8562b23f0da2-dirty`; it is test evidence,
+  not a clean or publishable release artifact.
+- For a clean-host check, the existing VMware Ubuntu VM was preserved and its
+  `Fresh Install` snapshot was cloned to
+  `D:\VM\Ubuntu-v1.6-fresh\Ubuntu 64-bit.vmx`. The clone booted Ubuntu Server
+  26.04.1 LTS at `192.168.145.135`, with no existing Jellyfin Proxy install,
+  Docker, or Compose. The package, package checksum, utility, and utility
+  checksum were transferred; guest-side checksum verification reported `OK`.
+  The install approved and completed the official Docker Engine/Compose APT
+  prerequisite path, then installed `1.6.0-dev.7` using local-only
+  `.localhost` domains and a temporary local Caddy CA. An initial attempt
+  safely rolled back because the test CA was not trusted by the installer
+  process; after adding that local test CA to the guest trust store, the
+  install completed and the local certificate checks verified successfully.
+- On the fresh clone, `proxyctl doctor` passed. All five application
+  containers (admin, Caddy, hostmetrics, securityd, and WireGuard) reported
+  healthy. The maintenance service and automatic-backup timer were active; a
+  backup completed and `proxyctl verify-backup` verified its 21 files. The
+  admin UID received HTTP 200 from the restricted container observer and root
+  received HTTP 403. Host SSH journal records were visible to securityd; both
+  Fail2ban jails were active. Reserved documentation IPv4 and IPv6 addresses
+  were banned and unbanned, with the corresponding host nftables sets changing
+  and returning empty.
+- After a normal guest reboot, all five containers remained healthy, the
+  maintenance service and backup timer were active, both Fail2ban jails and
+  the host nftables SSH chain were present, `proxyctl doctor` passed, and the
+  restricted observer still denied root and allowed UID 65532. Guest-local
+  TLS checks returned 200 for the base and admin domains and the expected 403
+  for the default-deny access domain, each with certificate verification
+  result 0.
+- This check used a private VMware NAT network and local `.localhost`
+  certificates. Public DNS/provider firewall/ACME issuance and renewal,
+  internet WireGuard connectivity to a Windows Jellyfin host, native Windows
+  import/firewall/playback, clean-host disaster recovery, and forced
+  interruption at each update/restore stage remain unverified. No production
+  VPS, public domain, GitHub merge, or publication was used.
+
+## v1.6.0-dev.6 release gate and disposable Ubuntu maintenance-job check — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.6
+  -SupportedUpgradeSources 1.6.0-dev.5` — PASS, exit 0. The report records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  Go tests, frontend typecheck/build/seven unit tests, Chromium/Firefox/WebKit
+  browser tests, security/streaming/WireGuard integration and the isolated
+  offline package install/update/rollback gate passed. The package gate loaded
+  all six images offline and passed install, update, rollback, retention, TOTP
+  recovery and password reset. The expected port-80 conflict failed safely and
+  preserved its unrelated container.
+- Focused `go test ./internal/deployment ./cmd/proxyctl
+  ./internal/maintenance ./cmd/maintenance` — PASS after adding restart-on-unit-
+  change coverage for the active maintenance service.
+- Package `dist/jellyfin-proxy-1.6.0-dev.6.pkg`, 136,575,819 bytes, SHA-256
+  `85d6e0d6551089227e91edfd859650f274f421211344043edb0956626fb2b273`;
+  standalone `proxyctl` SHA-256
+  `c3933e88e6a1a93aab37ed3069d2311bf66b717910e3eb688472d3fdc0905108`.
+- The package and checksum were copied to the disposable VMware Ubuntu guest;
+  `sha256sum -c` reported `OK`. `proxyctl doctor` passed before and after the
+  `1.6.0-dev.5` → `1.6.0-dev.6` update. The updater created and retained its
+  verified pre-update backup. The active/previous releases and persistent data
+  remained in place.
+- The update exposed that `systemctl enable --now` does not restart an already
+  active maintenance process after its unit changes. The updater now invokes
+  the just-installed `proxyctl` to reconcile host unit templates; unit changes
+  restart an active maintenance service. On the VM the service ran the dev.6
+  executable, systemd created `/var/lib/jellyfin-proxy-maintenance` and its
+  `jobs` directory as root mode `0700`, and the unit had
+  `StateDirectory=jellyfin-proxy-maintenance`, `StateDirectoryMode=0700` and
+  `ReadWritePaths=/var/backups/jellyfin-proxy`.
+- Through the maintenance Unix socket, root received HTTP 403 and UID 65532
+  received HTTP 200. UID 65532 submitted a fixed backup job (HTTP 202); it
+  completed at step 2/2, remained completed after restarting the maintenance
+  service, and appeared in the backup list. Its record was root-owned mode
+  `0600`. `proxyctl verify-backup` passed for the generated 22-file archive.
+- All five application containers were `running/healthy` with zero restarts.
+  Guest-local HTTPS checks returned static 200, admin 200, and expected access
+  403, all with `tls=0`. The restricted observer returned five healthy
+  container snapshots to UID 65532.
+- This remains a disposable private-NAT guest check: public DNS/provider
+  firewall/ACME and native Windows WireGuard/firewall/playback checks remain
+  unverified. Other required v1.6 dashboard/recovery scope and forced
+  interruption coverage remain open. No stable release, merge, publication or
+  production VPS deployment is claimed.
+
+## v1.6 local release gate and Ubuntu VM checks — 2026-10-22
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev` — PASS,
+  exit 0 after the Docker API compatibility and restore ownership fixes. Go tests, frontend
+  typecheck/build/seven unit tests, Chromium/Firefox/WebKit browser tests,
+  security/streaming/WireGuard integration, and the isolated offline
+  install/update/rollback suite passed.
+  The package gate loaded all six images without registry access and exercised
+  install, update, rollback, retention, TOTP recovery, and password reset.
+- The first full integration rerun after the observer change failed when the
+  trusted test client was still receiving HTTP 403 after the whitelist update.
+  A clean repeat passed the whitelist propagation check and the complete M1–M6
+  and browser suite. The subsequent full release gate passed. Earlier on
+  2026-10-22, fixed-port and stale-fixture failures were also corrected in the
+  local harness; the runner now selects distinct free ports and clears the
+  disposable credential fixture before use.
+- Report: `dist/release-validation-1.6.0-dev.json`; `local_gate: passed`,
+  `release_readiness: blocked_host_checks_pending`. The intentional host-port
+  80 conflict case in the isolated installer gate failed safely and preserved
+  the unrelated conflict container.
+- Release-gate package SHA-256:
+  `d6c20e0ebf31b18072fb2da902f26b6e938aa6eb1e1154a9757633715822e511`.
+  The standalone `proxyctl` SHA-256 is
+  `23156243bf3c1923a30bbd6199c01ea9e5f5027f5de9aa99e092edcfa597e9b4`.
+- The release package and its checksum sidecar were copied to `/tmp` on the
+  disposable VMware guest at `192.168.145.131`; guest-side `sha256sum -c`
+  reported `OK`. A fresh v1.6 candidate was installed on the VM using local
+  `.localhost` names and a temporary local Caddy CA; Docker and Compose were
+  already installed. No public ACME or production domain was used.
+- Docker Engine 29.1.3 advertises API 1.52 and requires minimum API 1.44. The
+  initial host observation returned 503 because the observer hard-coded API
+  1.41. The observer now negotiates the daemon/client intersection and selects
+  the lowest compatible API. Focused `internal/containerhealth` and
+  `internal/maintenance` tests pass. On the VM, the rebuilt maintenance binary
+  from the verified package returned five managed container snapshots, all
+  `running/healthy` with zero restarts. The admin UID received HTTP 200 and
+  root received HTTP 403. Both checks still passed after reboot.
+- After reboot, the maintenance systemd service and backup timer remained
+  enabled and active; all five application containers were healthy; the local
+  static and admin HTTPS routes returned 200 and the default-deny access route
+  returned 403; both Fail2ban jails were active; and host SSH journal records
+  were present. Reserved IPv4 and IPv6 test bans reached the product nftables
+  sets and were removed; the pre-existing `inet jp_fail2ban` table was kept.
+- A test-only `1.6.0-dev.1` package was used to test the updater from
+  `1.6.0-dev`. It first rejected an unsupported source without mutation. After
+  rebuilding with the source explicitly allowed, one attempt safely rolled
+  back because the local CA was not trusted by that process; a retry with the
+  temporary test CA completed. The pre-update `.bak` passed `proxyctl
+  verify-backup`, `proxyctl doctor` passed, and services/routes remained
+  healthy after a normal guest reboot. `dev.1` is not a release artifact.
+- Restore testing exposed an ownership defect: archive extraction preserved
+  modes but not host UID/GID, leaving restored admin data inaccessible. After
+  recursively applying the required ownership/mode policy and requiring all
+  five managed containers for readiness, `proxyctl restore` completed on the
+  VM from a test-only `1.6.0-dev.1` backup. It created a safety backup before
+  changes; all five containers reached `running/healthy`; the local HTTPS
+  check passed; the transaction journal was removed; whitelist and SQLite
+  history files were restored as `65532:65532` mode `0600`; and the
+  security-event spool returned with its restricted ownership and modes. The
+  restore-created 22-file safety backup passed `verify-backup`. Restore
+  progress reported seven milestones instead of remaining at 0% during
+  readiness checks.
+- This confirms private-NAT Ubuntu installation/update, journald,
+  Fail2ban/nftables, container observation, normal reboot recovery and the
+  restore success path, but not a clean-OS prerequisite install, forced
+  interruption at every update/restore stage, fresh-host disaster recovery,
+  public DNS/provider firewall/ACME, or native Windows WireGuard/firewall
+  checks. No production VPS was touched.
+- v1.6 remains in progress; see the implementation gaps in
+  [`v1.6/CODEBASE_AUDIT.md`](v1.6/CODEBASE_AUDIT.md). No stable release,
+  publication, merge, or production deployment is claimed.
+
+## v1.6.0-dev local release gate and disposable Ubuntu VM checks — 2026-10-21
+
+- **Local release command:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.6.0-dev` — PASS, exit 0. The generated report records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+- **Automated coverage:** all Go packages; frontend typecheck, build and seven
+  unit tests; Chromium, Firefox and WebKit admin/browser scenarios; existing
+  M1–M6 proxy, streaming, WireGuard, security, Fail2ban and nftables regressions;
+  and the isolated offline package install/update/rollback gate. The package
+  gate loaded six images without registry access and exercised fresh install,
+  namespace ingress firewalls, SQLite history and persistent-data retention,
+  online update, forced post-update failure/rollback, TOTP backup/recovery and
+  password reset. Its deliberate port-80 conflict case failed installation as
+  expected and preserved the unrelated conflict container.
+- **Disposable host:** VMware guest at `D:\VM\Ubuntu`, Ubuntu Server
+  26.04.1 LTS x86-64, kernel `7.0.0-38-generic`, 2 CPUs, 5.2 GiB RAM, 9.8 GiB
+  root filesystem. Docker Engine 29.1.3 and Compose 2.40.3 were installed for
+  testing. `systemd-journald` and SSH were active; `journalctl -u ssh` returned
+  host records; `sshd -T` reported `permitrootlogin prohibit-password`,
+  `passwordauthentication yes`, and `pubkeyauthentication yes`. nftables
+  1.1.6 was present. `modprobe wireguard`, creation of a temporary WireGuard
+  link and its deletion all succeeded. The guest had no swap and about 5.9 GiB
+  free at the recorded post-prerequisite check.
+- **Package CLI:** the packaged `.pkg`, package SHA-256 sidecar, standalone
+  `proxyctl` binary and its checksum were copied to the guest. Both
+  `sha256sum -c` checks passed. `proxyctl --help` ran. `proxyctl doctor`
+  correctly reported that no product installation exists (and therefore its
+  installation path/disk query cannot be inspected); Docker and Compose probes
+  passed. `proxyctl install <package>` independently validated the supplied
+  checksum and package, presented every installer field and the final review,
+  then was cancelled before deployment. Follow-up checks confirmed
+  `/opt/jellyfin-proxy` remained absent, SSH remained active, no product
+  nftables table existed, and no Jellyfin Proxy containers were created.
+- **VM limitation:** no VMware snapshot could be created in the available
+  session. The guest is private NAT; it cannot receive the public ACME
+  challenge or verify provider firewall ingress. We did not install the
+  application, add host firewall rules, configure Fail2ban, touch public DNS,
+  or deploy to the production VPS. Consequently host journal consumption from
+  the deployed security container, actual host SSH bans, host reboot recovery,
+  public certificate issuance and renewal, and native Windows client/firewall
+  checks remain blocked or unexecuted. `proxyctl doctor` is a read-only
+  diagnostic and its expected missing-install failures are not a release-gate
+  failure.
+- **Artifacts:** `dist/jellyfin-proxy-1.6.0-dev.pkg`,
+  `dist/jellyfin-proxy-1.6.0-dev.pkg.sha256`,
+  `dist/proxyctl-linux-amd64`, `dist/proxyctl-linux-amd64.sha256`, and
+  `dist/release-validation-1.6.0-dev.json`. These are development artifacts;
+  no stable release or publication is claimed.
+- **Product completion:** the local release gate passing does not complete
+  v1.6. The audit lists remaining required work, including the durable update
+  interruption/reboot test matrix, admin System APIs and resumable package uploads, Web Content
+  archive/custom error-page management, About component inventory, bounded
+  persistent service recovery, and fresh-host recovery/failure-injection
+  coverage. No implementation is considered complete based on file presence.
+
+## v1.6 update crash-recovery follow-up — 2026-10-21
+
+- The update transaction now has a durable journal and fsynced private rollback
+  snapshot. `proxyctl repair` resumes recovery after interruption, and backup
+  cleanup protects the transaction's mandatory pre-update archive.
+- `docker run --rm -v D:/Projects/Project_J2:/src -w /src
+  golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
+  go test ./internal/deployment ./cmd/proxyctl` — PASS after the change.
+  Tests cover interrupted activation recovery, the prepared stage,
+  retaining the journal when health recovery fails and succeeding on retry, a
+  verified commit, malformed journal refusal, and protecting the active backup.
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev` — PASS,
+  exit 0 after the update-recovery changes. The JSON report records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  Go tests, frontend typecheck/build/unit tests, Chromium/Firefox/WebKit
+  browser tests, security/streaming/WireGuard integrations, and isolated
+  offline package install/update/rollback all passed. Six images loaded without
+  registry access; install, update, rollback, persistent data, and password
+  reset checks passed. The expected port-80 conflict failure preserved the
+  unrelated container.
+- Package SHA-256:
+  `c6fab4a81399b4df9717ce7a940fc339014d61d51e7705f0de783aed365b9a04`.
+  Standalone `proxyctl` SHA-256:
+  `17352ec9dc257afd7870fb3b5a21a506b76eb1241668d088ac5c98bf39fc005a`.
+  Machine report: `dist/release-validation-1.6.0-dev.json`.
+- Forced VM power-off at every update stage remains outstanding. Do not treat
+  the unit-level recovery simulations as VM reboot acceptance.
+
+## v1.5 audit baseline — 2026-10-18
+
+The audit baseline and limitations are recorded in
+[`v1.5/TEST_REPORT.md`](v1.5/TEST_REPORT.md). Observed commands/results:
+
+- `pwsh -NoProfile -File .\build.ps1 test` — passed once, including Go,
+  isolated Docker integration and four browser tests.
+- `pwsh -NoProfile -File .\tests\integration\run.ps1` — separate repeat
+  failed the Chromium TOTP security full-page screenshot comparison (expected
+  1440×3241, rendered 1440×3287, 4% pixels differed against 1.5%). Other admin
+  smoke browser checks passed; cleanup completed.
+- `go test -cover ./...` and `go vet ./...` — passed.
+- `staticcheck@0.8.2 ./...` — reported deprecated tar aliases, one unused
+  test helper, a loop simplification and style-only error-string warnings.
+- `npm audit --package-lock-only --audit-level=low` — zero findings for the
+  admin and browser-test lockfiles.
+- `govulncheck@latest ./...` — no reachable vulnerable call; reported the
+  unused transitive OpenPGP package advisory `GO-2026-5932`.
+- Trivy 0.74.0 security-image scan — 251 findings (4 UNKNOWN, 84 LOW,
+  97 MEDIUM, 66 HIGH, 0 CRITICAL); current Trivy rescan is blocked by the
+  unavailable Docker Desktop Linux engine. Docker Scout required login and was
+  not used.
+- `wsl.exe --list --verbose` — blocked with `WSL/E_ACCESSDENIED`.
+
+These are historical baseline checks before the v1.5 implementation. The
+candidate checks run on 2026-10-18 are recorded below; unexecuted checks remain
+pending rather than passed.
+
+## v1.5 candidate checks — 2026-10-18
+
+- `pwsh -NoProfile -File .\tests\integration\run.ps1 -UpdateBrowserSnapshots`
+  — PASS, 4 browser tests and the full isolated M6/v1.1-v1.4 integration suite.
+  This refreshed expected images after the dynamic security-history viewport
+  was made fixed-height in the screenshot setup.
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS, exit 0, including Go tests,
+  full isolated integration and four desktop/mobile browser tests.
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.5.0-dev` — PASS,
+  exit 0. The normal screenshot comparison passed; isolated streaming,
+  WireGuard recovery, security/firewall checks, offline image loading, package
+  install/update/rollback, data preservation, retention and password recovery
+  passed. Seven images were loaded into an isolated daemon without registry
+  access. `dist/release-validation-1.5.0-dev.json` records
+  `local_gate: passed` and, at the time it was generated,
+  `release_readiness: blocked_host_checks_pending`.
+- `staticcheck@2026.2.2 ./...` in `golang:1.27.2-alpine3.24` — EXIT 1 on 32
+  out-of-scope `ST1005` capitalization warnings only. The safe findings from
+  the baseline (deprecated tar aliases, unused helper, loop simplification)
+  are fixed.
+- `docker pull aquasec/trivy:0.76.0`, local `docker save` archives and the
+  Trivy image scan — PASS; all six product images scanned. After the final
+  admin UI rebuild, its image was rescanned; only the security image has HIGH
+  findings. Detailed counts and triage are in `v1.5/SECURITY_AUDIT.md`.
+- `git diff --check` — PASS, exit 0.
+
+## Admin session recovery follow-up — 2026-10-19
+
+- `pwsh -NoProfile -File .\tests\integration\run.ps1 -UpdateBrowserSnapshots`
+  — PASS, four browser tests and the complete isolated M6/v1.1-v1.4 integration
+  suite. Refreshed snapshots to match the intentionally removed “Live via SSE”
+  label.
+- `pwsh -NoProfile -File .\build.ps1 test` — PASS; all Go packages, the
+  isolated integration suite, and all four browser tests passed.
+- Browser regression coverage verifies that a successful WireGuard download
+  switches the action to regenerate without another bootstrap request and
+  keeps that state after SPA navigation. A temporary admin-status refresh
+  failure leaves the page usable and its retry control succeeds. Download
+  responses are mocked in this browser test; Playwright WebKit is not a real
+  iPhone Safari run.
+- No physical iPhone Safari reproduction was performed. The subsequent VPS
+  deployment and checks are recorded below.
+
+The final package is `dist/jellyfin-proxy-1.5.0-dev-linux-amd64.tar.gz`
+(125,170,536 bytes; SHA-256
+`14a6b4a59cd9da9c40be6f2941f8d2cd95a02cbefa88331d048c743ed01c2994`).
+It remains a local artifact, not a published release, and was deployed to the
+authorized test VPS using the standalone updater on 2026-10-18. The updater
+completed its image, service-health and public HTTPS readiness checks and kept
+`1.4.2-dev` for rollback. Post-deployment checks found all six containers
+healthy with zero restarts, the private container observer healthy, valid TLS
+on `darkcry.com` and `admin.darkcry.com` (200) and the expected 403 on
+`access.darkcry.com`, both Fail2ban jails active, SSH journal access working,
+and exactly two TCP/22 nftables rules. A recent WireGuard handshake and the
+tunneled Jellyfin `/health` endpoint also passed. Persistent health, TOTP,
+whitelist and statistics files remained present; 2 GiB persistent swap was
+active. The deployed admin build reports `1.5.0-dev`, build
+`8562b23f0da2-dirty`.
+
+The user confirmed on 2026-10-18 that Windows Jellyfin playback works after
+this update. Direct Windows firewall confirmation and inspection of the
+provider firewall settings remain pending, along with objective
+keyboard/focus/contrast/screen-reader checks, comparable before/after
+idle/SSE/chart-render performance measurements, and final changed-code review.
+The VPS deployment was to the authorized test VPS; no stable promotion or
+publication occurred. The Jellyfin health endpoint check does not prove a full
+media playback session.
+
+After that deployment, a working-tree follow-up removed the SSE status badges
+and "Rarely changed" label, aligned Health component state pills at all
+viewport widths, and added current WireGuard peer snapshots to health events
+so the tunnel card refreshes without reloading. These changes were included in
+the later `1.5.1-dev` package below.
+
+A further local change removes the admin bootstrap refresh after a successful
+one-time WireGuard configuration response, preserves the consumed state while
+the SPA remains open, and keeps loaded admin pages available after transient
+refresh errors. Windows-local npm/Vite build attempts were unavailable due to
+the missing Windows Rolldown binding; the Docker-based frontend build and the
+full browser, integration, and release gates passed. The resulting
+`1.5.1-dev` package was deployed and checked as follows.
+
+## v1.5.1-dev VPS update and post-deployment checks — 2026-10-19
+
+- `pwsh -NoProfile -File .\build.ps1 release -Version 1.5.1-dev` — PASS. The
+  complete local release gate passed, including Go, browser, isolated service
+  integration, offline image loading, package update/rollback and preservation
+  checks. Package:
+  `dist/jellyfin-proxy-1.5.1-dev-linux-amd64.tar.gz` (125,332,707 bytes;
+  SHA-256 `F8BF1B8F037FC1DD7FE109ED32881AAE952B4AC630396A301ED4A2FB3212CA12`).
+- `/root/proxyctl-linux-amd64 update
+  /root/jellyfin-proxy-1.5.1-dev-linux-amd64.tar.gz` on the authorized test VPS
+  — PASS. The updater validated the current install and package, preserved
+  persistent data, activated `1.5.1-dev`, restarted services and passed its
+  public HTTPS readiness check. The previous release remains available for
+  rollback. The deployed admin image labels the build
+  `8562b23f0da2-dirty`.
+- Public HTTPS checks with normal TLS verification — PASS:
+  `darkcry.com` 200, `admin.darkcry.com` 200, `access.darkcry.com` 403;
+  certificate verification succeeded for all three.
+- `docker ps --format '{{.Names}} {{.Status}}'` — PASS; all six application
+  containers reported healthy. The post-update inspection found zero restarts.
+- `fail2ban-client --socket /tmp/fail2ban.sock status` — PASS; both `jp-admin`
+  and `jp-ssh` jails were active. The live SSH nftables chain had exactly one
+  IPv4 and one IPv6 source-address rule.
+- `wg show server latest-handshakes` and `wg show server transfer` completed,
+  but the configured peer reported handshake timestamp 0 and zero transferred
+  bytes at that observation. No active tunnel or post-update playback was
+  proven. The WireGuard interface is named `server`.
+- The 2 GiB persistent swap remained active. After deployment and removal of
+  the two temporary upload files, `/` had 1.4 GiB available (85% used).
+- The browser regression tests exercise a mocked one-time download response;
+  no authenticated download against the live admin account or physical iPhone
+  Safari run was performed. A user-side client check is still needed to verify
+  session recovery and streaming after this update.
+
 ## Strategy
 
 Tests are layered: focused Go package tests, then targeted integration tests,
@@ -954,3 +2294,138 @@ these limits explicitly and use VPS preflight checks.
 - The package was built from product source commit `0bb612060b2b`: `dist/jellyfin-proxy-1.3.6-linux-amd64.tar.gz`, 71,554,425 bytes, SHA-256 `0cf95dd64657a0d1f8f7a731600a7dea66b132fdd7a04c3c30f4c3c6c8848fba`. A matching `.sha256` file was generated. Subsequent `dev` commits through this record changed documentation only.
 - PR #63 promoted the tested `dev` tree to `main` at merge commit `659ad837e9daa07608dbae4556930f81a26c8ad8`. The packaged product source is `0bb612060b2b`; the later changes through promotion were documentation-only.
 - The `v1.3.6` GitHub tag and release assets have not yet been published. The archive and matching `.sha256` are available locally under `dist/`.
+
+### v1.4.0-dev Fail2ban and security management — 2026-10-17
+
+- **Focused package command:** `pwsh -NoProfile -File
+  packaging/package.ps1 -Version 1.4.0-dev` — PASS, exit 0. The archive loaded
+  all seven images into an isolated Docker daemon without registry access.
+  Install, namespace firewalls, security/monitoring startup, v1.3 data
+  preservation, update, rollback, retention, and password recovery passed.
+  Its expected port-collision scenario verified failed-start cleanup.
+- **Full release command:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.4.0-dev` — PASS, exit 0. Go tests, all M1–M6 integration checks,
+  Chromium/Firefox/WebKit admin checks (4 tests), frontend typecheck, six
+  frontend tests, production build, isolated Fail2ban/nftables IPv4/IPv6
+  enforcement, signed admin-event processing/recovery, Caddy admin-only
+  blocking and Jellyfin isolation, streaming/range/WebSocket regressions, and
+  offline package/install/update/rollback gates passed.
+- **Corrected attempts:** The initial full release attempt failed because the
+  package check assumed two Alpine utility image references after v1.4 added
+  init services. A follow-up exposed CRLF parsing in that check. The validator
+  was fixed to parse image lines without matching across line endings; the
+  package-only run and final complete release gate then passed.
+- **Package:** `dist/jellyfin-proxy-1.4.0-dev-linux-amd64.tar.gz`, SHA-256
+  `bfe06b37fc7da19bdf8bef694751c53872c61ef12a87d73843b46111e6656a77`.
+  Report: `dist/release-validation-1.4.0-dev.json` (`local_gate: passed`,
+  `release_readiness: blocked_host_checks_pending`).
+- **Host checks:** Actual Ubuntu journald access, host-level SSH nftables,
+  reboot recovery, public ACME/provider firewall, and native Windows
+  WireGuard/firewall checks remain BLOCKED; this run did not use an actual VPS
+  or Windows client.
+- **Deployment/publication:** Neither was performed.
+
+### v1.4.1-dev initial VPS deployment and restart bug reproduction — 2026-10-18
+
+- **Local gate:** `pwsh -NoProfile -File .\build.ps1 release
+  -Version 1.4.1-dev` passed on product commit `8a758f2` before PR #68 was
+  merged. PR #68 changed only integration-test fixtures and timing. The
+  post-merge `build.ps1 package` rerun on `418d981` stopped at a Playwright
+  desktop screenshot height mismatch (expected 1440x3241, received 1440x3287);
+  this is not recorded as a passing rerun. The deployed admin image reports
+  source revision `418d981f477a`.
+- **Package:** `dist/jellyfin-proxy-1.4.1-dev-linux-amd64.tar.gz`,
+  124,850,758 bytes, SHA-256
+  `28006722b800f04a8fe50ad286d27ce0ba09d48c623dbd1b2540c4ecee81efce`. The
+  transferred checksum matched on the VPS.
+- **VPS update:** `proxyctl update` completed successfully to `1.4.1-dev`; the
+  updater verified persistent TOTP storage, loaded all seven images, validated
+  configuration, activated the release, and reported healthy services. The
+  active and previous releases are retained. All six containers (admin,
+  Caddy, WireGuard, hostmetrics, securityd, and containerhealth) were healthy
+  after update and after a full VPS reboot. Image labels report version
+  `1.4.1-dev` and revision `418d981f477a`.
+- **Swap and resource recovery:** Before adding swap, the host reported 833 MiB
+  RAM, no swap, and 3.4 GiB free on `/`. The first Docker image import remained
+  at 37% for about 15 minutes and was stopped before release activation. A
+  2 GiB `/swapfile` was created with `fallocate`, `mkswap`, and `swapon`; the
+  `/etc/fstab` entry `/swapfile none swap sw 0 0` and
+  `/etc/sysctl.d/99-local-swap.conf` (`vm.swappiness=10`) make it persistent.
+  The retry completed successfully. After reboot, `swapon --show` confirmed
+  2 GiB active with about 84 MiB used; later checks showed about 96 MiB used.
+  The root filesystem had 1.5 GiB available after deployment.
+- **Host journal and Fail2ban:** From `securityd`,
+  `journalctl --no-pager --output=short-iso -n 5 _COMM=sshd` returned actual
+  host sshd records, including the post-reboot listener. Fail2ban reported
+  exactly `jp-admin` and `jp-ssh`; `jp-admin` uses `jp-noop`. The host nftables
+  chain `inet jp_fail2ban jp_ssh_input` contained the exact TCP/22 IPv4 and
+  IPv6 drop rules. Reserved documentation addresses `192.0.2.123` and
+  `2001:db8::123` were added to their corresponding SSH sets and then unbanned;
+  both sets were empty afterward. After reboot the chain had one rule per
+  address family. Before reboot, duplicate identical rule pairs were observed
+  after service replacement; the clean reboot recreated one pair. Restart
+  idempotence was later checked directly; the restart reproduced a duplicate
+  pair as detailed below.
+- **Public routes and reboot:** After reboot, ordinary DNS resolution reached
+  the VPS; normal TLS verification returned `darkcry.com` 200,
+  `admin.darkcry.com` 200, and `access.darkcry.com` 403, each with
+  `ssl_verify_result=0`. `systemctl reboot` returned successfully; swap,
+  services, host journal access, Fail2ban, and the SSH nftables chain recovered.
+- **Restart idempotence check:** Before the restart, the host chain contained
+  one IPv4/IPv6 TCP/22 drop-rule pair. `docker restart
+  jellyfin-proxy-securityd-1` returned the container to healthy status within
+  10 seconds, but added a second identical pair (nftables handles 6 and 7).
+  Those two new rules were deleted by handle, leaving original handles 3 and 5
+  in place. A new authenticated SSH connection succeeded; the container was
+  healthy and the chain still contained exactly one pair. This reproduced the
+  restart idempotence defect on 1.4.1-dev.
+- **Windows and report status:** The peer's latest-handshake value was `0`
+  immediately after reboot. The operator subsequently confirmed that streaming
+  works after this deployment. The machine-readable full-release report
+  predates this deployment and still contains the earlier blocked host-check
+  results; it was not regenerated.
+- **Restart fix and local gates:** `nftables-common.local` now lists each
+  nftables object before adding it and adds each address-family rule only when
+  absent. `security-firewall.ps1` asserts one IPv4 and one IPv6 rule at startup,
+  kills the Fail2ban process without its cleanup action, restarts Fail2ban in
+  the same network namespace, and asserts the rule pair remains singular while
+  ban/unban behavior continues to work. The focused `security-firewall.ps1`,
+  `build.ps1 test`, and `build.ps1 release -Version 1.4.1-dev` all passed on the
+  working tree. The preliminary package had a `-dirty` revision label and was
+  not deployed. The clean 1.4.2-dev gate and host retest are recorded below.
+
+### v1.4.2-dev restart fix release and VPS verification — 2026-10-18
+
+- **Source:** Commit `1b1f6ab5d4d8b3deb61158d60fa1cd1b26cb213c` on
+  `fix/securityd-nftables-restart-idempotence`.
+- **Release gate:** `pwsh -NoProfile -File .\build.ps1 release -Version
+  1.4.2-dev` — PASS, exit 0. Go tests, Firefox/WebKit/Chromium browser checks,
+  full v1.4 integration including Jellyfin streaming and WireGuard recovery,
+  restart-idempotent isolated nftables regression, and offline package
+  install/update/rollback/retention/password-recovery checks passed. The
+  generated report records the local gate as passed and host checks as blocked;
+  it was not regenerated with the subsequent VPS results or native Windows
+  evidence.
+- **Package:** `dist/jellyfin-proxy-1.4.2-dev-linux-amd64.tar.gz`, 124,849,163
+  bytes, SHA-256
+  `b1b518f426e19b36271dce50fbc0edd662a003516d51bca06b6d6bc661c0fee4`.
+  The uploaded package checksum matched before installation. The standalone
+  updater checksum also matched the local artifact.
+- **VPS update:** The documented `proxyctl update` completed successfully to
+  `1.4.2-dev`; all six services were healthy afterward. Persistent data and the
+  previous release were retained by the updater.
+- **Host restart regression:** Before restart, the live host chain had one
+  IPv4 and one IPv6 TCP/22 drop rule (handles 3 and 5). After each of two
+  consecutive `docker restart jellyfin-proxy-securityd-1` operations, the
+  chain still contained exactly those two rules, with counts IPv4=1 and IPv6=1.
+  Both `jp-ssh` and `jp-admin` jails were active after the restarts. A separate
+  new SSH connection succeeded; all six containers remained healthy.
+- **Public routes:** From the VPS after the restarts, normal certificate
+  verification returned `darkcry.com` HTTP 200, `admin.darkcry.com` HTTP 200,
+  and `access.darkcry.com` HTTP 403, all with `ssl_verify_result=0`.
+- **Windows streaming:** The operator confirmed streaming on 1.4.1-dev. This
+  change is limited to Fail2ban/nftables startup; native Windows playback was
+  not repeated on 1.4.2-dev.
+- **Publication:** No stable v1.4 release was created or published.
+- **Integration:** [PR #69](https://github.com/Mytob/project_j/pull/69) merged
+  the fix and verification records into `dev` at merge commit `eebe308`.

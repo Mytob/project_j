@@ -27,6 +27,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--probe-maintenance" {
+		if err := runMaintenanceProbe(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "installer integration:", err)
 		os.Exit(1)
@@ -34,8 +41,8 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) != 2 {
-		return errors.New("usage: installcheck <release-package.tar.gz>")
+	if len(os.Args) != 3 {
+		return errors.New("usage: installcheck <release-package.pkg> <expected-sha256>")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -44,8 +51,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	packageStage, err := os.MkdirTemp("", "jellyfin-proxy-installcheck-package-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(packageStage)
+	packageDir := filepath.Join(packageStage, "package")
+	if _, err := release.ExtractAndValidate(packagePath, packageDir, os.Args[2]); err != nil {
+		return fmt.Errorf("validate package for restricted observer check: %w", err)
+	}
+	maintenanceProcess, err := startMaintenanceObserver(filepath.Join(packageDir, "bin", "maintenance-linux-amd64"))
+	if err != nil {
+		return fmt.Errorf("start packaged restricted maintenance observer: %w", err)
+	}
+	defer stopMaintenanceObserver(maintenanceProcess)
 	options := deployment.InstallOptions{
-		PackagePath: packagePath, InstallRoot: deployment.DefaultInstallRoot, Domain: "installcheck.example.invalid",
+		PackagePath: packagePath, PackageSHA256: os.Args[2], InstallRoot: deployment.DefaultInstallRoot, Domain: "installcheck.example.invalid",
 		Password: "correct horse battery staple", WireGuardPort: 51820,
 		Host:   deployment.HostFacts{OSID: "ubuntu", VersionID: "26.04", Codename: "resolute", Arch: "x86_64", EffectiveUID: 0},
 		Runner: runner, WaitInterval: time.Second, WaitAttempts: 60,
@@ -59,6 +80,9 @@ func run() error {
 	manifest, err := deployment.Install(ctx, options)
 	if err != nil {
 		return fmt.Errorf("fresh install failed: %w", err)
+	}
+	if err := verifyRestrictedMaintenanceClient(); err != nil {
+		return err
 	}
 	if manifest.Version == "" {
 		return errors.New("installer returned an empty release version")
@@ -106,7 +130,7 @@ func run() error {
 		return fmt.Errorf("enable test TOTP before package update: %w", err)
 	}
 	preserved := map[string][]byte{}
-	for _, relative := range []string{"config/admin.json", "config/wireguard/server.conf", "data/wireguard-client/windows.conf", "config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html"} {
+	for _, relative := range []string{"config/admin.json", "config/wireguard/server.conf", "data/wireguard-client/windows.conf", "config/totp.key", "data/totp-state.json", "data/whitelist.json", "site/index.html", "data/site-content/current/index.html"} {
 		path := filepath.Join(options.InstallRoot, relative)
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -125,6 +149,10 @@ func run() error {
 		}
 		preserved[relative] = data
 	}
+	if err := os.WriteFile(filepath.Join(options.InstallRoot, "data", "site-content", "current", "index.html"), []byte("preserve published homepage"), 0o644); err != nil {
+		return fmt.Errorf("write published-site persistence fixture: %w", err)
+	}
+	preserved["data/site-content/current/index.html"] = []byte("preserve published homepage")
 	statisticsPath := filepath.Join(options.InstallRoot, "data", "statistics")
 	if err := os.MkdirAll(statisticsPath, 0o700); err != nil {
 		return fmt.Errorf("create statistics history fixture: %w", err)
@@ -141,21 +169,30 @@ func run() error {
 	if err := statistics.Append(monitoring.Snapshot{CapturedAt: sampleAt, Host: &monitoring.HostMetrics{CapturedAt: sampleAt, CPUPercent: &cpu}}); err != nil {
 		return fmt.Errorf("write statistics history fixture: %w", err)
 	}
-	historyRelative := filepath.Join("data", "statistics", sampleAt.Format("2006-01-02")+".json.gz")
-	historyFile := filepath.Join(options.InstallRoot, historyRelative)
+	if err := statistics.Close(); err != nil {
+		return fmt.Errorf("close statistics history fixture: %w", err)
+	}
+	historyFile := filepath.Join(statisticsPath, "statistics.db")
 	if err := os.Chown(historyFile, 65532, 65532); err != nil {
 		return fmt.Errorf("set statistics file owner: %w", err)
+	}
+	if err := os.Chmod(historyFile, 0o600); err != nil {
+		return fmt.Errorf("secure statistics file: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(options.InstallRoot, "site", "operator-page.txt"), []byte("preserve operator site"), 0o644); err != nil {
 		return fmt.Errorf("write operator site fixture: %w", err)
 	}
-	updatePackage, updatePackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], updateVersion)
+	updatePackage, updatePackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], manifest.Version, updateVersion)
 	if err != nil {
 		return fmt.Errorf("prepare update package: %w", err)
 	}
 	defer os.RemoveAll(updatePackageDir)
+	updateSHA256, err := release.SHA256File(updatePackage)
+	if err != nil {
+		return fmt.Errorf("hash synthetic update package: %w", err)
+	}
 	updated, err := deployment.Update(ctx, deployment.UpdateOptions{
-		PackagePath: updatePackage, InstallRoot: options.InstallRoot, Host: options.Host, Runner: runner,
+		PackagePath: updatePackage, PackageSHA256: updateSHA256, InstallRoot: options.InstallRoot, Host: options.Host, Runner: runner,
 		WaitInterval: time.Second, WaitAttempts: 60, HTTPSCheck: func(context.Context, string) error { return nil },
 	})
 	if err != nil {
@@ -174,6 +211,9 @@ func run() error {
 	if err != nil || len(reopenedHistory.Range(sampleAt.Add(-time.Second), sampleAt.Add(time.Second), 10)) != 1 {
 		return fmt.Errorf("statistics history did not survive update/reopen: %v", err)
 	}
+	if err := reopenedHistory.Close(); err != nil {
+		return fmt.Errorf("close statistics history after update check: %w", err)
+	}
 	if err := verifyEnabledTOTP(options.InstallRoot, enrollmentCode, enrollmentTime); err != nil {
 		return fmt.Errorf("TOTP did not survive the packaged update: %w", err)
 	}
@@ -185,13 +225,17 @@ func run() error {
 			return fmt.Errorf("active/previous release %s was not retained: %w", version, err)
 		}
 	}
-	rollbackPackage, rollbackPackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], rollbackVersion)
+	rollbackPackage, rollbackPackageDir, err := makeUpdatePackage(ctx, runner, os.Args[1], updateVersion, rollbackVersion)
 	if err != nil {
 		return fmt.Errorf("prepare rollback package: %w", err)
 	}
 	defer os.RemoveAll(rollbackPackageDir)
+	rollbackSHA256, err := release.SHA256File(rollbackPackage)
+	if err != nil {
+		return fmt.Errorf("hash synthetic rollback package: %w", err)
+	}
 	if _, err := deployment.Update(ctx, deployment.UpdateOptions{
-		PackagePath: rollbackPackage, InstallRoot: options.InstallRoot, Host: options.Host, Runner: runner,
+		PackagePath: rollbackPackage, PackageSHA256: rollbackSHA256, InstallRoot: options.InstallRoot, Host: options.Host, Runner: runner,
 		WaitInterval: time.Second, WaitAttempts: 60,
 		HTTPSCheck: func(context.Context, string) error { return errors.New("forced post-update HTTPS failure") },
 	}); err == nil {
@@ -208,8 +252,11 @@ func run() error {
 	if err != nil || len(reopenedHistory.Range(sampleAt.Add(-time.Second), sampleAt.Add(time.Second), 10)) != 1 {
 		return fmt.Errorf("statistics history did not survive failed update rollback: %v", err)
 	}
+	if err := reopenedHistory.Close(); err != nil {
+		return fmt.Errorf("close statistics history after rollback check: %w", err)
+	}
 	if _, err := deployment.Update(ctx, deployment.UpdateOptions{
-		PackagePath: rollbackPackage, InstallRoot: options.InstallRoot, Host: options.Host, Runner: runner,
+		PackagePath: rollbackPackage, PackageSHA256: rollbackSHA256, InstallRoot: options.InstallRoot, Host: options.Host, Runner: runner,
 		WaitInterval: time.Second, WaitAttempts: 60, HTTPSCheck: func(context.Context, string) error { return nil },
 	}); err != nil {
 		return fmt.Errorf("successful update after rollback failed: %w", err)
@@ -225,6 +272,9 @@ func run() error {
 	reopenedHistory, err = monitoring.OpenHistory(statisticsPath)
 	if err != nil || len(reopenedHistory.Range(sampleAt.Add(-time.Second), sampleAt.Add(time.Second), 10)) != 1 {
 		return fmt.Errorf("statistics history did not survive update after rollback: %v", err)
+	}
+	if err := reopenedHistory.Close(); err != nil {
+		return fmt.Errorf("close statistics history after final update check: %w", err)
 	}
 	for relative, expected := range preserved {
 		data, err := os.ReadFile(filepath.Join(options.InstallRoot, relative))
@@ -274,6 +324,53 @@ func run() error {
 }
 
 type installcheckRunner struct{}
+
+type maintenanceProcess struct {
+	command *exec.Cmd
+	done    <-chan error
+}
+
+func startMaintenanceObserver(binary string) (*maintenanceProcess, error) {
+	socketDirectory := "/run/jellyfin-proxy-maintenance"
+	if err := os.MkdirAll(socketDirectory, 0o755); err != nil {
+		return nil, err
+	}
+	command := exec.Command(binary, "--socket", filepath.Join(socketDirectory, "maintenance.sock"), "--docker-socket", "/var/run/docker.sock")
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	process := &maintenanceProcess{command: command, done: done}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("unix", filepath.Join(socketDirectory, "maintenance.sock"), 100*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			return process, nil
+		}
+		select {
+		case processErr := <-done:
+			return nil, fmt.Errorf("maintenance observer exited before listening: %w", processErr)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	stopMaintenanceObserver(process)
+	return nil, errors.New("maintenance observer did not create its socket within five seconds")
+}
+
+func stopMaintenanceObserver(process *maintenanceProcess) {
+	if process == nil || process.command == nil || process.command.Process == nil {
+		return
+	}
+	_ = process.command.Process.Kill()
+	select {
+	case <-process.done:
+	case <-time.After(2 * time.Second):
+	}
+}
 
 func (installcheckRunner) Run(ctx context.Context, executable string, args ...string) (string, error) {
 	command := executable + " " + strings.Join(args, " ")
@@ -539,7 +636,7 @@ func composeArgs(root string, args ...string) []string {
 	return append(base, args...)
 }
 
-func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sourceArchive, version string) (archivePath, workDirectory string, resultErr error) {
+func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sourceArchive, sourceVersion, version string) (archivePath, workDirectory string, resultErr error) {
 	workDirectory, err := os.MkdirTemp("", "jellyfin-proxy-update-package-")
 	if err != nil {
 		return "", "", err
@@ -550,12 +647,13 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 		}
 	}()
 	packageDirectory := filepath.Join(workDirectory, "package")
-	manifest, err := release.ExtractAndValidate(sourceArchive, packageDirectory)
+	manifest, err := release.ExtractAndValidate(sourceArchive, packageDirectory, mustPackageHash(sourceArchive))
 	if err != nil {
 		return "", "", err
 	}
 	oldVersion := manifest.Version
-	for _, image := range []string{"admin", "hostmetrics", "containerhealth", "wireguard", "caddy"} {
+	manifest.SupportedUpgradeSources = append(manifest.SupportedUpgradeSources, sourceVersion)
+	for _, image := range []string{"admin", "hostmetrics", "wireguard", "caddy", "security"} {
 		oldRef := "jellyfin-proxy/" + image + ":" + oldVersion
 		newRef := "jellyfin-proxy/" + image + ":" + version
 		if _, err := runner.Run(ctx, "docker", "image", "tag", oldRef, newRef); err != nil {
@@ -565,9 +663,9 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 	newImages := []string{
 		"jellyfin-proxy/admin:" + version,
 		"jellyfin-proxy/hostmetrics:" + version,
-		"jellyfin-proxy/containerhealth:" + version,
 		"jellyfin-proxy/wireguard:" + version,
 		"jellyfin-proxy/caddy:" + version,
+		"jellyfin-proxy/security:" + version,
 		"alpine:3.24.2",
 	}
 	imagesPath := filepath.Join(packageDirectory, "images-update.tar")
@@ -624,7 +722,7 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 	if err := os.WriteFile(filepath.Join(packageDirectory, "manifest.json"), append(encoded, '\n'), 0o644); err != nil {
 		return "", "", err
 	}
-	archivePath = filepath.Join(workDirectory, "update.tar.gz")
+	archivePath = filepath.Join(workDirectory, "update.pkg")
 	archive, err := os.Create(archivePath)
 	if err != nil {
 		return "", "", err
@@ -682,4 +780,12 @@ func makeUpdatePackage(ctx context.Context, runner deployment.CommandRunner, sou
 		return "", "", err
 	}
 	return archivePath, workDirectory, nil
+}
+
+func mustPackageHash(path string) string {
+	hash, err := release.SHA256File(path)
+	if err != nil {
+		panic(err)
+	}
+	return hash
 }

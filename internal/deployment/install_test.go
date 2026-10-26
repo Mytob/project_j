@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/release"
 	"github.com/Mytob/project_j/internal/totp"
 )
@@ -53,7 +54,9 @@ func (r *fakeRunner) Run(_ context.Context, executable string, args ...string) (
 		}
 		return "{\"Service\":\"wireguard\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
 			"{\"Service\":\"caddy\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
-			"{\"Service\":\"admin\",\"State\":\"running\",\"Health\":\"healthy\"}\n", nil
+			"{\"Service\":\"admin\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
+			"{\"Service\":\"hostmetrics\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
+			"{\"Service\":\"securityd\",\"State\":\"running\",\"Health\":\"healthy\"}\n", nil
 	}
 	if len(args) >= 5 && args[0] == "image" && args[1] == "save" && args[2] == "--output" {
 		if err := writeFakeDockerArchive(args[3], args[4:]); err != nil {
@@ -72,8 +75,8 @@ func TestInstallCreatesFreshDefaultDenyDeployment(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
 	runner := &fakeRunner{}
 	manifest, err := Install(context.Background(), InstallOptions{
-		PackagePath: packagePath, InstallRoot: root, Domain: "Example.com", Password: "correct horse battery staple",
-		WireGuardPort: 51820, Host: validHost(), Runner: runner, WaitInterval: time.Millisecond, WaitAttempts: 1,
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Domain: "Example.com", Password: "correct horse battery staple",
+		WireGuardPort: 51820, BackupSchedule: "weekly", BackupRetentionDays: 14, Host: validHost(), Runner: runner, WaitInterval: time.Millisecond, WaitAttempts: 1,
 		DNSLookup: func(_ context.Context, host string) ([]net.IP, error) {
 			return []net.IP{net.ParseIP("203.0.113.20")}, nil
 		},
@@ -87,6 +90,9 @@ func TestInstallCreatesFreshDefaultDenyDeployment(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "data", "whitelist.json")); !os.IsNotExist(err) {
 		t.Fatalf("first install should have no allowed clients: %v", err)
+	}
+	if _, err := os.Stat(checkpointPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("successful install left a resume checkpoint: %v", err)
 	}
 	credential, err := auth.LoadCredential(filepath.Join(root, "config", "admin.json"))
 	if err != nil || !credential.Verify("correct horse battery staple") {
@@ -122,7 +128,7 @@ func TestInstallCreatesFreshDefaultDenyDeployment(t *testing.T) {
 		t.Fatalf("TOTP state mode = %v, %v", info, err)
 	}
 	environment, err := os.ReadFile(filepath.Join(root, ".env"))
-	if err != nil || !strings.Contains(string(environment), "BASE_DOMAIN=example.com\n") || !strings.Contains(string(environment), "WIREGUARD_PORT=51820\n") {
+	if err != nil || !strings.Contains(string(environment), "BASE_DOMAIN=example.com\n") || !strings.Contains(string(environment), "WIREGUARD_PORT=51820\n") || !strings.Contains(string(environment), "BACKUP_SCHEDULE=weekly\n") || !strings.Contains(string(environment), "BACKUP_RETENTION_DAYS=14\n") {
 		t.Fatalf("deployment environment: %q, %v", environment, err)
 	}
 	for _, expected := range []string{"docker image load --input", "compose --project-name jellyfin-proxy", "up --detach"} {
@@ -137,14 +143,50 @@ func TestInstallCreatesFreshDefaultDenyDeployment(t *testing.T) {
 	}
 }
 
+func TestInstallCanSeedValidatedAdministratorAllowlist(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("installer ownership test requires root")
+	}
+	packagePath := makeInstallPackage(t)
+	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
+	_, err := Install(context.Background(), InstallOptions{
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root,
+		Domain: "allowlist.example.com", Password: "correct horse battery staple", InitialAllowedIPs: []string{"203.0.113.9/32", "2001:db8::9/128"},
+		WireGuardPort: 51820, Host: validHost(), Runner: &fakeRunner{}, WaitInterval: time.Millisecond, WaitAttempts: 1,
+		DNSLookup:  func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
+		HTTPSCheck: func(context.Context, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored struct {
+		Version int `json:"version"`
+		Entries []struct {
+			Address string `json:"address"`
+		} `json:"entries"`
+	}
+	data, err := os.ReadFile(filepath.Join(root, "data", "whitelist.json"))
+	if err != nil || json.Unmarshal(data, &stored) != nil {
+		t.Fatalf("read initial allowlist %q: %v", data, err)
+	}
+	if stored.Version != 2 || len(stored.Entries) != 2 || stored.Entries[0].Address != "203.0.113.9/32" || stored.Entries[1].Address != "2001:db8::9/128" {
+		t.Fatalf("unexpected initial allowlist: %#v", stored)
+	}
+	info, err := os.Stat(filepath.Join(root, "data", "whitelist.json"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("initial allowlist mode = %v, %v", info, err)
+	}
+}
+
 func TestInstallHTTPSFailureRollsBackFreshRoot(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("installer filesystem test requires a root Linux test container")
 	}
 	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
 	runner := &fakeRunner{}
+	packagePath := makeInstallPackage(t)
 	_, err := Install(context.Background(), InstallOptions{
-		PackagePath: makeInstallPackage(t), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
 		Host: validHost(), Runner: runner, WaitInterval: time.Millisecond, WaitAttempts: 1,
 		DNSLookup:  func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
 		HTTPSCheck: func(context.Context, string) error { return fmt.Errorf("certificate is not ready") },
@@ -166,8 +208,9 @@ func TestInstallFailureStopsDeploymentAndRemovesPartialFiles(t *testing.T) {
 	}
 	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
 	runner := &fakeRunner{failOn: "up --detach"}
+	packagePath := makeInstallPackage(t)
 	_, err := Install(context.Background(), InstallOptions{
-		PackagePath: makeInstallPackage(t), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
 		Host: validHost(), Runner: runner, WaitInterval: time.Millisecond, WaitAttempts: 1,
 		DNSLookup: func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
 	})
@@ -225,12 +268,20 @@ func TestComposeReadinessRequiresAllServicesHealthy(t *testing.T) {
 	healthy := "{\"Service\":\"wireguard\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
 		"{\"Service\":\"caddy\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
 		"{\"Service\":\"admin\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
+		"{\"Service\":\"hostmetrics\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
+		"{\"Service\":\"securityd\",\"State\":\"running\",\"Health\":\"healthy\"}\n" +
 		"{\"Service\":\"caddy-socket-init\",\"State\":\"exited\"}\n"
 	if !composeServicesHealthy(healthy) {
 		t.Fatal("healthy production services were rejected")
 	}
-	if composeServicesHealthy(strings.Replace(healthy, `"Health":"healthy"`, `"Health":"starting"`, 1)) {
-		t.Fatal("unhealthy service was accepted")
+	for _, service := range []string{"admin", "caddy", "hostmetrics", "securityd", "wireguard"} {
+		unhealthy := strings.Replace(healthy, `"Service":"`+service+`","State":"running","Health":"healthy"`, `"Service":"`+service+`","State":"running","Health":"starting"`, 1)
+		if composeServicesHealthy(unhealthy) {
+			t.Errorf("unhealthy %s service was accepted", service)
+		}
+	}
+	if composeServicesHealthy(strings.Replace(healthy, "{\"Service\":\"securityd\",\"State\":\"running\",\"Health\":\"healthy\"}\n", "", 1)) {
+		t.Fatal("missing security daemon was accepted")
 	}
 }
 
@@ -306,8 +357,14 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	}
 	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
 	progressEvents := []UpdateProgress{}
+	unitDir := filepath.Join(t.TempDir(), "systemd")
+	backupDir := filepath.Join(t.TempDir(), "backups")
+	proxyctlDir := filepath.Join(t.TempDir(), "sbin")
+	proxyctlStateDir := filepath.Join(t.TempDir(), "proxyctl-state")
 	manifest, err := Update(context.Background(), UpdateOptions{
-		PackagePath: packagePath, InstallRoot: root, Host: validHost(), Runner: runner,
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Host: validHost(), Runner: runner,
+		ConfigureHostServices: true, SystemdUnitDir: unitDir, BackupDirectory: backupDir,
+		ProxyctlDirectory: proxyctlDir, ProxyctlStateDirectory: proxyctlStateDir,
 		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
 		Progress: func(progress UpdateProgress) { progressEvents = append(progressEvents, progress) },
 	})
@@ -374,6 +431,18 @@ func TestUpdatePreservesPersistentDataAndRetainsActiveAndPrevious(t *testing.T) 
 	if strings.Contains(commands, "docker pull ") || strings.Contains(commands, " compose pull ") || !strings.Contains(commands, "--force-recreate --pull never") {
 		t.Fatalf("update pulled images or did not force an offline controlled recreate: %s", commands)
 	}
+	if !strings.Contains(commands, filepath.Join(proxyctlDir, "proxyctl")+" sync-host-services") {
+		t.Fatalf("update did not use the newly installed proxyctl to reconcile host unit templates: %s", commands)
+	}
+	syncHostServices := strings.Index(commands, filepath.Join(proxyctlDir, "proxyctl")+" sync-host-services")
+	adminMountRefresh := strings.LastIndex(commands, "up --detach --no-deps --force-recreate --pull never admin")
+	if adminMountRefresh <= syncHostServices {
+		t.Fatalf("update did not recreate admin after host service reconciliation to refresh its maintenance socket mount: %s", commands)
+	}
+	unit, err := os.ReadFile(filepath.Join(unitDir, maintenanceServiceName))
+	if err != nil || !strings.Contains(string(unit), "StateDirectory=jellyfin-proxy-maintenance") || !strings.Contains(string(unit), "ReadWritePaths=") || !strings.Contains(string(unit), " "+backupDir) {
+		t.Fatalf("updated maintenance unit lacks persistent backup-job storage: %s, %v", unit, err)
+	}
 }
 
 func TestUpdateMigratesLegacyV10AndRefusesPartialTOTPState(t *testing.T) {
@@ -389,8 +458,9 @@ func TestUpdateMigratesLegacyV10AndRefusesPartialTOTPState(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "data", "totp-state.json")); err != nil {
 		t.Fatal(err)
 	}
+	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
 	if _, err := Update(context.Background(), UpdateOptions{
-		PackagePath: makeInstallPackageVersion(t, "1.0.1-dev"), InstallRoot: root, Host: validHost(), Runner: runner,
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Host: validHost(), Runner: runner,
 		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
 	}); err != nil {
 		t.Fatal(err)
@@ -415,8 +485,9 @@ func TestUpdateRefusesOlderReleaseWhenTOTPIsEnabled(t *testing.T) {
 	}
 	root := filepath.Join(t.TempDir(), "jellyfin-proxy")
 	runner := &fakeRunner{}
+	packagePath := makeInstallPackageVersion(t, "1.1.0")
 	_, err := Install(context.Background(), InstallOptions{
-		PackagePath: makeInstallPackageVersion(t, "1.1.0"), InstallRoot: root, Domain: "example.com",
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Domain: "example.com",
 		Password: "correct horse battery staple", WireGuardPort: 51820, Host: validHost(), Runner: runner,
 		DNSLookup:  func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
 		HTTPSCheck: func(context.Context, string) error { return nil }, WaitInterval: time.Millisecond, WaitAttempts: 1,
@@ -452,8 +523,9 @@ func TestUpdateRefusesOlderReleaseWhenTOTPIsEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	commandCountBefore := len(runner.commands)
+	packagePath = makeInstallPackageVersion(t, "1.0.0")
 	_, err = Update(context.Background(), UpdateOptions{
-		PackagePath: makeInstallPackageVersion(t, "1.0.0"), InstallRoot: root, Host: validHost(), Runner: runner,
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Host: validHost(), Runner: runner,
 		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return nil },
 	})
 	if err == nil || !strings.Contains(err.Error(), "refusing downgrade") {
@@ -468,6 +540,15 @@ func TestUpdateRefusesOlderReleaseWhenTOTPIsEnabled(t *testing.T) {
 	if strings.Contains(commands, "docker image load") || strings.Contains(commands, "up --detach --force-recreate") {
 		t.Fatalf("downgrade performed update operations before rejection: %s", commands)
 	}
+}
+
+func mustPackageHash(t *testing.T, path string) string {
+	t.Helper()
+	hash, err := release.SHA256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
 }
 
 func mustLoadTOTPKey(t *testing.T, path string) []byte {
@@ -489,8 +570,9 @@ func TestUpdateHTTPSFailureRestoresPreviousRelease(t *testing.T) {
 	oldEnvironment, _ := os.ReadFile(filepath.Join(root, ".env"))
 	oldCompose, _ := os.ReadFile(filepath.Join(root, "compose.yaml"))
 	oldCaddyfile, _ := os.ReadFile(filepath.Join(root, "config", "Caddyfile"))
+	packagePath := makeInstallPackageVersion(t, "1.0.1-dev")
 	_, err := Update(context.Background(), UpdateOptions{
-		PackagePath: makeInstallPackageVersion(t, "1.0.1-dev"), InstallRoot: root, Host: validHost(), Runner: runner,
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Host: validHost(), Runner: runner,
 		WaitInterval: time.Millisecond, WaitAttempts: 1, HTTPSCheck: func(context.Context, string) error { return fmt.Errorf("simulated public TLS failure") },
 	})
 	if err == nil || !strings.Contains(err.Error(), "previous release was restored") {
@@ -667,14 +749,22 @@ func TestRecoverTOTPRestoresPersistentStateIfAdminRestartFails(t *testing.T) {
 
 func installFixture(t *testing.T, root string, runner CommandRunner) {
 	t.Helper()
+	packagePath := makeInstallPackage(t)
 	_, err := Install(context.Background(), InstallOptions{
-		PackagePath: makeInstallPackage(t), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
+		PackagePath: packagePath, PackageSHA256: mustPackageHash(t, packagePath), InstallRoot: root, Domain: "example.com", Password: "correct horse battery staple",
 		WireGuardPort: 51820, Host: validHost(), Runner: runner, WaitInterval: time.Millisecond, WaitAttempts: 1,
 		DNSLookup:  func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.20")}, nil },
 		HTTPSCheck: func(context.Context, string) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	history, err := monitoring.OpenHistory(filepath.Join(root, "data", "statistics"))
+	if err != nil {
+		t.Fatalf("initialize fixture statistics database: %v", err)
+	}
+	if err := history.Close(); err != nil {
+		t.Fatalf("close fixture statistics database: %v", err)
 	}
 }
 
@@ -687,6 +777,10 @@ func makeInstallPackage(t *testing.T) string {
 }
 
 func makeInstallPackageVersion(t *testing.T, version string) string {
+	return makeInstallPackageVersionWithDatabaseSchema(t, version, 1, 1)
+}
+
+func makeInstallPackageVersionWithDatabaseSchema(t *testing.T, version string, schemaMinimum, schemaMaximum int) string {
 	t.Helper()
 	root := t.TempDir()
 	images, configs := fakeReleaseImages(version)
@@ -695,17 +789,24 @@ func makeInstallPackageVersion(t *testing.T, version string) string {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"images.tar":               imageArchive,
-		"bin/admin-linux-amd64":    []byte("admin"),
-		"bin/proxyctl-linux-amd64": []byte("proxyctl"),
-		"compose.yaml":             []byte("services: {}\n"),
-		".env.example":             []byte("BASE_DOMAIN=example.invalid\n"),
-		"config/Caddyfile":         []byte("admin unix//run/caddy-admin/admin.sock|0220\n{$BASE_DOMAIN} {}\n"),
-		"config/whitelist.caddy":   []byte("respond 403\n"),
-		"site/index.html":          []byte("Jellyfin Proxy"),
-		"DEPLOYMENT.md":            []byte("deployment notes"),
+		"images.tar":                  imageArchive,
+		"bin/admin-linux-amd64":       []byte("admin"),
+		"bin/proxyctl-linux-amd64":    []byte("proxyctl"),
+		"bin/maintenance-linux-amd64": []byte("maintenance"),
+		"compose.yaml":                []byte("services: {}\n"),
+		".env.example":                []byte("BASE_DOMAIN=example.invalid\n"),
+		"config/Caddyfile":            []byte("admin unix//run/caddy-admin/admin.sock|0220\n{$BASE_DOMAIN} {}\n"),
+		"config/whitelist.caddy":      []byte("respond 403\n"),
+		"site/index.html":             []byte("Jellyfin Proxy"),
+		"DEPLOYMENT.md":               []byte("deployment notes"),
 	}
-	manifest := release.Manifest{SchemaVersion: 1, Version: version, Platform: "linux/amd64", Images: images}
+	upgradeSources := []string{}
+	for _, source := range []string{"1.0.0-dev", "1.0.1-dev", "1.0.0"} {
+		if source != version {
+			upgradeSources = append(upgradeSources, source)
+		}
+	}
+	manifest := release.Manifest{SchemaVersion: 2, Version: version, BuildID: "abcdef123456", TargetOS: "ubuntu-26.04", Architecture: "amd64", Platform: "linux/amd64", SupportedUpgradeSources: upgradeSources, MinimumProxyctlVersion: "1.6.0", DatabaseSchemaMinimum: schemaMinimum, DatabaseSchemaMaximum: schemaMaximum, Images: images}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -724,7 +825,7 @@ func makeInstallPackageVersion(t *testing.T, version string) string {
 	if err := os.WriteFile(filepath.Join(root, "manifest.json"), manifestJSON, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	archivePath := filepath.Join(t.TempDir(), "release.tar.gz")
+	archivePath := filepath.Join(t.TempDir(), "release.pkg")
 	archiveFile, err := os.Create(archivePath)
 	if err != nil {
 		t.Fatal(err)

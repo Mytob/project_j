@@ -1,0 +1,4 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY tests/integration/fake-journalctl /usr/local/bin/fake-journalctl
+RUN sed -i 's/\r$//' /usr/local/bin/fake-journalctl && chmod 0755 /usr/local/bin/fake-journalctl

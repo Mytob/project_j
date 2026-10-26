@@ -14,9 +14,12 @@ COPY cmd/admin ./cmd/admin
 COPY internal/auth ./internal/auth
 COPY internal/totp ./internal/totp
 COPY internal/admin ./internal/admin
+COPY internal/security ./internal/security
 COPY internal/containerhealth ./internal/containerhealth
+COPY internal/maintenance ./internal/maintenance
 COPY --from=frontend /frontend/dist ./internal/admin/frontend/dist
 COPY internal/monitoring ./internal/monitoring
+COPY internal/webcontent ./internal/webcontent
 COPY internal/whitelist ./internal/whitelist
 COPY internal/wireguard ./internal/wireguard
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildNumber=${BUILD_NUMBER}" -o /out/admin ./cmd/admin

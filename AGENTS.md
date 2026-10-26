@@ -12,7 +12,8 @@ other media services, users, registration, external proxy/CDN support, LAN
 routing, full-tunnel VPN, databases, microservices, Kubernetes, hosted CI,
 release signing, encrypted backups, or unrelated operations features.
 Implement only the specifically authorized v1.3 scope recorded in
-`docs/V1.3.md`.
+`docs/V1.3.md`. Implement only the specifically authorized v1.4 scope recorded
+in `docs/V1.4.md`.
 
 ## Architecture rules
 
@@ -48,6 +49,7 @@ Implement only the specifically authorized v1.3 scope recorded in
   gate is `build.ps1 release`; it must report every mandatory check.
 - v1.2 changes must pass every mandatory local check in the handoff, including real browser, collector/container, streaming, history/SSE, and package upgrade/rollback coverage, before pushing or opening a PR. Do not report unexecuted checks as passed.
 - v1.3 changes must pass every mandatory local check in `docs/V1.3.md` before integration; record unavailable Windows/WSL2/Docker capabilities as blockers.
+- v1.4 changes must pass every mandatory local check in `docs/V1.4.md` before integration; record real-host journal/nftables checks as blocked when the isolated Ubuntu host is unavailable. Do not deploy v1.4 to the production VPS without explicit authorization.
 - Record only commands actually run and observed results in `docs/ROADMAP.md`
   and `docs/TESTING.md`.
 

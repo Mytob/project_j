@@ -10,7 +10,7 @@ import (
 
 func TestReadCPUIncludesIOWaitAsIdle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stat")
-	if err := os.WriteFile(path, []byte("cpu 100 10 20 300 30 2 3 4 0 0\ncpu0 1 0 1 3 0 0 0 0 0 0\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("cpu 100 10 20 300 30 2 3 4 50 70\ncpu0 1 0 1 3 0 0 0 0 5 7\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	total, idle, err := readCPU(path)
@@ -18,7 +18,7 @@ func TestReadCPUIncludesIOWaitAsIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if total != 469 || idle != 330 {
-		t.Fatalf("readCPU() = total %d idle %d, want 469 and 330", total, idle)
+		t.Fatalf("readCPU() = total %d idle %d, want 469 and 330 (guest counters excluded)", total, idle)
 	}
 }
 

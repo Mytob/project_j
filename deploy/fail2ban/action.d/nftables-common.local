@@ -1,0 +1,11 @@
+[Init]
+actionstart_on_demand = false
+
+[Definition]
+# securityd uses host networking, so this table survives a container restart.
+# Fail2ban's default startup adds another SSH rule every time. Reuse objects
+# already present and add this address-family rule only when it is absent.
+actionstart = { <nftables> list table <table_family> <table> >/dev/null 2>&1 || <nftables> add table <table_family> <table>; }
+              { <nftables> list chain <table_family> <table> <chain> >/dev/null 2>&1 || <nftables> -- add chain <table_family> <table> <chain> \{ type <chain_type> hook <chain_hook> priority <chain_priority> \; \}; }
+              { <nftables> list set <table_family> <table> <addr_set> >/dev/null 2>&1 || <nftables> add set <table_family> <table> <addr_set> \{ type <addr_type>\; \}; }
+              { <_nft_list> | grep -q '@<addr_set>[ \t]' || { <_nft_for_proto-<type>-iter> <nftables> add rule <table_family> <table> <chain> %(rule_stat)s; <_nft_for_proto-<type>-done>; }; }

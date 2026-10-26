@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '1.0.0-dev',
-    [string]$OutputDirectory = ''
+    [string]$Version = '1.6.0-dev',
+    [string]$OutputDirectory = '',
+    [string[]]$SupportedUpgradeSources = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,14 +23,14 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $outputRoot = (Resolve-Path $OutputDirectory).Path
 $workDirectory = Join-Path $outputRoot ".package-$PID"
 $packageDirectory = Join-Path $workDirectory "jellyfin-proxy-$Version-linux-amd64"
-$archivePath = Join-Path $outputRoot "jellyfin-proxy-$Version-linux-amd64.tar.gz"
+$archivePath = Join-Path $outputRoot "jellyfin-proxy-$Version.pkg"
 $daemonName = "jellyfin-proxy-package-check-$PID"
 $imageReferences = @(
     "jellyfin-proxy/admin:$Version",
     "jellyfin-proxy/hostmetrics:$Version",
-    "jellyfin-proxy/containerhealth:$Version",
     "jellyfin-proxy/wireguard:$Version",
     "jellyfin-proxy/caddy:$Version",
+    "jellyfin-proxy/security:$Version",
     'alpine:3.24.2'
 )
 
@@ -65,23 +66,25 @@ try {
     $workMount = $workDirectory.Replace('\', '/')
     Invoke-Checked 'docker' @('run', '--rm', '-v', "${frontendMount}:/frontend", '-w', '/frontend', 'node:24.22.0-alpine3.24@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f', 'sh', '-c', 'npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.0 && npm ci --ignore-scripts --no-audit --no-fund && npm run typecheck && npm test && npm run build')
     Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/admin-linux-amd64', './cmd/admin')
-    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/proxyctl-linux-amd64', './cmd/proxyctl')
+    $proxyctlLdflags = "-s -w -X main.version=$Version"
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', "-ldflags=$proxyctlLdflags", '-o', '/out/proxyctl-linux-amd64', './cmd/proxyctl')
+    Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${binMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/maintenance-linux-amd64', './cmd/maintenance')
     Invoke-Checked 'docker' @('run', '--rm', '-v', "${repoMount}:/src", '-v', "${workMount}:/out", '-w', '/src', '-e', 'CGO_ENABLED=0', '-e', 'GOOS=linux', '-e', 'GOARCH=amd64', 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d', 'go', 'build', '-trimpath', '-ldflags=-s -w', '-o', '/out/installcheck-linux-amd64', './tests/deployment/installcheck')
 
     $adminImage = $imageReferences[0]
     $hostMetricsImage = $imageReferences[1]
-    $containerHealthImage = $imageReferences[2]
-    $wireguardImage = $imageReferences[3]
-    $caddyImage = $imageReferences[4]
+    $wireguardImage = $imageReferences[2]
+    $caddyImage = $imageReferences[3]
+    $securityImage = $imageReferences[4]
     Invoke-Checked 'docker' @('build', '--file', 'deploy/admin/Dockerfile', '--build-arg', "VERSION=$Version", '--build-arg', "BUILD_NUMBER=$buildNumber", '--tag', $adminImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/hostmetrics/Dockerfile', '--tag', $hostMetricsImage, '.')
-    Invoke-Checked 'docker' @('build', '--file', 'deploy/containerhealth/Dockerfile', '--tag', $containerHealthImage, '.')
     $builtVersion = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' $adminImage
     if ($LASTEXITCODE -ne 0 -or [string]$builtVersion -ne $Version) { throw 'Packaged admin image does not contain the requested version metadata.' }
     $builtRevision = & docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' $adminImage
     if ($LASTEXITCODE -ne 0 -or [string]$builtRevision -ne $buildNumber) { throw 'Packaged admin image does not contain the expected source build number.' }
     Invoke-Checked 'docker' @('build', '--file', 'deploy/wireguard/Dockerfile', '--tag', $wireguardImage, '.')
     Invoke-Checked 'docker' @('build', '--file', 'deploy/caddy/Dockerfile', '--tag', $caddyImage, '.')
+    Invoke-Checked 'docker' @('build', '--file', 'deploy/security/Dockerfile', '--tag', $securityImage, '.')
     Invoke-Checked 'docker' @('pull', 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6')
     # Pulling by digest keeps the selected bits immutable, but Docker does not
     # create the human-readable tag used by Compose and the package manifest.
@@ -94,8 +97,16 @@ try {
     # the exact pinned digest above and recorded by the package image manifest.
     $composeText = Get-Content -LiteralPath $packageComposePath -Raw
     $pinnedAlpine = 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6'
-    $alpineReferences = ([regex]::Matches($composeText, [regex]::Escape($pinnedAlpine))).Count
-    if ($alpineReferences -ne 2) { throw "Expected two pinned Alpine utility image references in Compose; found $alpineReferences." }
+    $alpineImageReferences = @(
+        foreach ($match in [regex]::Matches($composeText, '(?m)^[ \t]*image:[ \t]*([^\r\n]*)\r?$')) {
+            $reference = $match.Groups[1].Value.Trim()
+            if ($reference.StartsWith('alpine:')) { $reference }
+        }
+    )
+    $unpinnedAlpineReferences = @($alpineImageReferences | Where-Object { $_ -cne $pinnedAlpine })
+    if ($alpineImageReferences.Count -eq 0 -or $unpinnedAlpineReferences.Count -gt 0) {
+        throw "Every Alpine utility image in Compose must use the tested digest $pinnedAlpine; found: $($alpineImageReferences -join ', ')."
+    }
     $composeText.Replace($pinnedAlpine, 'alpine:3.24.2') | Set-Content -LiteralPath $packageComposePath -Encoding utf8NoBOM
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/PACKAGE-ENV.example') -Destination (Join-Path $packageDirectory '.env.example')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/caddy/Caddyfile') -Destination (Join-Path $packageDirectory 'config/Caddyfile')
@@ -121,7 +132,7 @@ try {
             [ordered]@{ reference = $reference; image_id = "sha256:$configID" }
         }
     )
-    $relativeFiles = @('images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'compose.yaml', '.env.example', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html', 'DEPLOYMENT.md')
+    $relativeFiles = @('images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'bin/maintenance-linux-amd64', 'compose.yaml', '.env.example', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html', 'DEPLOYMENT.md')
     $fileManifest = @(
         foreach ($relative in $relativeFiles) {
             $path = Join-Path $packageDirectory $relative
@@ -129,9 +140,16 @@ try {
         }
     )
     $manifest = [ordered]@{
-        schema_version = 1
+        schema_version = 2
         version = $Version
+        build_id = $buildNumber
+        target_os = 'ubuntu-26.04'
+        architecture = 'amd64'
         platform = 'linux/amd64'
+        supported_upgrade_sources = @($SupportedUpgradeSources)
+        minimum_proxyctl_version = '1.6.0'
+        database_schema_minimum = 1
+        database_schema_maximum = 1
         images = $imageManifest
         files = $fileManifest
     }
@@ -158,6 +176,10 @@ try {
         $logs = & docker logs $daemonName 2>&1
         throw "Isolated Docker daemon did not become ready:`n$($logs -join "`n")"
     }
+    # The Docker-in-Docker image has no machine-id file by default. Compose
+    # would otherwise create a directory at the bind source, which cannot be
+    # mounted over securityd's /etc/machine-id file during the install check.
+    Invoke-Checked 'docker' @('exec', $daemonName, 'sh', '-c', "printf '%s\n' '00000000000000000000000000000001' > /etc/machine-id && chmod 0444 /etc/machine-id")
     Invoke-Checked 'docker' @('exec', $daemonName, 'docker', 'image', 'load', '--input', '/package/images.tar')
     foreach ($reference in $imageReferences) {
         $loaded = & docker exec $daemonName docker image inspect --format '{{.Id}}' $reference
@@ -169,7 +191,7 @@ try {
     $archiveList = @(& $tar @('-tzf', $archivePath))
     if ($LASTEXITCODE -ne 0) { throw 'Could not list the built release archive.' }
     $normalizedEntries = @($archiveList | ForEach-Object { ([string]$_).Replace('./', '').TrimEnd('/') })
-    foreach ($relative in @('manifest.json', 'images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'compose.yaml', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html')) {
+    foreach ($relative in @('manifest.json', 'images.tar', 'bin/admin-linux-amd64', 'bin/proxyctl-linux-amd64', 'bin/maintenance-linux-amd64', 'compose.yaml', 'config/Caddyfile', 'config/whitelist.caddy', 'site/index.html')) {
         if ($normalizedEntries -notcontains $relative) { throw "Release archive is missing $relative" }
     }
     foreach ($secretName in @('server.conf', 'windows.conf', 'admin.json', 'totp.key', 'totp-state.json')) {
@@ -180,8 +202,18 @@ try {
     New-Item -ItemType Directory -Path $verifyDirectory | Out-Null
     Invoke-Checked $tar @('-xzf', $archivePath, '-C', $verifyDirectory)
     $verifiedManifest = Get-Content -LiteralPath (Join-Path $verifyDirectory 'manifest.json') -Raw | ConvertFrom-Json
-    if ($verifiedManifest.schema_version -ne 1 -or $verifiedManifest.version -ne $Version -or $verifiedManifest.platform -ne 'linux/amd64') {
+    if ($verifiedManifest.schema_version -ne 2 -or $verifiedManifest.version -ne $Version -or $verifiedManifest.target_os -ne 'ubuntu-26.04' -or $verifiedManifest.architecture -ne 'amd64' -or $verifiedManifest.platform -ne 'linux/amd64') {
         throw 'Packaged manifest has an unexpected schema, version, or platform.'
+    }
+    $expectedUpgradeSources = @($SupportedUpgradeSources)
+    $actualUpgradeSources = @($verifiedManifest.supported_upgrade_sources)
+    if ($actualUpgradeSources.Count -ne $expectedUpgradeSources.Count) {
+        throw 'Packaged manifest does not contain the requested supported-upgrade sources.'
+    }
+    for ($index = 0; $index -lt $expectedUpgradeSources.Count; $index++) {
+        if ([string]$actualUpgradeSources[$index] -cne [string]$expectedUpgradeSources[$index]) {
+            throw 'Packaged manifest does not contain the requested supported-upgrade sources.'
+        }
     }
     foreach ($file in $verifiedManifest.files) {
         $path = Join-Path $verifyDirectory $file.path
@@ -199,9 +231,14 @@ try {
         }
     }
 
-    Invoke-Checked 'docker' @('exec', $daemonName, "/package/dist/.package-$PID/installcheck-linux-amd64", "/package/dist/jellyfin-proxy-$Version-linux-amd64.tar.gz")
+    $packageSHA256 = Get-Sha256 $archivePath
+    Invoke-Checked 'docker' @('exec', $daemonName, "/package/dist/.package-$PID/installcheck-linux-amd64", "/package/dist/jellyfin-proxy-$Version.pkg", $packageSHA256)
 
     Copy-Item -LiteralPath (Join-Path $packageDirectory 'bin/proxyctl-linux-amd64') -Destination (Join-Path $outputRoot 'proxyctl-linux-amd64') -Force
+    "$packageSHA256  $(Split-Path -Leaf $archivePath)" | Set-Content -LiteralPath "$archivePath.sha256" -Encoding ascii -NoNewline
+    $proxyctlPath = Join-Path $outputRoot 'proxyctl-linux-amd64'
+    $proxyctlSHA256 = Get-Sha256 $proxyctlPath
+    "$proxyctlSHA256  proxyctl-linux-amd64" | Set-Content -LiteralPath "$proxyctlPath.sha256" -Encoding ascii -NoNewline
 
     Write-Host "Package validation passed: $archivePath (version $Version, $($imageReferences.Count) images loaded into an isolated daemon without registry access)."
 }

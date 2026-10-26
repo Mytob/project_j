@@ -13,20 +13,29 @@ import (
 	"time"
 
 	"github.com/Mytob/project_j/internal/auth"
+	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/release"
 )
 
 // UpdateOptions describe a package update and contain test seams for the host
 // facts, command runner, and readiness checks.
 type UpdateOptions struct {
-	PackagePath  string
-	InstallRoot  string
-	Host         HostFacts
-	Runner       CommandRunner
-	WaitInterval time.Duration
-	WaitAttempts int
-	HTTPSCheck   func(context.Context, string) error
-	Progress     func(UpdateProgress)
+	PackagePath            string
+	PackageSHA256          string
+	InstallRoot            string
+	BackupPath             string
+	Host                   HostFacts
+	Runner                 CommandRunner
+	WaitInterval           time.Duration
+	WaitAttempts           int
+	HTTPSCheck             func(context.Context, string) error
+	ConfigureHostServices  bool
+	SystemdUnitDir         string
+	BackupDirectory        string
+	ProxyctlDirectory      string
+	ProxyctlStateDirectory string
+	MaintenanceUpdated     func()
+	Progress               func(UpdateProgress)
 }
 
 // UpdateProgress reports completion of an updater milestone. Percentage is
@@ -43,6 +52,9 @@ type UpdateProgress struct {
 // preserving operator-owned data and restoring the previous release if the
 // new one fails its health or HTTPS checks.
 func Update(ctx context.Context, options UpdateOptions) (manifest release.Manifest, resultErr error) {
+	if options.PackageSHA256 == "" {
+		return manifest, errors.New("an independently supplied package SHA-256 is required")
+	}
 	const updateSteps = 8
 	progress := func(step int, done bool, message string) {
 		if options.Progress != nil {
@@ -61,6 +73,17 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	}
 	if options.Runner == nil {
 		options.Runner = ExecRunner{}
+	}
+	if err := validateUpdateRoot(options.InstallRoot); err != nil {
+		return manifest, err
+	}
+	if _, err := RecoverInterruptedUpdate(ctx, UpdateRecoveryOptions{
+		InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval,
+		WaitAttempts: options.WaitAttempts, ConfigureHostServices: options.ConfigureHostServices,
+		SystemdUnitDir: options.SystemdUnitDir, BackupDirectory: options.BackupDirectory,
+		MaintenanceUpdated: options.MaintenanceUpdated,
+	}); err != nil {
+		return manifest, fmt.Errorf("recover interrupted update before proceeding: %w", err)
 	}
 	if options.WaitInterval <= 0 {
 		options.WaitInterval = time.Second
@@ -91,8 +114,11 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	}
 	defer os.RemoveAll(stageRoot)
 	packageDir := filepath.Join(stageRoot, "package")
-	manifest, err = release.ExtractAndValidate(options.PackagePath, packageDir)
+	manifest, err = release.ExtractAndValidate(options.PackagePath, packageDir, options.PackageSHA256)
 	if err != nil {
+		return manifest, err
+	}
+	if err := validateProxyctlMinimum(manifest); err != nil {
 		return manifest, err
 	}
 	if err := validatePackagePortAndVersion(manifest, 51820); err != nil {
@@ -108,17 +134,58 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if versionOrder < 0 {
 		return manifest, fmt.Errorf("refusing downgrade from %s to older release %s", current.Version, manifest.Version)
 	}
+	if !supportsUpgradeFrom(manifest, current.Version) {
+		return manifest, fmt.Errorf("release %s does not support updating from %s", manifest.Version, current.Version)
+	}
+	databaseSchema, err := monitoring.HistoryDatabaseSchema(filepath.Join(options.InstallRoot, "data", "statistics", "statistics.db"))
+	if err != nil {
+		return manifest, fmt.Errorf("inspect the current statistics database before updating: %w", err)
+	}
+	if databaseSchema < current.DatabaseSchemaMinimum || databaseSchema > current.DatabaseSchemaMaximum {
+		return manifest, fmt.Errorf("current release %s does not support the installed database schema %d", current.Version, databaseSchema)
+	}
+	if databaseSchema < manifest.DatabaseSchemaMinimum || databaseSchema > manifest.DatabaseSchemaMaximum {
+		return manifest, fmt.Errorf("release %s does not support the installed database schema %d (supports %d-%d)", manifest.Version, databaseSchema, manifest.DatabaseSchemaMinimum, manifest.DatabaseSchemaMaximum)
+	}
 	if err := ensureTOTPStorage(options.InstallRoot); err != nil {
 		return manifest, fmt.Errorf("validate or initialize persistent TOTP storage: %w", err)
 	}
 	if err := ensureWireGuardClientConfigDirectory(options.InstallRoot); err != nil {
 		return manifest, fmt.Errorf("prepare one-time Windows configuration storage: %w", err)
 	}
-	progress(2, true, "Release package and persistent TOTP storage verified")
+	if err := initializeWebContentStore(filepath.Join(options.InstallRoot, "data", "site-content"), filepath.Join(options.InstallRoot, "site")); err != nil {
+		return manifest, fmt.Errorf("prepare persistent public website before update: %w", err)
+	}
+	backupPath, _, err := CreateBackup(options.InstallRoot, options.BackupPath)
+	if err != nil {
+		return manifest, fmt.Errorf("mandatory pre-update backup failed; update was not applied: %w", err)
+	}
+	progress(2, true, "Release verified and pre-update backup created at "+backupPath)
+	id, transactionStage, err := newUpdateStage(options.InstallRoot)
+	if err != nil {
+		return manifest, err
+	}
+	if err := snapshotUpdateFiles(options.InstallRoot, transactionStage); err != nil {
+		_ = os.RemoveAll(filepath.Join(options.InstallRoot, transactionStage))
+		return manifest, err
+	}
+	transaction := updateJournal{
+		Format: 1, ID: id, PreviousVersion: current.Version, TargetVersion: manifest.Version,
+		Stage: transactionStage, State: "prepared", BackupPath: backupPath,
+	}
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		_ = os.RemoveAll(filepath.Join(options.InstallRoot, transactionStage))
+		return manifest, fmt.Errorf("persist update recovery journal: %w", err)
+	}
 	progress(3, false, "Retaining the verified release files")
 	finalRelease := filepath.Join(options.InstallRoot, "releases", manifest.Version)
 	createdRelease := false
-	rollbackComplete := true
+	changed := false
+	composeMayBeRunning := false
+	transactionActive := true
+	paths := updateRecoveryFiles
+	previous := make(map[string][]byte, len(paths))
+	var environment activeEnvironment
 	if _, err := os.Lstat(finalRelease); err == nil {
 		stored, readErr := readReleaseManifest(finalRelease)
 		if readErr != nil || !sameManifest(stored, manifest) {
@@ -131,14 +198,75 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	} else {
 		createdRelease = true
 	}
+	transaction.ReleaseCreated = createdRelease
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		return manifest, fmt.Errorf("record retained update release in recovery journal: %w", err)
+	}
 	progress(3, true, "Release files retained")
-	if createdRelease {
-		defer func() {
-			if resultErr != nil && rollbackComplete {
+	defer func() {
+		if !transactionActive {
+			return
+		}
+		if resultErr == nil {
+			return
+		}
+		if !changed && !composeMayBeRunning {
+			if createdRelease {
 				_ = os.RemoveAll(finalRelease)
 			}
-		}()
-	}
+			if cleanupErr := removeUpdateJournal(options.InstallRoot, transaction); cleanupErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("remove unused update recovery journal: %w", cleanupErr))
+			} else {
+				transactionActive = false
+			}
+			return
+		}
+		progress(7, false, "Restoring the previous release after update failure")
+		transaction.State = "rolling-back"
+		var restoreErrors []string
+		if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Sprintf("persist rollback stage: %v", err))
+		}
+		for _, relative := range paths {
+			mode := os.FileMode(0o644)
+			if relative == ".env" {
+				mode = 0o640
+			}
+			if err := replaceUpdateFileDurable(filepath.Join(options.InstallRoot, relative), previous[relative], mode); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("restore %s: %v", relative, err))
+			}
+		}
+		if options.ConfigureHostServices {
+			if err := configureHostMaintenanceForOperation(context.Background(), options.InstallRoot, current.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("restore previous maintenance service: %v", err))
+			}
+			if err := ConfigureAutomaticBackups(context.Background(), options.InstallRoot, current.Version, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("restore previous automatic backup service: %v", err))
+			}
+		}
+		if composeMayBeRunning {
+			if _, err := options.Runner.Run(context.Background(), "docker", composeArgs(options.InstallRoot, "up", "--detach", "--force-recreate", "--pull", "never")...); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("restart previous release: %v", err))
+			} else if err := waitForReadiness(context.Background(), InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("previous release readiness: %v", err))
+			}
+		}
+		if len(restoreErrors) > 0 {
+			resultErr = fmt.Errorf("%w; automatic rollback encountered errors: %s; recovery journal and backup were retained", resultErr, strings.Join(restoreErrors, "; "))
+			return
+		}
+		if createdRelease {
+			if err := os.RemoveAll(finalRelease); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("remove failed update release; recovery journal retained: %w", err))
+				return
+			}
+		}
+		if err := removeUpdateJournal(options.InstallRoot, transaction); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("finish rollback cleanup; recovery journal retained: %w", err))
+			return
+		}
+		transactionActive = false
+	}()
 
 	progress(4, false, "Loading the bundled Docker images; this can take a few minutes")
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "config", "--quiet")...); err != nil {
@@ -154,8 +282,6 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	progress(4, true, "Bundled Docker images loaded")
 
 	progress(5, false, "Preparing configuration while preserving deployment data")
-	paths := []string{".env", "compose.yaml", filepath.Join("config", "Caddyfile")}
-	previous := make(map[string][]byte, len(paths))
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(options.InstallRoot, relative))
 		if err != nil {
@@ -163,45 +289,29 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		}
 		previous[relative] = data
 	}
-	environment, err := readEnvironment(previous[".env"])
+	environment, err = readEnvironment(previous[".env"])
 	if err != nil {
 		return manifest, err
 	}
 	if environment.Version != current.Version {
 		return manifest, errors.New("active release metadata changed while update was being prepared")
 	}
-	newEnvironment := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\n", environment.Domain, manifest.Version, environment.WireGuardPort)
+	newEnvironment := fmt.Sprintf("BASE_DOMAIN=%s\nRELEASE_VERSION=%s\nWIREGUARD_PORT=%d\nSYSTEMD_JOURNAL_GID=%s\nBACKUP_SCHEDULE=%s\nBACKUP_RETENTION_DAYS=%d\n", environment.Domain, manifest.Version, environment.WireGuardPort, environment.JournalGID, environment.BackupSchedule, environment.BackupRetentionDays)
 	progress(5, true, "Existing configuration captured")
 	progress(6, false, "Activating the new release files")
-	changed := false
-	composeMayBeRunning := false
-	defer func() {
-		if resultErr == nil || !changed {
-			return
-		}
-		progress(7, false, "Restoring the previous release after update failure")
-		var restoreErrors []string
-		for _, relative := range paths {
-			mode := os.FileMode(0o644)
-			if relative == ".env" {
-				mode = 0o640
-			}
-			if err := atomicReplace(filepath.Join(options.InstallRoot, relative), previous[relative], mode); err != nil {
-				restoreErrors = append(restoreErrors, fmt.Sprintf("restore %s: %v", relative, err))
-			}
-		}
-		if composeMayBeRunning {
-			if _, err := options.Runner.Run(context.Background(), "docker", composeArgs(options.InstallRoot, "up", "--detach", "--force-recreate", "--pull", "never")...); err != nil {
-				restoreErrors = append(restoreErrors, fmt.Sprintf("restart previous release: %v", err))
-			} else if err := waitForReadiness(context.Background(), InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
-				restoreErrors = append(restoreErrors, fmt.Sprintf("previous release readiness: %v", err))
-			}
-		}
-		if len(restoreErrors) > 0 {
-			rollbackComplete = false
-			resultErr = fmt.Errorf("%w; automatic rollback encountered errors: %s", resultErr, strings.Join(restoreErrors, "; "))
-		}
-	}()
+	transaction.State = "stopping"
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		return manifest, fmt.Errorf("persist update stop stage: %w", err)
+	}
+	changed = true
+	composeMayBeRunning = true
+	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "stop")...); err != nil {
+		return manifest, fmt.Errorf("stop application stack for update: %w", err)
+	}
+	transaction.State = "replacing"
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		return manifest, fmt.Errorf("persist update activation stage: %w", err)
+	}
 	for _, file := range []struct {
 		relative string
 		content  []byte
@@ -214,24 +324,67 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 		if file.content == nil {
 			return manifest, errors.New("verified release template is unavailable")
 		}
-		if err := atomicReplace(filepath.Join(options.InstallRoot, file.relative), file.content, file.mode); err != nil {
+		if err := replaceUpdateFileDurable(filepath.Join(options.InstallRoot, file.relative), file.content, file.mode); err != nil {
 			return manifest, fmt.Errorf("activate release file %s: %w", file.relative, err)
 		}
 		changed = true
+	}
+	if options.ConfigureHostServices {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
+			return manifest, fmt.Errorf("prepare restricted maintenance service for updated release: %w", err)
+		}
 	}
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "config", "--quiet")...); err != nil {
 		return manifest, fmt.Errorf("validate updated Compose configuration: %w", err)
 	}
 	progress(6, true, "Updated configuration validated")
 	progress(7, false, "Restarting services and waiting for health checks")
-	composeMayBeRunning = true
+	transaction.State = "starting"
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		return manifest, fmt.Errorf("persist update start stage: %w", err)
+	}
 	if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "up", "--detach", "--force-recreate", "--pull", "never")...); err != nil {
 		return manifest, fmt.Errorf("start updated Jellyfin Proxy services: %w", err)
+	}
+	transaction.State = "verifying"
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		return manifest, fmt.Errorf("persist update verification stage: %w", err)
 	}
 	if err := waitForReadiness(ctx, InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
 		return manifest, fmt.Errorf("updated services did not become healthy; the previous release was restored: %w", err)
 	}
 	progress(7, true, "Updated services are healthy")
+	if options.ConfigureHostServices {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, manifest.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
+			return manifest, fmt.Errorf("update restricted maintenance service: %w", err)
+		}
+		if err := ConfigureAutomaticBackups(ctx, options.InstallRoot, manifest.Version, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
+			return manifest, fmt.Errorf("update automatic backup service: %w", err)
+		}
+		if err := InstallPersistentProxyctl(options.InstallRoot, manifest.Version, options.ProxyctlDirectory, options.ProxyctlStateDirectory); err != nil {
+			return manifest, fmt.Errorf("update persistent proxyctl utility: %w", err)
+		}
+		proxyctlDirectory := options.ProxyctlDirectory
+		if proxyctlDirectory == "" {
+			proxyctlDirectory = defaultProxyctlDir
+		}
+		args := []string{"sync-host-services"}
+		if options.MaintenanceUpdated != nil {
+			args = append(args, "--defer-maintenance-restart")
+		}
+		if _, err := options.Runner.Run(ctx, filepath.Join(proxyctlDirectory, "proxyctl"), args...); err != nil {
+			return manifest, fmt.Errorf("refresh host service units with the updated proxyctl utility: %w", err)
+		}
+		// Host service reconciliation may replace the systemd RuntimeDirectory
+		// used for the restricted maintenance socket. Recreate admin only after
+		// that reconciliation so its bind mount attaches to the current directory.
+		if _, err := options.Runner.Run(ctx, "docker", composeArgs(options.InstallRoot, "up", "--detach", "--no-deps", "--force-recreate", "--pull", "never", "admin")...); err != nil {
+			return manifest, fmt.Errorf("refresh the admin maintenance socket mount: %w", err)
+		}
+		if err := waitForReadiness(ctx, InstallOptions{InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval, WaitAttempts: options.WaitAttempts}); err != nil {
+			return manifest, fmt.Errorf("updated services did not become healthy after refreshing the admin maintenance socket mount; the previous release was restored: %w", err)
+		}
+	}
 	progress(8, false, "Checking public HTTPS and retaining the active release")
 	if options.HTTPSCheck == nil {
 		options.HTTPSCheck = checkPublicHTTPS
@@ -242,7 +395,17 @@ func Update(ctx context.Context, options UpdateOptions) (manifest release.Manife
 	if err := retainActiveAndPrevious(options.InstallRoot, manifest.Version, current.Version); err != nil {
 		return manifest, fmt.Errorf("update succeeded, but release retention cleanup failed: %w", err)
 	}
+	transaction.State = "committing"
+	if err := writeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		return manifest, fmt.Errorf("updated services are healthy, but the final transaction state could not be saved: %w", err)
+	}
 	changed = false
+	composeMayBeRunning = false
+	if err := removeUpdateJournal(options.InstallRoot, transaction); err != nil {
+		transactionActive = false
+		return manifest, fmt.Errorf("update is healthy, but recovery-journal cleanup failed; run proxyctl repair: %w", err)
+	}
+	transactionActive = false
 	progress(8, true, "Update completed successfully")
 	return manifest, nil
 }
@@ -434,9 +597,12 @@ func RecoverTOTP(ctx context.Context, installRoot string, action TOTPRecoveryAct
 }
 
 type activeEnvironment struct {
-	Domain        string
-	Version       string
-	WireGuardPort uint16
+	Domain              string
+	Version             string
+	WireGuardPort       uint16
+	JournalGID          string
+	BackupSchedule      string
+	BackupRetentionDays int
 }
 
 func readEnvironment(data []byte) (activeEnvironment, error) {
@@ -447,7 +613,7 @@ func readEnvironment(data []byte) (activeEnvironment, error) {
 			continue
 		}
 		key, value, ok := strings.Cut(line, "=")
-		if !ok || (key != "BASE_DOMAIN" && key != "RELEASE_VERSION" && key != "WIREGUARD_PORT") || values[key] != "" {
+		if !ok || (key != "BASE_DOMAIN" && key != "RELEASE_VERSION" && key != "WIREGUARD_PORT" && key != "SYSTEMD_JOURNAL_GID" && key != "BACKUP_SCHEDULE" && key != "BACKUP_RETENTION_DAYS") || values[key] != "" {
 			return activeEnvironment{}, errors.New("active deployment environment is invalid")
 		}
 		values[key] = value
@@ -460,7 +626,28 @@ func readEnvironment(data []byte) (activeEnvironment, error) {
 	if err != nil || port == 0 || !release.ValidVersion(values["RELEASE_VERSION"]) {
 		return activeEnvironment{}, errors.New("active deployment version or WireGuard port is invalid")
 	}
-	return activeEnvironment{Domain: domain, Version: values["RELEASE_VERSION"], WireGuardPort: uint16(port)}, nil
+	journalGID := values["SYSTEMD_JOURNAL_GID"]
+	if journalGID == "" {
+		journalGID = systemdJournalGroupID()
+	}
+	if _, err := strconv.ParseUint(journalGID, 10, 32); err != nil {
+		return activeEnvironment{}, errors.New("deployment environment systemd journal group ID is invalid")
+	}
+	backupSchedule := values["BACKUP_SCHEDULE"]
+	if backupSchedule == "" {
+		backupSchedule = "daily"
+	}
+	if backupSchedule != "daily" && backupSchedule != "weekly" {
+		return activeEnvironment{}, errors.New("deployment environment backup schedule is invalid")
+	}
+	backupRetention := uint64(30)
+	if values["BACKUP_RETENTION_DAYS"] != "" {
+		backupRetention, err = strconv.ParseUint(values["BACKUP_RETENTION_DAYS"], 10, 8)
+		if err != nil || (backupRetention != 7 && backupRetention != 14 && backupRetention != 30) {
+			return activeEnvironment{}, errors.New("deployment environment backup retention is invalid")
+		}
+	}
+	return activeEnvironment{Domain: domain, Version: values["RELEASE_VERSION"], WireGuardPort: uint16(port), JournalGID: journalGID, BackupSchedule: backupSchedule, BackupRetentionDays: int(backupRetention)}, nil
 }
 
 func validateInstalledLayout(root string) error {
@@ -540,10 +727,30 @@ func readReleaseManifest(directory string) (release.Manifest, error) {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return release.Manifest{}, errors.New("release manifest contains trailing data")
 	}
-	if !release.ValidVersion(manifest.Version) || manifest.SchemaVersion != 1 || manifest.Platform != "linux/amd64" {
-		return release.Manifest{}, errors.New("release manifest is invalid")
+	if err := release.ValidateManifest(manifest); err != nil {
+		return release.Manifest{}, fmt.Errorf("release manifest is invalid: %w", err)
 	}
 	return manifest, nil
+}
+
+func supportsUpgradeFrom(manifest release.Manifest, version string) bool {
+	for _, supported := range manifest.SupportedUpgradeSources {
+		if supported == version {
+			return true
+		}
+	}
+	return false
+}
+
+func validateProxyctlMinimum(manifest release.Manifest) error {
+	comparison, err := release.CompareVersions(proxyctlVersion, manifest.MinimumProxyctlVersion)
+	if err != nil {
+		return fmt.Errorf("compare proxyctl version requirement: %w", err)
+	}
+	if comparison < 0 {
+		return fmt.Errorf("package requires proxyctl %s or newer; installed version is %s", manifest.MinimumProxyctlVersion, proxyctlVersion)
+	}
+	return nil
 }
 
 func sameManifest(left, right release.Manifest) bool {

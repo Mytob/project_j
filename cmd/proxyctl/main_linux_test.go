@@ -10,6 +10,19 @@ import (
 	"testing"
 )
 
+func TestVersionCommandShowsBuildVersionBeforePrivilegeRecovery(t *testing.T) {
+	prior := version
+	version = "1.6.0-dev"
+	t.Cleanup(func() { version = prior })
+	var output strings.Builder
+	if err := run(t.Context(), []string{"--version"}, strings.NewReader(""), &output, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "proxyctl 1.6.0-dev\n" {
+		t.Fatalf("version output = %q", output.String())
+	}
+}
+
 func TestTOTPRecoveryCommandsRejectNonRoot(t *testing.T) {
 	if os.Getenv("PROXYCTL_PRIVILEGE_HELPER") == "1" {
 		err := run(t.Context(), []string{"reset-totp"}, strings.NewReader(""), os.Stdout, os.Stderr)
