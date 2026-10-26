@@ -74,9 +74,10 @@ Real-host journal/nftables enforcement, provider firewall/ACME renewal, and
 native Windows client/firewall acceptance remain pending or blocked. v1.6 is
 not complete and stable release readiness remains blocked. At the user's
 direction, the candidate was merged into `dev` by [PR #79](https://github.com/Mytob/project_j/pull/79)
-at `e51ad3a`. Local CI passed; remaining host acceptance is still open. A
-`dev` to `main` promotion is in progress, with no stable tag, publication, or
-production deployment authorized by that merge.**
+at `e51ad3a`, then promoted to `main` by [PR #81](https://github.com/Mytob/project_j/pull/81)
+at `bbb574b`. Local CI passed; remaining host acceptance is still open. This
+code promotion did not create a stable tag, publish a release, or deploy to
+production.**
 
 The dev.27 change batch refreshes the admin interface styling and navigation;
 keeps Overview concise while reporting every component's health; aligns
