@@ -172,7 +172,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "Verified backup created: %s\nVersion: %s · Build: %s\nSHA-256: %s\nExpired backups removed: %d\n", path, manifest.Version, manifest.BuildID, checksum, removed)
+		fmt.Fprintf(stdout, "Verified backup created: %s\nVersion: %s · Build: %s\nSHA-256: %s\nBackups removed by retention: %d\n", path, manifest.Version, manifest.BuildID, checksum, removed)
 		return nil
 	}
 	if args[0] == "verify-backup" {

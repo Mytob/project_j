@@ -57,15 +57,33 @@ release gates are resolved and explicitly approved.
 
 ## v1.6 — Fresh install, recovery, administration and reliability
 
-**Status: The `1.6.0-dev.26` local release gate passed and the exact package was
-updated on the user-authorized disposable VPS. `proxyctl doctor`, all five
-containers, and updater HTTPS readiness passed. The Security active-ban rows
-are condensed to address/service, remaining duration, failure/escalation, and
-Unban. After the operator signed in again, the live Security page showed nine
-active bans in the compact layout. Real-host journal/nftables enforcement,
-provider-firewall review, ACME renewal, and native Windows client/firewall
-checks remain pending. v1.6 is not complete and stable release readiness
-remains blocked.**
+**Status: The `1.6.0-dev.31` candidate passed the required local release gate
+and installed on the user-authorized disposable public VPS. Its SHA-256 is
+`5DDEC178CAF7D008A61EA3D89D41B2CBF858A10CD51C3BF005ECED97ADFA40BD`. The
+dev.30 pre-update backup (284,213,886 bytes) verified with 44 files; all five
+dev.31 containers became healthy and `sudo -n proxyctl doctor` passed. Durable
+job `545fbbea9d91691ce3de5f024a8fa383` survived the Admin restart and completed
+at step 8/8. A separate dev.31 backup
+verified with 40 files and contained no `data/package-uploads` entries. The
+Admin page reconnected, then required sign-in; the authenticated rendered job
+result after re-sign-in and rollback remain unverified. Safe unused-image
+cleanup removed zero images, and the host had 352 MiB available (96% used)
+after older staged uploads were restored. The local report records
+`local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+Real-host journal/nftables enforcement, provider firewall/ACME renewal, and
+native Windows client/firewall acceptance remain pending or blocked. v1.6 is
+not complete and stable release readiness remains blocked.**
+
+The dev.27 change batch refreshes the admin interface styling and navigation;
+keeps Overview concise while reporting every component's health; aligns
+component status pills on desktop and mobile; adds paginated active bans with
+live countdowns; removes redundant Security History copy; expands the
+Statistics time scrubber to the available page width; removes unnecessary
+product-identifying admin/access copy and directs crawlers away from those
+pages; and caps stored backups at ten with individual deletion controls. The
+focused checks, browser screenshots, full local release gate, package hash,
+and remaining host blockers are recorded in [TESTING.md](TESTING.md). No
+production deployment, merge, or stable release is claimed.
 
 The v1.6 implementation was merged to dev by [PR #71](https://github.com/Mytob/project_j/pull/71) at c8e279a. Documentation corrections were merged by [PR #72](https://github.com/Mytob/project_j/pull/72) at 432b0db. The clean dev.13 candidate was built from dev commit
 432b0db7bc7429f0daa2de83ccfd1b219cffb654. The dev.14 candidate was built
@@ -199,12 +217,12 @@ implementation audit and remaining work are tracked in
 
 | Area | Status | Remaining gate |
 | --- | --- | --- |
-| Go, frontend and browser regression checks | **Passed on dev.21 working tree** | Dashboard update/rollback on a real host and remaining host-specific release checks remain open. |
-| Offline .pkg install/update/rollback | **Passed on dev.21 in local isolated Docker gate** | Six bundled images loaded without registry access. |
-| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install/reboot; dev.15 host checks; dev.19 exact-package update and migration passed** | Full destructive failure matrix was not repeated against dev.19. |
-| Public DNS, provider firewall and ACME | **TLS readiness passed on dev.21 VPS** | Authenticated admin pages await sign-in; provider-firewall configuration and ACME renewal remain unverified. |
+| Go, frontend and browser regression checks | **Passed on dev.31 working tree** | Authenticated rendered job recovery after re-sign-in, rollback, and remaining host-specific release checks remain open. |
+| Offline .pkg install/update/rollback | **Passed on dev.31 in local isolated Docker gate** | Six bundled images loaded without registry access. |
+| Ubuntu install, recovery and failure acceptance | **Broad dev.12 matrix passed; dev.14 fresh install/reboot; dev.15 host checks; dev.19 exact-package update and migration passed; dev.27 and dev.30 updates passed; dev.31 update and backup regression passed** | Authenticated rendered progress recovery after re-sign-in and rollback remain unverified; host-specific journal/nftables, provider, and Windows checks remain open. |
+| Public DNS, provider firewall and ACME | **TLS routes returned 200/200/403 on dev.30 VPS** | Provider-firewall configuration and ACME renewal remain unverified. |
 | Native Windows WireGuard and firewall | **Blocked** | Requires Windows client and scoped firewall/playback verification. |
-| Complete v1.6 stable release | **Not ready** | Authenticated dev.21 page verification, real-host dashboard update/rollback, provider firewall/ACME/internet WireGuard, and Windows checks remain open. Do not promote or publish dev.21 as stable. |
+| Complete v1.6 stable release | **Not ready** | Live dashboard progress recovery/rollback, provider firewall/ACME, real-host journal/nftables, internet WireGuard, and Windows checks remain open. Do not promote or publish dev.31 as stable. |
 
 The clean dev.19 package SHA-256 is
 `a1c656f95fe91f5cd8aab5319d0e7cbbdfb36847077b7d301bf027b578a002df`;
@@ -849,3 +867,6 @@ merge commit `7470ef3`.
 | 2026-10-23 | Reduce repeated v1.6 security reconciliation load and restore Caddy bans promptly after restarts. | `fix/v16-maintenance-self-restart`; dev.24 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79), commits `876052b` and `84ad8e6`. | The corrected `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.24 -SupportedUpgradeSources 1.6.0-dev.23` gate passed after an initial run caught delayed Caddy ban restoration on restart. The exact dev.24 package updated the disposable VPS; doctor, five healthy containers, TLS routes, and maintenance socket bind identities passed. Full security reconciliation was moved off the one-second maintenance tick and Caddy-only ban refresh remained one-second. Host CPU no longer stayed at 100%, though a later `docker stats --no-stream` snapshot showed a transient securityd spike from per-IP Fail2ban queries; this led to dev.25 batching. See [TESTING.md](TESTING.md). |
 | 2026-10-23 | Batch Fail2ban ban lookups; pass the dev.25 release gate and update the disposable VPS. | `fix/v16-maintenance-self-restart`; dev.25 candidate in draft [PR #79](https://github.com/Mytob/project_j/pull/79), code commit `4d7ba8e`. | Focused security/deployment/maintenance/admin/containerhealth Go tests passed. `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.25 -SupportedUpgradeSources 1.6.0-dev.24` — PASS, exit 0; the report records local gate passed and remaining host checks blocked. Package SHA-256 `15a71f204cb59ed4aa7465efe8ed3aa2a90dc249992b48e50907090c8da774df`. Exact package update, `proxyctl doctor`, five healthy containers, and public TLS routes 200/200/403 passed. Authenticated Health and Settings pages loaded; Health showed all components healthy and CPU 5.1% at its latest sample. Real-host journal/nftables, ACME renewal, provider-firewall, and native Windows checks remain pending. No production release, merge, or publication. See [TESTING.md](TESTING.md). |
 | 2026-10-23 | Condense active ban rows on the Security page; pass dev.26 release gate and update the disposable VPS. | `fix/v16-maintenance-self-restart`; change commit `ed101cc` in draft [PR #79](https://github.com/Mytob/project_j/pull/79). The deployed package was built before commit from the equivalent working tree based on `43c569f` (dirty build identifier). | Frontend typecheck, 7 unit tests, build, and four browser tests passed. `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.26 -SupportedUpgradeSources 1.6.0-dev.25` — PASS, exit 0; local gate passed, host checks blocked. Package SHA-256 `C5D224435B20C42F223100E12D379B3EB26E8C4EB207EBE3225BCB9FC62CA75D`. Exact package update, updater readiness, `proxyctl doctor`, and five healthy containers passed. After operator sign-in, the live Security page displayed nine active bans in the compact row layout. No production release, merge, or publication. See [TESTING.md](TESTING.md). |
+| 2026-10-23 | Refresh the admin interface and implement the requested Security, privacy, and backup controls; pass dev.27 local release gate. | `fix/v16-maintenance-self-restart`, based on `a91567b`; local changes are uncommitted and draft [PR #79](https://github.com/Mytob/project_j/pull/79) remains open. | `pwsh -NoProfile -File .\tests\integration\run.ps1 -UpdateBrowserSnapshots` — PASS, four browser tests and M1–M6 integration checks. `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.27 -SupportedUpgradeSources 1.6.0-dev.26` — PASS, exit 0; Go, browser/integration, and offline package/install/update/rollback checks passed. Report `local_gate: passed`, host readiness blocked. Package SHA-256 `E1349E49C7BA5E212BEB6C705EBE339B930006B60286F3339682A5944C29A489`; size 137,816,330 bytes. The disposable public VPS update and checks are recorded in [TESTING.md](TESTING.md). Real-host journal/nftables, provider firewall/ACME, and native Windows acceptance remain pending or blocked. No production deployment, merge, or stable release. See [TESTING.md](TESTING.md). |
+| 2026-10-24 | Fix System maintenance progress polling when the Admin service restarts during a web update; pass the dev.30 local gate and update the authorized test VPS. | `fix/v16-maintenance-self-restart`; draft [PR #79](https://github.com/Mytob/project_j/pull/79) remains open; working tree uncommitted. | `& .\build.ps1 release -Version '1.6.0-dev.30' -SupportedUpgradeSources @('1.6.0-dev.28','1.6.0-dev.29')` — PASS, exit 0. Go, frontend, four browser tests, M1–M6 integration, and offline install/update/preservation/rollback gates passed. Correct package SHA-256 `B70028B8DB8C6DB9BFC65F4DFCF41E54683BE4D8FC5EFF8A886686E410CE3FC8`. The VPS moved from dev.29 to dev.30 after a persistent 1 GiB `/tmp` tmpfs override allowed the pre-update backup to complete (559,962,934 bytes). All five containers are healthy; `proxyctl doctor` passed and public TLS routes returned 200/200/403. The browser progress display remained stale/unavailable after Admin restart and reloading returned to sign-in, so live progress recovery and rollback remain unverified. Our failed and duplicate uploads were removed; older uploads/backups were preserved. Real-host journal/nftables, provider firewall/ACME and native Windows acceptance remain open. No v1.6 completion or production release. See [TESTING.md](TESTING.md). |
+| 2026-10-24 | Exclude temporary release uploads from backups and make System progress resume by durable job ID; pass the dev.31 local release gate and verify on the disposable VPS. | `fix/v16-maintenance-self-restart`; draft [PR #79](https://github.com/Mytob/project_j/pull/79) remains open; working tree uncommitted. | `& .\build.ps1 release -Version '1.6.0-dev.31' -SupportedUpgradeSources @('1.6.0-dev.29','1.6.0-dev.30')` — PASS, exit 0. Full Go/frontend checks, four browser tests, M1–M6 integration, isolated security/firewall, and offline install/update/preservation/rollback gates passed. Package SHA-256 `5DDEC178CAF7D008A61EA3D89D41B2CBF858A10CD51C3BF005ECED97ADFA40BD`. The first live attempt stopped without applying the update when dev.30's mandatory backup ran out of space. Three older staged uploads were preserved temporarily outside the live data directory, then restored. The exact dev.31 package then installed; mandatory dev.30 backup (284,213,886 bytes) verified with 44 files. Durable job `545fbbea9d91691ce3de5f024a8fa383` reached completed, step 8/8; all five containers were healthy and `proxyctl version` returned dev.31. A dev.31 test backup (7.0 MiB) verified with 40 files and contained no `data/package-uploads`; the temporary archive and our two dev.31 staging uploads were removed. Admin progress reconnected, but the browser session expired during restart, so its authenticated rendered result after re-sign-in remains open. Disk had 352 MiB available (96% used); unused-image cleanup removed zero images. Real-host journal/nftables, provider firewall/ACME and native Windows acceptance remain open. No production deployment or v1.6 completion. See [TESTING.md](TESTING.md).

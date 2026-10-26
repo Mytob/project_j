@@ -199,6 +199,9 @@ func operationTitle(action string) string {
 	if action == "" {
 		return "Maintenance operation"
 	}
+	if action == "delete-backup" {
+		return "Backup deletion"
+	}
 	return strings.ToUpper(action[:1]) + action[1:]
 }
 
@@ -305,7 +308,7 @@ func validJobState(state string) bool {
 
 func validJobAction(action string) bool {
 	switch action {
-	case "backup", "cleanup", "update", "restore", "rollback":
+	case "backup", "cleanup", "update", "restore", "rollback", "delete-backup":
 		return true
 	default:
 		return false

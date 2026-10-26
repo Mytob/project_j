@@ -5,7 +5,8 @@ param(
     [string]$Target = 'test',
     [string]$Version = '1.6.0-dev',
     [string]$HostCheckEvidence = '',
-    [string[]]$SupportedUpgradeSources = @()
+    [string[]]$SupportedUpgradeSources = @(),
+    [switch]$UpdateBrowserSnapshots
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +16,11 @@ function Invoke-Checked([string]$Command, [string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) {
         throw "$Command $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
     }
+}
+
+function Invoke-ReleasePackage([string]$Version, [string]$OutputDirectory, [string[]]$SupportedUpgradeSources) {
+    $packageScript = Join-Path $PSScriptRoot 'packaging/package.ps1'
+    & $packageScript -Version $Version -OutputDirectory $OutputDirectory -SupportedUpgradeSources $SupportedUpgradeSources
 }
 
 if ($Target -eq 'release') {
@@ -97,12 +103,7 @@ if ($Target -eq 'release') {
         $checks[1].status = 'passed'
 
         $checks[2].status = 'running'
-        $packageArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
-        if ($SupportedUpgradeSources.Count -gt 0) {
-            $packageArguments += '-SupportedUpgradeSources'
-            $packageArguments += $SupportedUpgradeSources
-        }
-        Invoke-Checked 'pwsh' $packageArguments
+        Invoke-ReleasePackage -Version $Version -OutputDirectory $outputDirectory -SupportedUpgradeSources $SupportedUpgradeSources
         $checks[2].status = 'passed'
         $report.local_gate = 'passed'
     }
@@ -151,18 +152,15 @@ else {
 }
 
 if ($Target -eq 'test') {
-    Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'tests/integration/run.ps1'))
+    $integrationArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'tests/integration/run.ps1'))
+    if ($UpdateBrowserSnapshots) { $integrationArguments += '-UpdateBrowserSnapshots' }
+    Invoke-Checked 'pwsh' $integrationArguments
     exit 0
 }
 
 if ($Target -eq 'package') {
     Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'tests/integration/run.ps1'))
-    $packageArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'packaging/package.ps1'), '-Version', $Version)
-    if ($SupportedUpgradeSources.Count -gt 0) {
-        $packageArguments += '-SupportedUpgradeSources'
-        $packageArguments += $SupportedUpgradeSources
-    }
-    Invoke-Checked 'pwsh' $packageArguments
+    Invoke-ReleasePackage -Version $Version -OutputDirectory (Join-Path $PSScriptRoot 'dist') -SupportedUpgradeSources $SupportedUpgradeSources
     exit 0
 }
 

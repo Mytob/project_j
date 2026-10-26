@@ -227,6 +227,48 @@ func TestMaintenanceCleanupJobUsesFixedNoArgumentAction(t *testing.T) {
 	}
 }
 
+func TestMaintenanceDeleteBackupRequiresOneSafeArchiveName(t *testing.T) {
+	server := NewServerWithDirectories(filepath.Join(t.TempDir(), "missing-docker.sock"), filepath.Join(t.TempDir(), "backups"), filepath.Join(t.TempDir(), "jobs"))
+	var received OperationRequest
+	server.ConfigureOperations(Operations{Run: func(_ context.Context, operation OperationRequest, report func(OperationProgress)) (string, error) {
+		received = operation
+		report(OperationProgress{Step: 1, Total: 1, Message: "Backup deleted"})
+		return operation.BackupName, nil
+	}})
+	handler := server.Handler()
+	for _, body := range []string{`{"action":"delete-backup"}`, `{"action":"delete-backup","backup_name":"../outside.bak"}`, `{"action":"delete-backup","backup_name":"safe.bak","upload_id":"0123456789abcdef0123456789abcdef"}`} {
+		request := httptest.NewRequest(http.MethodPost, "/system/jobs", strings.NewReader(body))
+		request = request.WithContext(WithPeerUID(request.Context(), AuthorizedAdminUID))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("unsafe deletion request %q returned %d, want 400", body, response.Code)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/system/jobs", strings.NewReader(`{"action":"delete-backup","backup_name":"safe.bak"}`))
+	request = request.WithContext(WithPeerUID(request.Context(), AuthorizedAdminUID))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("valid deletion job returned %d %q", response.Code, response.Body.String())
+	}
+	var job Job
+	if err := json.Unmarshal(response.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if completed, ok := server.jobs.Get(job.ID); ok && completed.State == "completed" {
+			if received.Action != "delete-backup" || received.BackupName != "safe.bak" || received.UploadID != "" || received.SHA256 != "" {
+				t.Fatalf("deletion worker received unexpected request: %+v", received)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("backup deletion job did not complete")
+}
+
 func TestMaintenanceServiceRefreshRunsAfterPersistedJobCompletion(t *testing.T) {
 	server := NewServerWithDirectories(filepath.Join(t.TempDir(), "missing-docker.sock"), filepath.Join(t.TempDir(), "backups"), filepath.Join(t.TempDir(), "jobs"))
 	refreshed := make(chan string, 1)

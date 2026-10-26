@@ -12,6 +12,8 @@
 }
 
 admin.{$BASE_DOMAIN} {
+	header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+	respond /robots.txt "User-agent: *\nDisallow: /\n" 200
 	jp_admin_bans
 	reverse_proxy admin-origin:8080 {
 		header_up X-JP-Client-IP {http.request.remote.host}
@@ -19,6 +21,8 @@ admin.{$BASE_DOMAIN} {
 }
 
 access.{$BASE_DOMAIN} {
+	header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+	respond /robots.txt "User-agent: *\nDisallow: /\n" 200
 	root * /srv/site/current
 	handle_errors 403 404 502 503 {
 		rewrite /errors/{err.status_code}.html

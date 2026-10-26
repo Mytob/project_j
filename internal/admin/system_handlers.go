@@ -93,6 +93,29 @@ func (s *Server) systemJobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) systemJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFullAdminSession(w, r) {
+		return
+	}
+	if s.systemMaintenance == nil {
+		http.Error(w, "System maintenance is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	job, err := s.systemMaintenance.Job(ctx, r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "Maintenance job status is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		s.logger.Error("write maintenance job status", "error", err)
+	}
+}
+
 func (s *Server) startSystemJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFullAdminSession(w, r) {
 		return

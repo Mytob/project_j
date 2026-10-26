@@ -1,5 +1,172 @@
 # Testing
 
+## v1.6.0-dev.31 backup staging and restart progress recovery — 2026-10-24
+
+- **Backup fix:** Backup walks now prune `data/package-uploads` before staging,
+  preventing temporary `.pkg` files and upload records from consuming tmpfs or
+  being retained in backups. A deterministic archive/restore regression test
+  verifies uploads are omitted while persistent `data` remains.
+- **Progress fix:** The admin API now exposes a protected single-job status
+  route backed by the maintenance service's durable job record. The browser
+  polls the submitted job ID across service restarts, so it cannot follow a
+  newer unrelated job and can receive the persisted interrupted/completed
+  state after maintenance returns.
+- **Focused Go tests:**
+  `docker run --rm -v "${PWD}:/src" -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/backup ./internal/admin ./internal/maintenance`
+  — PASS; all three packages passed.
+- **Required full local release gate:**
+  `& .\build.ps1 release -Version '1.6.0-dev.31' -SupportedUpgradeSources @('1.6.0-dev.29','1.6.0-dev.30')`
+  — PASS, exit 0. Full Go tests, frontend typecheck/unit tests/build, four
+  browser tests, M1–M6 integration, isolated security/firewall, and offline
+  install/update/preservation/rollback/retention/recovery checks passed.
+- **Report and package:**
+  `dist/release-validation-1.6.0-dev.31.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`. Package size is
+  138,514,141 bytes; SHA-256 is
+  `5DDEC178CAF7D008A61EA3D89D41B2CBF858A10CD51C3BF005ECED97ADFA40BD`.
+- **Live acceptance on the disposable VPS (2026-10-24 UTC):** The first
+  dev.31 attempt stopped safely because the dev.30 pre-update backup ran out of
+  disk space; the active release stayed on dev.30. Three older, completed
+  package uploads were preserved in `/tmp` while the update ran, then restored
+  with their original contents and metadata. The exact dev.31 package passed
+  checksum and compatibility review and installed successfully. Its mandatory
+  dev.30 pre-update backup
+  `/var/backups/jellyfin-proxy/jellyfin-proxy-1.6.0-dev.30-a91567bf1ca0-dirty-20261024T235349.292414500Z.bak`
+  was 284,213,886 bytes and passed
+  `sudo -n proxyctl verify-backup /var/backups/jellyfin-proxy/jellyfin-proxy-1.6.0-dev.30-a91567bf1ca0-dirty-20261024T235349.292414500Z.bak`
+  (44 files).
+  Persistent maintenance job
+  `545fbbea9d91691ce3de5f024a8fa383` survived the Admin restart and was read
+  from its durable record as `completed`, step 8/8, result dev.31. The page
+  reconnected during restart, then required sign-in again; the authenticated
+  rendered result was not rechecked after sign-in.
+- **Live backup regression:** `sudo -n proxyctl backup
+  /tmp/jp-dev31-backup-test.bak` created a 7.0 MiB dev.31 archive. `sudo -n
+  proxyctl verify-backup /tmp/jp-dev31-backup-test.bak` passed with 40 files;
+  `sudo -n tar -tf /tmp/jp-dev31-backup-test.bak` listed no
+  `data/package-uploads` entries. The temporary archive was removed after
+  verification. Existing managed backups and the three temporarily moved
+  uploads were preserved; our two dev.31 staging uploads were removed. The VPS
+  reported all five containers healthy, `proxyctl version` returned dev.31,
+  and `sudo -n proxyctl doctor` passed all checks, including storage at 96% use.
+  After restoring the older uploads, `/` had 352 MiB available (96% used).
+  Safe unused-image cleanup removed zero images. Host journal/nftables,
+  provider firewall/ACME, rollback, and native Windows checks remain open; no
+  production deployment or v1.6 completion is claimed.
+
+## v1.6.0-dev.30 maintenance progress reconnect — 2026-10-24
+
+- **Changes:** When an update restarts the Admin service, the System page now
+  treats a temporary maintenance-status fetch failure as a reconnecting state,
+  retries until the job is visible again, clears that state after a successful
+  response, and refreshes release details when the job reaches a terminal
+  state. A session-expiry response stops polling and offers sign-in recovery.
+- **Browser regression:** The admin browser test aborts one maintenance poll
+  during an update and verifies the reconnect notice clears after completion
+  and the installed release details refresh.
+- **Required full local release gate:**
+  `& .\build.ps1 release -Version '1.6.0-dev.30' -SupportedUpgradeSources @('1.6.0-dev.28','1.6.0-dev.29')`
+  — PASS, exit 0. The first attempt failed on an ambiguous browser-test
+  locator; after narrowing the assertion to the running-release summary, the
+  same gate passed. Go, frontend typecheck/unit tests/build, four browser tests,
+  M1–M6 integration, isolated security/firewall, and offline package install,
+  update, preservation, rollback, retention, and recovery checks passed.
+- **Report and package:**
+  `dist/release-validation-1.6.0-dev.30.json` records `local_gate: passed` and
+  `release_readiness: blocked_host_checks_pending`. Correct package SHA-256 is
+  `B70028B8DB8C6DB9BFC65F4DFCF41E54683BE4D8FC5EFF8A886686E410CE3FC8`; it
+  includes dev.28 and dev.29 as supported upgrade sources. The earlier
+  `F836...` package omitted dev.29 and was correctly rejected by compatibility
+  validation.
+- **Live acceptance:** After operator sign-in, the disposable public VPS was
+  observed on dev.29. Its host `/tmp` was a 405 MB tmpfs; package uploads
+  occupied 792 MB and the root filesystem had 821 MB free. I removed only my
+  rejected or superseded uploads, retaining older uploads I did not create.
+  A persistent systemd `tmp.mount` drop-in raised the tmpfs limit to 1 GiB;
+  both the host and maintenance service reported the larger limit. The
+  corrected package passed checksum and compatibility review for
+  `ubuntu-26.04`/`amd64`. The mandatory pre-update backup completed at
+  559,962,934 bytes, then the updater installed dev.30. All five containers
+  are healthy, `/usr/local/sbin/proxyctl doctor` passed, and verified public
+  TLS routes returned 200/200/403 for base/admin/access. The admin progress
+  panel remained on “Loading the bundled Docker images” with “Maintenance
+  progress is unavailable” after the Admin restart; page reload returned to
+  sign-in, so live progress recovery and dashboard rollback were not verified.
+  The successful package upload created for this update was removed after
+  installation. One 270.1 MB dev.28 backup, the new dev.29 pre-update backup,
+  and older uploads were retained. Actual-host journal/nftables, provider
+  firewall/ACME, and native Windows acceptance remain pending or blocked. No
+  production deployment, merge, or v1.6 completion is claimed.
+
+## v1.6.0-dev.27 admin interface, Security controls, and backup management — 2026-10-23
+
+- **Changes:** Refreshed shared admin styling and navigation; Overview now
+  reports concise system/security summaries and every component's health;
+  Health status columns align at desktop and mobile widths; active bans have
+  pagination and second-by-second countdowns; removed redundant Security
+  History copy; expanded the Statistics time scrubber to full width; removed
+  unnecessary product identity from admin/access pages and added crawler
+  exclusion headers/robots rules; enforced a ten-backup retention cap and
+  added individual backup deletion.
+- **Focused Go tests:**
+  `docker run --rm -v "D:/Projects/Project_J2:/src" -w /src golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d go test ./internal/deployment ./internal/maintenance ./internal/admin`
+  — PASS; all three packages passed.
+- **Focused frontend checks:** In the isolated Node 24.22.0 frontend
+  environment, `npm run typecheck`, `npm test`, and `npm run build` — PASS;
+  2 test files and 12 unit tests passed, then Vite built the frontend.
+- **Integration/browser checks:**
+  `pwsh -NoProfile -File .\tests\integration\run.ps1 -UpdateBrowserSnapshots`
+  — PASS, exit 0. Four Playwright tests passed across Chromium, Firefox, and
+  WebKit, including responsive page navigation, TOTP/admin flows, Overview
+  component health, and refreshed desktop/mobile snapshots. Caddy security,
+  Fail2ban/nftables IPv4/IPv6 enforcement, monitoring/history, streaming, and
+  WireGuard lifecycle/recovery checks passed. The first browser attempt
+  exposed a stale assertion that expected Overview not to list Admin backend;
+  the assertion was updated to match the requested component-health summary
+  before this passing run.
+- **Required local release gate:**
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.27 -SupportedUpgradeSources 1.6.0-dev.26`
+  — PASS, exit 0. The full Go suite, browser/integration suite, frontend
+  typecheck/unit tests/build, and offline package install/update/rollback,
+  recovery, and retention checks passed. The report's install/package failure
+  scenario deliberately exercises port-collision rejection; the overall M8/M9
+  package checks passed.
+- **Report and package:** `dist/release-validation-1.6.0-dev.27.json` records
+  `local_gate: passed` and `release_readiness: blocked_host_checks_pending`.
+  `dist/jellyfin-proxy-1.6.0-dev.27.pkg` is 137,816,330 bytes with SHA-256
+  `E1349E49C7BA5E212BEB6C705EBE339B930006B60286F3339682A5944C29A489`.
+  Build identifier: `a91567bf1ca0-dirty`.
+- **Disposable public VPS update:** The exact package and standalone updater
+  were transferred with sidecars; both remote SHA-256 checks passed. Ran
+  `TERM=dumb ./proxyctl-linux-amd64 update ./jellyfin-proxy-1.6.0-dev.27.pkg`
+  from the transfer directory. The updater verified the current installation,
+  created the verified dev.26 pre-update backup
+  `/var/backups/jellyfin-proxy/jellyfin-proxy-1.6.0-dev.26-43c569f17010-dirty-20261023T214248.254470714Z.bak`,
+  loaded images, validated config and services, passed HTTPS readiness, and
+  completed successfully. `proxyctl doctor` passed on `1.6.0-dev.27`, build
+  `a91567bf1ca0-dirty`; all five containers were up and healthy, and the
+  maintenance service and scheduled backup timer were active. Root storage had
+  1.9 GB free (78% used) after the update.
+- **Public and browser checks:** With certificate verification enabled,
+  `darkcry.com`, `admin.darkcry.com`, and `access.darkcry.com` returned
+  200/200/403 with valid TLS. Admin responses included
+  `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet` and `/robots.txt`
+  disallowed crawling. The default-deny access hostname returned 403 for both
+  `/` and `/robots.txt`, with the same crawler header. After refreshing the
+  open admin page, the sign-in screen showed generic “Admin / Control panel”
+  wording. After operator sign-in, Overview showed all 12 component states as
+  Healthy. Security showed 10 active bans over two pages; a displayed ban
+  countdown changed from 47m 11s to 47m 10s over 1.3 seconds. System showed
+  the ten-backup retention policy and an individual Delete action for every
+  listed backup; no backup was deleted during verification.
+- **Remaining host checks and delivery:** Provider firewall review, ACME
+  renewal, real-host journal/nftables/Fail2ban enforcement, and native Windows
+  client/firewall/playback acceptance remain pending; they are not claimed as
+  passed. The test VPS is not production. No production deployment, merge, or
+  v1.6 completion is claimed. Working-tree changes are on
+  `fix/v16-maintenance-self-restart`; draft PR #79 remains open, and these
+  changes are not committed or pushed to GitHub.
+
 ## v1.6.0-dev.26 Security active-ban layout — 2026-10-23
 
 - Changes: active bans use compact rows showing address/service, time remaining,

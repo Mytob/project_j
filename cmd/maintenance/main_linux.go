@@ -165,6 +165,16 @@ func runOperation(ctx context.Context, operation maintenance.OperationRequest, r
 			return "", err
 		}
 		return manifest.Version + " · " + manifest.BuildID, nil
+	case "delete-backup":
+		path, err := safeBackupDeletePath(operation.BackupName)
+		if err != nil {
+			return "", err
+		}
+		if err := deployment.DeleteStoredBackup(deployment.DefaultBackupRoot, deployment.DefaultInstallRoot, filepath.Base(path)); err != nil {
+			return "", err
+		}
+		report(maintenance.OperationProgress{Step: 1, Total: 1, Message: "Backup deleted"})
+		return filepath.Base(path), nil
 	case "rollback":
 		manifest, err := deployment.RollbackPrevious(ctx, deployment.RollbackOptions{InstallRoot: deployment.DefaultInstallRoot, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, MaintenanceUpdated: operation.MaintenanceUpdated, Progress: toProgress})
 		if err != nil {
@@ -265,6 +275,20 @@ func safeBackupPath(name string) (string, error) {
 	}
 	if _, err := deployment.ValidateBackup(path); err != nil {
 		return "", fmt.Errorf("stored backup failed validation: %w", err)
+	}
+	return path, nil
+}
+
+func safeBackupDeletePath(name string) (string, error) {
+	if !safeBackupName.MatchString(name) || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
+		return "", errors.New("backup name is invalid")
+	}
+	if err := requireOwnedDirectory(deployment.DefaultBackupRoot, 0, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(deployment.DefaultBackupRoot, name)
+	if err := requireOwnedRegular(path, 0, 0o600, 2<<30); err != nil {
+		return "", err
 	}
 	return path, nil
 }

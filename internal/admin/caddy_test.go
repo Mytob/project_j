@@ -72,6 +72,56 @@ func TestCaddyHealthCheckUsesPrivateConfigEndpoint(t *testing.T) {
 	}
 }
 
+func TestAdminAndAccessHostsAreMarkedNoIndex(t *testing.T) {
+	for _, fixture := range []struct {
+		filename string
+		hosts    []string
+	}{
+		{"../../deploy/caddy/Caddyfile", []string{"admin.{$BASE_DOMAIN}", "access.{$BASE_DOMAIN}"}},
+		{"../../deploy/caddy/Caddyfile.test", []string{"admin.domain.test", "access.domain.test"}},
+	} {
+		content, err := os.ReadFile(fixture.filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := string(content)
+		for _, host := range fixture.hosts {
+			block := caddySiteBlock(config, host)
+			if !strings.Contains(block, `header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"`) {
+				t.Errorf("%s does not mark %s as noindex", fixture.filename, host)
+			}
+			if !strings.Contains(block, `respond /robots.txt "User-agent: *\nDisallow: /\n" 200`) {
+				t.Errorf("%s does not disallow crawlers at %s/robots.txt", fixture.filename, host)
+			}
+		}
+	}
+}
+
+func caddySiteBlock(config, host string) string {
+	start := strings.Index(config, host+" {")
+	if start < 0 {
+		return ""
+	}
+	openingOffset := strings.Index(config[start+len(host):], "{")
+	if openingOffset < 0 {
+		return ""
+	}
+	opening := start + len(host) + openingOffset
+	depth := 0
+	for index := opening; index < len(config); index++ {
+		switch config[index] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return config[start : index+1]
+			}
+		}
+	}
+	return config[start:]
+}
+
 func TestCaddyAPIRejectsInvalidTemplateAndCaddyErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Caddyfile")
 	if err := os.WriteFile(path, []byte("no import here"), 0o600); err != nil {

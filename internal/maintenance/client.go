@@ -82,6 +82,35 @@ func (c *Client) Jobs(ctx context.Context) ([]Job, error) {
 	return values, nil
 }
 
+// Job returns one durable operation record, so reconnecting clients do not
+// accidentally follow a different operation that was started later.
+func (c *Client) Job(ctx context.Context, id string) (Job, error) {
+	if len(id) != 32 {
+		return Job{}, errors.New("invalid maintenance job ID")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return Job{}, errors.New("invalid maintenance job ID")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+"/system/jobs/"+id, nil)
+	if err != nil {
+		return Job{}, err
+	}
+	response, err := c.client.Do(request)
+	if err != nil {
+		return Job{}, errors.New("private maintenance job service is unavailable")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return Job{}, errors.New("private maintenance job service is unavailable")
+	}
+	var job Job
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 16<<10))
+	if err := decoder.Decode(&job); err != nil || !validClientJob(job) || job.ID != id {
+		return Job{}, errors.New("private maintenance job response was invalid")
+	}
+	return job, nil
+}
+
 func validClientJob(job Job) bool {
 	if len(job.ID) != 32 || !validJobAction(job.Action) || !validJobState(job.State) || job.Total <= 0 || job.Total > 20 || job.Step < 0 || job.Step > job.Total || len(job.Message) > 200 || len(job.Result) > 255 || len(job.Error) > 240 || job.StartedAt.IsZero() || job.UpdatedAt.IsZero() {
 		return false

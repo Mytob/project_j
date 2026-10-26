@@ -164,9 +164,9 @@ func validateOperationRequest(action, uploadID, checksum, backupName string) err
 		if !uploadIDPattern.MatchString(uploadID) || !packageSHA256Pattern.MatchString(checksum) || backupName != "" {
 			return errors.New("update requires an upload ID and independent checksum")
 		}
-	case "restore":
+	case "restore", "delete-backup":
 		if !backupNamePattern.MatchString(backupName) || filepath.Base(backupName) != backupName || strings.ContainsAny(backupName, `/\\`) || uploadID != "" || checksum != "" {
-			return errors.New("restore requires a stored backup file name")
+			return errors.New("operation requires a stored backup file name")
 		}
 	default:
 		return errors.New("unsupported maintenance operation")
@@ -182,6 +182,8 @@ func operationTotal(action string) int {
 		return 2
 	case "update":
 		return 8
+	case "delete-backup":
+		return 1
 	case "restore", "rollback":
 		return 7
 	default:

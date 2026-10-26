@@ -205,6 +205,16 @@ try {
     if ($verifiedManifest.schema_version -ne 2 -or $verifiedManifest.version -ne $Version -or $verifiedManifest.target_os -ne 'ubuntu-26.04' -or $verifiedManifest.architecture -ne 'amd64' -or $verifiedManifest.platform -ne 'linux/amd64') {
         throw 'Packaged manifest has an unexpected schema, version, or platform.'
     }
+    $expectedUpgradeSources = @($SupportedUpgradeSources)
+    $actualUpgradeSources = @($verifiedManifest.supported_upgrade_sources)
+    if ($actualUpgradeSources.Count -ne $expectedUpgradeSources.Count) {
+        throw 'Packaged manifest does not contain the requested supported-upgrade sources.'
+    }
+    for ($index = 0; $index -lt $expectedUpgradeSources.Count; $index++) {
+        if ([string]$actualUpgradeSources[$index] -cne [string]$expectedUpgradeSources[$index]) {
+            throw 'Packaged manifest does not contain the requested supported-upgrade sources.'
+        }
+    }
     foreach ($file in $verifiedManifest.files) {
         $path = Join-Path $verifyDirectory $file.path
         $resolved = (Resolve-Path -LiteralPath $path).Path

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,17 @@ func TestSystemBackupEndpointsRequireFullAdminSession(t *testing.T) {
 	handler.ServeHTTP(startResponse, start)
 	if startResponse.Code != http.StatusAccepted || !strings.Contains(startResponse.Body.String(), `"action":"backup"`) {
 		t.Fatalf("authenticated backup job start = %d %q", startResponse.Code, startResponse.Body.String())
+	}
+	var started maintenance.Job
+	if err := json.Unmarshal(startResponse.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	jobRequest := httptest.NewRequest(http.MethodGet, "/system/jobs/"+started.ID, nil)
+	jobRequest.AddCookie(&http.Cookie{Name: "admin_session", Value: sessionID})
+	jobResponse := httptest.NewRecorder()
+	handler.ServeHTTP(jobResponse, jobRequest)
+	if jobResponse.Code != http.StatusOK || !strings.Contains(jobResponse.Body.String(), started.ID) {
+		t.Fatalf("authenticated single job status = %d %q", jobResponse.Code, jobResponse.Body.String())
 	}
 
 	download := httptest.NewRequest(http.MethodGet, "/system/backups/"+name, nil)

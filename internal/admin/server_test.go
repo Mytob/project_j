@@ -72,6 +72,32 @@ func newTOTPTestServer(t *testing.T) (*Server, http.Handler, *auth.TOTPStore, st
 	return server, server.Handler(), store, filepath.Join(root, "totp-state.json")
 }
 
+func TestAdminSignInAndRobotsPolicyArePrivateAndUnbranded(t *testing.T) {
+	_, handler, _, _ := newTOTPTestServer(t)
+
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/", nil))
+	if login.Code != http.StatusOK {
+		t.Fatalf("sign-in status = %d", login.Code)
+	}
+	if got := login.Header().Get("X-Robots-Tag"); got != "noindex, nofollow, noarchive, nosnippet" {
+		t.Fatalf("sign-in robots header = %q", got)
+	}
+	loginHTML := strings.ToLower(login.Body.String())
+	if strings.Contains(loginHTML, "jellyfin") || strings.Contains(loginHTML, "proxy") {
+		t.Fatalf("sign-in page exposes product details: %s", login.Body.String())
+	}
+
+	robots := httptest.NewRecorder()
+	handler.ServeHTTP(robots, httptest.NewRequest(http.MethodGet, "/robots.txt", nil))
+	if robots.Code != http.StatusOK || robots.Body.String() != "User-agent: *\nDisallow: /\n" {
+		t.Fatalf("robots.txt = %d %q", robots.Code, robots.Body.String())
+	}
+	if got := robots.Header().Get("X-Robots-Tag"); got != "noindex, nofollow, noarchive, nosnippet" {
+		t.Fatalf("robots.txt X-Robots-Tag = %q", got)
+	}
+}
+
 func activateTestTOTP(t *testing.T, store *auth.TOTPStore, at time.Time) []byte {
 	t.Helper()
 	secret, err := store.BeginEnrollment()
@@ -605,7 +631,7 @@ func TestTOTPEnrollmentRequiresFreshPasswordAndVerifyCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clear(secret)
-	if !strings.Contains(totpProvisioningURI(secret), "issuer=Jellyfin+Proxy") {
+	if !strings.Contains(totpProvisioningURI(secret), "issuer=Admin") {
 		t.Fatal("provisioning URI has incorrect issuer metadata")
 	}
 	csrf = state["csrf"].(string)
@@ -718,7 +744,7 @@ func TestTOTPProvisioningURIHasExpectedAuthenticatorParameters(t *testing.T) {
 		t.Fatalf("invalid provisioning URI: %q err=%v", uri, err)
 	}
 	query := parsed.Query()
-	if query.Get("secret") != base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret) || query.Get("issuer") != "Jellyfin Proxy" || query.Get("algorithm") != "SHA1" || query.Get("digits") != "6" || query.Get("period") != "30" {
+	if query.Get("secret") != base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret) || query.Get("issuer") != "Admin" || query.Get("algorithm") != "SHA1" || query.Get("digits") != "6" || query.Get("period") != "30" {
 		t.Fatalf("unexpected provisioning parameters: %v", query)
 	}
 }
@@ -1077,7 +1103,7 @@ func TestWireGuardDownloadRequiresAuthenticationAndIsNonCacheable(t *testing.T) 
 	if response.Header().Get("Cache-Control") == "" || !strings.Contains(response.Header().Get("Cache-Control"), "no-store") {
 		t.Fatal("WireGuard download is cacheable")
 	}
-	if response.Header().Get("Content-Type") != "application/octet-stream" || response.Header().Get("Content-Disposition") != `attachment; filename="jellyfin-proxy.conf"` {
+	if response.Header().Get("Content-Type") != "application/octet-stream" || response.Header().Get("Content-Disposition") != `attachment; filename="windows-peer.conf"` {
 		t.Fatalf("unexpected download headers: %#v", response.Header())
 	}
 	if _, err := os.Stat(paths.ClientPath); !errors.Is(err, os.ErrNotExist) {
@@ -1379,7 +1405,7 @@ func TestAdminNavigationUsesSeparatePagesAndOverviewReportsHealth(t *testing.T) 
 	server.ConfigureComponentHealth(fixedCaddyHealth{}, heartbeat)
 	cookie := loginTestAdmin(t, server)
 
-	for _, route := range []string{"/dashboard", "/health", "/access-control", "/security", "/wireguard", "/statistics", "/settings", "/about"} {
+	for _, route := range []string{"/dashboard", "/health", "/access-control", "/security", "/security/protection", "/wireguard", "/statistics", "/settings", "/backups", "/about"} {
 		response := request(handler, http.MethodGet, route, nil, cookie)
 		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(response.Body.String(), `id="root"`) {
 			t.Errorf("admin route %s did not serve the SPA shell: status=%d content-type=%q", route, response.Code, response.Header().Get("Content-Type"))
