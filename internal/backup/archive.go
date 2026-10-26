@@ -135,6 +135,15 @@ func Create(options CreateOptions) (manifest Manifest, resultErr error) {
 				if walkErr != nil {
 					return walkErr
 				}
+				if base == "data" {
+					relative, relErr := filepath.Rel(root, path)
+					if relErr != nil {
+						return relErr
+					}
+					if filepath.ToSlash(relative) == "data/package-uploads" && entry.IsDir() {
+						return filepath.SkipDir
+					}
+				}
 				if entry.Type()&os.ModeSymlink != 0 {
 					relative, relErr := filepath.Rel(root, path)
 					if relErr == nil && pointerMetadata != nil {

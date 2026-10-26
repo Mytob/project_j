@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "./security-dashboard.css";
+import { banPage, remainingBanTime } from "./security-dashboard-utils";
 
 export type SecurityService = "ssh" | "admin";
 export type SecurityHistoryEvent = {
@@ -38,31 +39,32 @@ const ranges = [{ value: "1h", label: "Last hour", buckets: 12 }, { value: "24h"
 export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initialError, onSnapshot }: { csrf: string; snapshot?: SecuritySnapshot; error?: string; onSnapshot: (snapshot: SecuritySnapshot) => void }) {
   const [range, setRange] = useState<(typeof ranges)[number]["value"]>("24h");
   const [service, setService] = useState("all");
-  const [search, setSearch] = useState("");
-  const [eventType, setEventType] = useState("all");
   const [history, setHistory] = useState<SecurityHistoryEvent[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [banFilter, setBanFilter] = useState("all");
+  const [banPageNumber, setBanPageNumber] = useState(1);
   const [form, setForm] = useState(() => liveSnapshot ? toFields(liveSnapshot.config) : undefined);
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    const query = new URLSearchParams({ range, service, q: search.trim() });
+    const query = new URLSearchParams({ range, service });
     fetch(`/security/history?${query}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal })
       .then(async (response) => { if (!response.ok) throw new Error(await response.text()); return response.json() as Promise<SecurityHistoryEvent[]>; })
       .then((rows) => { if (active) { setHistory(rows); setHistoryError(""); } })
       .catch((reason: unknown) => { if (active && !(reason instanceof DOMException && reason.name === "AbortError")) setHistoryError("Security history could not be loaded."); });
     return () => { active = false; controller.abort(); };
-  }, [range, service, search, liveSnapshot?.recent_activity[0]?.id]);
+  }, [range, service, liveSnapshot?.recent_activity[0]?.id]);
 
   useEffect(() => { if (!form && liveSnapshot) setForm(toFields(liveSnapshot.config)); }, [form, liveSnapshot]);
 
-  const visibleHistory = useMemo(() => eventType === "all" ? history : history.filter((event) => event.type === eventType), [history, eventType]);
   const visibleBans = (liveSnapshot?.active_bans ?? []).filter((ban) => banFilter === "all" || ban.service === banFilter);
+  const activeBanPage = banPage(visibleBans, banPageNumber, 5);
+  useEffect(() => { setBanPageNumber(1); }, [banFilter]);
+  useEffect(() => { if (banPageNumber > activeBanPage.totalPages) setBanPageNumber(activeBanPage.totalPages); }, [banPageNumber, activeBanPage.totalPages]);
   const currentRange = ranges.find((item) => item.value === range) ?? ranges[1];
   const buckets = useMemo(() => makeBuckets(history, range, service, currentRange.buckets), [history, range, service, currentRange.buckets]);
 
@@ -95,18 +97,13 @@ export function SecurityProtection({ csrf, snapshot: liveSnapshot, error: initia
 
     <section className="panel"><div className="panel-title"><div><p className="eyebrow">AUTHENTICATION ACTIVITY</p><h2>Failures and bans over time</h2></div></div>
       <div className="security-filters"><label>Time range<select value={range} onChange={(event) => setRange(event.target.value as typeof range)}>{ranges.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label><label>Service<select value={service} onChange={(event) => setService(event.target.value)}><option value="all">All services</option><option value="ssh">SSH</option><option value="admin">Admin</option></select></label></div>
+      {historyError && <p className="security-warning" role="alert">{historyError}</p>}
       <SecurityChart buckets={buckets} range={range}/>
     </section>
 
     <section className="panel"><div className="panel-title"><div><p className="eyebrow">ACTIVE BANS</p><h2>Blocked addresses</h2></div><span className="muted">{visibleBans.length} active</span></div>
       <div className="security-filters"><label>Service<select value={banFilter} onChange={(event) => setBanFilter(event.target.value)}><option value="all">All services</option><option value="ssh">SSH</option><option value="admin">Admin</option></select></label></div>
-      {visibleBans.length ? <div className="security-ban-list">{visibleBans.map((ban) => <article className="security-ban" key={`${ban.service}:${ban.ip}`}><div className="security-ban-address"><code>{ban.ip}</code><span className={`service-tag ${ban.service}`}>{ban.service.toUpperCase()}</span></div><dl><div><dt>Started</dt><dd>{new Date(ban.started_at).toLocaleString()}</dd></div><div><dt>Remaining</dt><dd><BanRemaining expiresAt={ban.expires_at}/></dd></div><div><dt>Failed attempts</dt><dd>{ban.failed_attempts}</dd></div><div><dt>Escalation</dt><dd>Level {ban.escalation}</dd></div></dl><button type="button" className="button danger" disabled={busy === `unban:${ban.ip}`} onClick={() => void mutate("/security/unban", { service: ban.service, ip: ban.ip }, `unban:${ban.ip}`)}>Unban</button></article>)}</div> : <p className="empty-chart">No active bans for this filter.</p>}
-    </section>
-
-    <section className="panel"><div className="panel-title"><div><p className="eyebrow">SECURITY HISTORY</p><h2>Authentication and ban events</h2></div><span className="muted">Successes are not retained</span></div>
-      <div className="security-filters"><label>Search<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="IP address or event" maxLength={100}/></label><label>Event type<select value={eventType} onChange={(event) => setEventType(event.target.value)}><option value="all">All events</option><option value="failure">Failed login</option><option value="ban">Ban created</option><option value="expired">Ban expired</option><option value="manual_unban">Manual unban</option><option value="blocked_requests">Blocked requests</option></select></label></div>
-      {historyError && <p className="security-warning" role="alert">{historyError}</p>}
-      {visibleHistory.length ? <div className="security-history-list">{visibleHistory.map((event) => <article className="security-history-row" key={event.id}><time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time><code>{event.ip}</code><span className={`service-tag ${event.service}`}>{event.service.toUpperCase()}</span><b>{eventLabel(event.type)}</b><span>{event.details}{event.failed_attempts ? ` · ${event.failed_attempts} failures` : ""}{event.escalation ? ` · level ${event.escalation}` : ""}{event.blocked_requests ? ` · ${event.blocked_requests} requests` : ""}</span></article>)}</div> : <p className="empty-chart">No security events match the selected range and filters.</p>}
+      {visibleBans.length ? <><div className="security-ban-list">{activeBanPage.items.map((ban) => <article className="security-ban" key={`${ban.service}:${ban.ip}`}><div className="security-ban-address"><code>{ban.ip}</code><span className={`service-tag ${ban.service}`}>{ban.service.toUpperCase()}</span></div><p className="security-ban-meta"><BanRemaining expiresAt={ban.expires_at}/> remaining <span aria-hidden="true">·</span> {ban.failed_attempts} failures <span aria-hidden="true">·</span> Level {ban.escalation}</p><button type="button" className="button danger" aria-label={`Unban ${ban.ip}`} disabled={busy === `unban:${ban.ip}`} onClick={() => void mutate("/security/unban", { service: ban.service, ip: ban.ip }, `unban:${ban.ip}`)}>Unban</button></article>)}</div>{activeBanPage.totalPages > 1 && <nav className="security-pagination" aria-label="Active ban pages"><span>Showing {activeBanPage.start + 1}–{activeBanPage.end} of {visibleBans.length}</span><div><button className="button secondary" type="button" onClick={() => setBanPageNumber(activeBanPage.page - 1)} disabled={activeBanPage.page === 1}>Previous</button><span aria-live="polite">Page {activeBanPage.page} of {activeBanPage.totalPages}</span><button className="button secondary" type="button" onClick={() => setBanPageNumber(activeBanPage.page + 1)} disabled={activeBanPage.page === activeBanPage.totalPages}>Next</button></div></nav>}</> : <p className="empty-chart">No active bans for this filter.</p>}
     </section>
 
     <section className="panel security-policy"><details className="security-policy-details"><summary><span><span className="eyebrow">PROTECTION POLICY</span><strong>SSH and admin settings</strong></span></summary>
@@ -157,11 +154,9 @@ function SecurityChart({ buckets, range }: { buckets: Bucket[]; range: string })
   const coords = (key: keyof Bucket) => buckets.map((bucket, index) => `${(index * 600 / Math.max(1, buckets.length - 1)).toFixed(1)},${(140 - bucket[key] * 125 / maxValue).toFixed(1)}`).join(" ");
   return <div className="security-chart-wrap"><svg className="security-chart" viewBox="0 0 600 160" preserveAspectRatio="none" role="img" aria-label={`Failed authentication and bans over ${range}`}><path d="M0 15H600M0 55H600M0 95H600M0 140H600" className="security-chart-grid"/><polyline points={coords("failures")} className="security-failures-line"/><polyline points={coords("bans")} className="security-bans-line"/></svg><div className="security-chart-legend"><span><i className="failure-dot"/>Failed logins</span><span><i className="ban-dot"/>Bans</span></div><div className="security-chart-total"><span>{buckets.reduce((sum, bucket) => sum + bucket.failures, 0)} failures</span><span>{buckets.reduce((sum, bucket) => sum + bucket.bans, 0)} bans</span></div></div>;
 }
-function eventLabel(type: string) { return ({ failure: "Failed login", ban: "Ban created", expired: "Ban expired", manual_unban: "Manual unban", blocked_requests: "Blocked requests" } as Record<string, string>)[type] ?? type; }
 function labelStatus(state: string) { return state ? state[0].toUpperCase() + state.slice(1) : "Unknown"; }
-function remaining(expiresAt: string, now: number) { const seconds = Math.max(0, Math.floor((new Date(expiresAt).getTime() - now) / 1000)); if (!seconds) return "Expired"; const days = Math.floor(seconds / 86400); const hours = Math.floor(seconds % 86400 / 3600); const minutes = Math.floor(seconds % 3600 / 60); return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m ${seconds % 60}s`; }
 function BanRemaining({ expiresAt }: { expiresAt: string }) {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15_000); return () => window.clearInterval(timer); }, []);
-  return <time dateTime={expiresAt}>{remaining(expiresAt, now)}</time>;
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1_000); return () => window.clearInterval(timer); }, []);
+  return <time dateTime={expiresAt}>{remainingBanTime(expiresAt, now)}</time>;
 }

@@ -51,31 +51,35 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   const anonymousEvents = await page.request.get('/statistics/events');
   expect(anonymousEvents.status()).toBe(401);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Jellyfin Proxy' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/jellyfin|proxy/i);
   await expect(page.getByText('Use your administrator credentials to continue.')).toHaveCount(0);
   await page.getByLabel('Password').fill('integration-test-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.locator('.overview-status')).toHaveCount(1);
+  await expect(page.locator('.overview-components li')).toHaveCount(12);
   await expect(page.getByRole('button', { name: 'Health details' })).toBeVisible();
   await expect(page.locator('.stat-grid, .chart-grid')).toHaveCount(0);
   await expect(page.getByText('Signed in', { exact: true })).toHaveCount(0);
   await expect(page.getByText('STREAMING LIVE', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Live measurements update as they arrive')).toHaveCount(0);
   await expect(page.getByText('Version integration-test · Build browser-test')).toHaveCount(0);
-  await page.getByRole('link', { name: 'About' }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'System' }).click();
+  await page.getByRole('navigation', { name: 'System pages' }).getByRole('link', { name: 'About' }).click();
   await expect(page).toHaveURL(/\/about$/);
   await expect(page.getByText('integration-test · browser-test', { exact: true })).toBeVisible();
   await expect(page.getByText('integration-test · browser-test', { exact: true })).toHaveCount(1);
   await page.getByRole('link', { name: 'Overview' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.locator('.overview-check')).toHaveCount(2);
-  await expect(page.getByText('Admin backend', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.overview-components li')).toHaveCount(12);
+  await expect(page.getByText('Admin backend', { exact: true })).toHaveCount(1);
   await expect(page.locator('.overview-issues')).toHaveCount(0);
   await expect(page.locator('.overview-status')).toContainText('SYSTEM');
   await expect(page.locator('.overview-status')).toContainText('SECURITY PROTECTION');
-  await page.getByRole('link', { name: 'Access control' }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Network' }).click();
   await expect(page).toHaveURL(/\/access-control$/);
   await expect(page.locator('body')).toContainText('Allowed addresses');
   await expect(page.getByRole('heading', { name: 'Allowed addresses' })).toBeVisible();
@@ -91,23 +95,29 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(page.locator('.address-row').filter({ hasText: '203.0.113.44/32' })).toContainText('Travel laptop');
   await page.getByRole('button', { name: 'Remove 203.0.113.44/32' }).click();
   await expect(page.getByText('203.0.113.44/32')).toHaveCount(0);
-  await page.getByRole('link', { name: 'WireGuard' }).click();
+  await page.getByRole('navigation', { name: 'Network pages' }).getByRole('link', { name: 'Tunnel' }).click();
   await expect(page).toHaveURL(/\/wireguard$/);
   await expect(page.getByRole('heading', { name: 'WireGuard configuration' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
-  await page.getByRole('link', { name: 'Health' }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Monitor' }).click();
+  await page.getByRole('navigation', { name: 'Monitor pages' }).getByRole('link', { name: 'Health' }).click();
   await expect(page).toHaveURL(/\/health$/);
   await expect(page.getByRole('heading', { name: 'Health details' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Current status' })).toHaveCount(0);
-  await page.getByRole('link', { name: 'Security' }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Security' }).click();
   await expect(page).toHaveURL(/\/security$/);
   await expect(page.getByRole('heading', { name: 'Account security' })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Security pages' }).getByRole('link', { name: 'Protection' }).click();
+  await expect(page).toHaveURL(/\/security\/protection$/);
   await expect(page.getByRole('heading', { name: 'Protection status' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Authentication and ban events' })).toHaveCount(0);
   for (const item of await page.locator('.security-health-item').all()) await expect(item).toContainText('Healthy');
   const activeSecurityBan = page.locator('.security-ban').filter({ hasText: process.env.SECURITY_TEST_BAN_IP });
   await expect(activeSecurityBan).toBeVisible();
   await expect(activeSecurityBan).toContainText('ADMIN');
+  await expect(activeSecurityBan.locator('.security-ban-meta')).toContainText('remaining');
+  await expect(activeSecurityBan.locator('dl')).toHaveCount(0);
   await expect(page.getByLabel('Current six-digit authenticator code for password change')).toHaveCount(0);
   const securityActivity = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Failures and bans over time' }) });
   await securityActivity.getByLabel('Time range').selectOption('7d');
@@ -116,10 +126,7 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await securityActivity.getByLabel('Time range').selectOption('24h');
   await securityActivity.getByLabel('Service').selectOption('all');
   await page.setViewportSize({ width: 1440, height: 1000 });
-  // The masked event list grows as asynchronous security events arrive. Keep
-  // its box stable so full-page screenshots do not vary with the event count.
-  await addTestStylesheet(page, 'security-history', '.security-history-list { height: 220px; overflow: hidden; }');
-  const dynamicSecurityRegions = [page.locator('.security-overview-grid'), page.locator('.security-health-grid'), page.locator('.security-chart-wrap'), page.locator('.security-ban-list'), page.locator('.security-history-list')];
+  const dynamicSecurityRegions = [page.locator('.security-overview-grid'), page.locator('.security-health-grid'), page.locator('.security-chart-wrap'), page.locator('.security-ban-list')];
   await expect(page).toHaveScreenshot('security-desktop.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015, mask: dynamicSecurityRegions, maskColor: '#102238' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page).toHaveScreenshot('security-mobile.png', { fullPage: true, animations: 'disabled', maxDiffPixelRatio: 0.015, mask: dynamicSecurityRegions, maskColor: '#102238' });
@@ -132,15 +139,14 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await attackerPage.getByLabel('Password').fill('wrong-security-test-password');
   await attackerPage.getByRole('button', { name: 'Sign in' }).click();
   await expect(attackerPage.getByRole('alert')).toContainText('password was not accepted');
-  await expect(page.locator('.security-history-list')).toContainText(process.env.SECURITY_TEST_CLIENT_IP, { timeout: 15000 });
   await attacker.close();
 
   const visualPages = [
     ['/dashboard', 'overview', 'Overview'],
-    ['/statistics', 'statistics', 'Statistics'],
+    ['/statistics', 'statistics', 'Traffic'],
     ['/health', 'health', 'Health'],
-    ['/access-control', 'access-control', 'Access control'],
-    ['/wireguard', 'wireguard', 'WireGuard'],
+    ['/access-control', 'access-control', 'Access'],
+    ['/wireguard', 'wireguard', 'Tunnel'],
   ];
   const dynamicVisualRegions = [
     page.locator('.build-tag'),
@@ -296,9 +302,9 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await page.getByLabel('Password').fill('new-integration-admin-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  await page.getByRole('link', { name: 'Statistics' }).click();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Monitor' }).click();
   await expect(page).toHaveURL(/\/statistics$/);
-  await expect(page.getByRole('heading', { name: 'Statistics' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Traffic', exact: true })).toBeVisible();
   await expect(page.getByText('Live via SSE')).toHaveCount(0);
   await expect(page.getByText('Request rate', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Allowed requests', { exact: true })).toBeVisible();
@@ -348,7 +354,7 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   }), 'wss://access.domain.test/__ws');
   expect(websocketEcho).toBe('streaming-proxy-check');
   await page.goto('https://admin.domain.test/statistics');
-  await expect(page.getByRole('heading', { name: 'Statistics' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Traffic', exact: true })).toBeVisible();
 
   await page.evaluate((url) => new Promise((resolve) => {
     const controller = new AbortController();
@@ -387,9 +393,9 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(mobilePage).toHaveURL(/\/dashboard$/);
   const mobileMenu = mobilePage.getByRole('button', { name: 'Toggle navigation' });
   await mobileMenu.tap();
-  const healthLink = mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Health' });
-  await expect(healthLink).toBeVisible();
-  await healthLink.tap();
+  const mobileNavigation = mobilePage.getByRole('navigation', { name: 'Main navigation' });
+  await mobileNavigation.getByRole('link', { name: 'Monitor' }).tap();
+  await mobilePage.getByRole('navigation', { name: 'Monitor pages' }).getByRole('link', { name: 'Health' }).tap();
   await expect(mobilePage).toHaveURL(/\/health$/);
   expect(await mobilePage.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await mobilePage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
@@ -408,7 +414,8 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   await expect(mobilePage).toHaveURL(/\/dashboard$/);
 
   await mobileMenu.tap();
-  await mobilePage.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'WireGuard' }).tap();
+  await mobileNavigation.getByRole('link', { name: 'Network' }).tap();
+  await mobilePage.getByRole('navigation', { name: 'Network pages' }).getByRole('link', { name: 'Tunnel' }).tap();
   await mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' }).tap();
   await expect(mobilePage).toHaveURL(/\/wireguard$/);
   await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toHaveCount(0);
@@ -423,7 +430,7 @@ test('administrator can authenticate, manage TOTP, change password, and use the 
   const successfulDownloadRequest = mobilePage.waitForRequest((request) => request.url().endsWith('/wireguard/config'));
   const mobileDownload = mobilePage.waitForEvent('download');
   await mobilePage.getByRole('button', { name: 'Download configuration' }).tap();
-  expect((await mobileDownload).suggestedFilename()).toBe('jellyfin-proxy.conf');
+  expect((await mobileDownload).suggestedFilename()).toBe('windows-peer.conf');
   expect((await successfulDownloadRequest).method()).toBe('POST');
   await expect(mobilePage.getByRole('button', { name: 'Download configuration' })).toHaveCount(0);
   await expect(mobilePage.getByRole('button', { name: 'Regenerate and revoke current peer' })).toBeVisible();

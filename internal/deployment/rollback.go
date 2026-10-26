@@ -25,6 +25,7 @@ type RollbackOptions struct {
 	ConfigureHostServices bool
 	SystemdUnitDir        string
 	BackupDirectory       string
+	MaintenanceUpdated    func()
 	Progress              func(UpdateProgress)
 }
 
@@ -59,6 +60,7 @@ func RollbackPrevious(ctx context.Context, options RollbackOptions) (target rele
 		InstallRoot: options.InstallRoot, Runner: options.Runner, WaitInterval: options.WaitInterval,
 		WaitAttempts: options.WaitAttempts, ConfigureHostServices: options.ConfigureHostServices,
 		SystemdUnitDir: options.SystemdUnitDir, BackupDirectory: options.BackupDirectory,
+		MaintenanceUpdated: options.MaintenanceUpdated,
 	}); err != nil {
 		return target, fmt.Errorf("recover the pending update before rollback: %w", err)
 	}
@@ -162,7 +164,7 @@ func RollbackPrevious(ctx context.Context, options RollbackOptions) (target rele
 				}
 			}
 			if options.ConfigureHostServices {
-				if err := ConfigureHostMaintenance(context.Background(), options.InstallRoot, current.Version, options.SystemdUnitDir, options.Runner); err != nil {
+				if err := configureHostMaintenanceForOperation(context.Background(), options.InstallRoot, current.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 					recoveryErrors = append(recoveryErrors, fmt.Errorf("restore maintenance service: %w", err))
 				}
 				if err := ConfigureAutomaticBackups(context.Background(), options.InstallRoot, current.Version, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {
@@ -226,7 +228,7 @@ func RollbackPrevious(ctx context.Context, options RollbackOptions) (target rele
 		}
 	}
 	if options.ConfigureHostServices {
-		if err := ConfigureHostMaintenance(ctx, options.InstallRoot, target.Version, options.SystemdUnitDir, options.Runner); err != nil {
+		if err := configureHostMaintenanceForOperation(ctx, options.InstallRoot, target.Version, options.SystemdUnitDir, options.BackupDirectory, options.Runner, options.MaintenanceUpdated); err != nil {
 			return target, fmt.Errorf("configure maintenance service for previous release: %w", err)
 		}
 		if err := ConfigureAutomaticBackups(ctx, options.InstallRoot, target.Version, environment.BackupSchedule, environment.BackupRetentionDays, options.SystemdUnitDir, options.BackupDirectory, options.Runner); err != nil {

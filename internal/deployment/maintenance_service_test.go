@@ -36,6 +36,7 @@ func TestConfigureHostMaintenanceWritesRestrictedOwnedUnit(t *testing.T) {
 		"CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
 		"RuntimeDirectoryMode=0750",
+		"RuntimeDirectoryPreserve=yes",
 		"StateDirectory=jellyfin-proxy-maintenance",
 		"ReadWritePaths=" + root + " /usr/local/sbin /usr/local/lib/jellyfin-proxy " + unitDir + " /var/backups/jellyfin-proxy",
 		"ReadOnlyPaths=/var/run/docker.sock",
@@ -52,6 +53,33 @@ func TestConfigureHostMaintenanceWritesRestrictedOwnedUnit(t *testing.T) {
 	if !strings.Contains(commands, "systemctl enable --now "+maintenanceServiceName) ||
 		!strings.Contains(commands, "systemctl restart "+maintenanceServiceName) {
 		t.Fatalf("maintenance unit was not enabled and restarted to apply the new definition: %v", runner.commands)
+	}
+}
+
+func TestDashboardMaintenanceUpdateDefersRestartUntilJobCompletion(t *testing.T) {
+	root := t.TempDir()
+	program := filepath.Join(root, "releases", "1.6.0-dev", "bin", "maintenance-linux-amd64")
+	if err := os.MkdirAll(filepath.Dir(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, []byte("test executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	configured := false
+	if err := configureHostMaintenanceForOperation(context.Background(), root, "1.6.0-dev", t.TempDir(), t.TempDir(), runner, func() { configured = true }); err != nil {
+		t.Fatal(err)
+	}
+	if !configured {
+		t.Fatal("maintenance completion callback was not notified after unit configuration")
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "systemctl restart "+maintenanceServiceName) {
+			t.Fatalf("dashboard update restarted its own maintenance service before job completion: %v", runner.commands)
+		}
+	}
+	if !strings.Contains(strings.Join(runner.commands, "\n"), "systemctl daemon-reload") {
+		t.Fatalf("updated unit was not loaded by systemd: %v", runner.commands)
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/Mytob/project_j/internal/maintenance"
 	"github.com/Mytob/project_j/internal/monitoring"
 	"github.com/Mytob/project_j/internal/security"
+	"github.com/Mytob/project_j/internal/webcontent"
 	"github.com/Mytob/project_j/internal/whitelist"
 	"github.com/Mytob/project_j/internal/wireguard"
 	"github.com/skip2/go-qrcode"
@@ -100,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /robots.txt", s.robots)
 	mux.HandleFunc("GET /assets/admin.css", s.stylesheet)
 	mux.HandleFunc("GET /assets/statistics.js", s.statisticsScript)
 	mux.Handle("GET /app-assets/", http.StripPrefix("/app-assets/", http.FileServer(http.FS(frontend))))
@@ -114,12 +116,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /totp/disable", s.disableTOTP)
 	mux.HandleFunc("POST /password/change", s.changePassword)
 	mux.HandleFunc("GET /dashboard", s.dashboard)
+	mux.HandleFunc("GET /backups", s.dashboard)
 	mux.HandleFunc("GET /web-content", s.dashboard)
 	mux.HandleFunc("GET /about", s.dashboard)
 	mux.HandleFunc("GET /system", s.dashboard)
+	mux.HandleFunc("GET /settings", s.dashboard)
 	mux.HandleFunc("GET /health", s.healthPage)
 	mux.HandleFunc("GET /access-control", s.accessControlPage)
 	mux.HandleFunc("GET /security", s.securityPage)
+	mux.HandleFunc("GET /security/protection", s.securityPage)
 	mux.HandleFunc("GET /wireguard", s.wireGuardPage)
 	mux.HandleFunc("GET /statistics", s.statisticsPage)
 	mux.HandleFunc("GET /statistics/events", s.statisticsEvents)
@@ -136,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /system/uploads/{id}/{index}", s.putPackageUploadChunk)
 	mux.HandleFunc("POST /system/uploads/{id}/complete", s.completePackageUpload)
 	mux.HandleFunc("GET /system/jobs", s.systemJobs)
+	mux.HandleFunc("GET /system/jobs/{id}", s.systemJob)
 	mux.HandleFunc("POST /system/jobs", s.startSystemJob)
 	mux.HandleFunc("GET /system/releases", s.systemReleaseState)
 	mux.HandleFunc("GET /system/recovery", s.systemRecovery)
@@ -158,6 +164,9 @@ func (s *Server) ConfigureWebContent(root string) error {
 		return errors.New("web content root must be an absolute non-root path")
 	}
 	s.webContentRoot = filepath.Clean(root)
+	if err := webcontent.EnsureDefaultErrorPages(s.webContentRoot); err != nil {
+		return fmt.Errorf("migrate built-in public error pages: %w", err)
+	}
 	return nil
 }
 
@@ -230,6 +239,12 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, "ok\n")
+}
+
+func (s *Server) robots(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "User-agent: *\nDisallow: /\n")
 }
 
 // ConfigureWireGuardConfig verifies the protected retained Windows peer file
@@ -454,6 +469,7 @@ func (s *Server) confirmTOTPEnrollment(code string, at time.Time) error {
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -1734,10 +1750,10 @@ func (s *Server) cancelTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 
 func totpProvisioningURI(secret []byte) string {
 	encodedSecret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
-	label := "Jellyfin Proxy:Administrator"
+	label := "Admin:Administrator"
 	query := url.Values{}
 	query.Set("secret", encodedSecret)
-	query.Set("issuer", "Jellyfin Proxy")
+	query.Set("issuer", "Admin")
 	query.Set("algorithm", "SHA1")
 	query.Set("digits", "6")
 	query.Set("period", "30")
@@ -1776,7 +1792,7 @@ func (s *Server) downloadWireGuardConfig(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="jellyfin-proxy.conf"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="windows-peer.conf"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	written, writeErr := w.Write(data)

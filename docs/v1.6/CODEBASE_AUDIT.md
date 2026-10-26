@@ -3,7 +3,7 @@
 **Audit date:** 2026-10-22
 
 **Baseline commit:** `8562b23` (v1.6 branch start)
-**Current tested dev commit:** `78dfb7987946f011e88dc7cde4660c2d24b12142`
+**Current tested candidate commit:** `dd026e4a2faa84285745c7cb63a05bf66174d6f4`
 **Implementation PR:** #71 merged into dev at c8e279a.
 **Documentation PR:** #72 merged into dev at 432b0db.
 
@@ -207,7 +207,7 @@ absent.
 | P1 | Implemented; clean install, ready-phase reboot and resume passed on a clean Ubuntu snapshot clone | The full guided installer verified the package and utility checksums, installed approved Docker/Compose prerequisites, created an alternate password-auth administrator and required a separate login/sudo check before restricting root login. A reboot at the durable `ready` checkpoint preserved the installation; `proxyctl install --resume` completed after the clone's local Caddy CA was trusted. Five containers and `proxyctl doctor` passed; fresh administrator login and `sudo -v` passed after reboot. Effective root context reported `PermitRootLogin no`. This used `.localhost` test names and is not evidence of public ACME. |
 | P1 | Clean-host recovery passed on dev.12; interrupted restore recovered on disposable Ubuntu | `proxyctl recover <package> <backup>` validates a compatible `.bak`, restores static site, integrity-checked statistics and authenticated security events, and keeps freshly generated admin/TOTP/WireGuard/allowlist/host identity. Recovery from a dev.11 backup succeeded on a clean clone using dev.12. A separate restore of a verified 21-file dev.12 backup was process-killed at journal state `replacing`; the persisted journal was observed and `proxyctl repair` restored the prior stack. Five services and `proxyctl doctor` passed afterward. |
 | P1 | Implemented locally; browser and offline package gates pass | System dashboard supports backup creation/download/restore, resumable independently-checksummed package upload, compatibility review, update, rollback and durable job progress. Actual destructive dashboard restore/update/rollback on a fresh Ubuntu host has not been accepted end to end. |
-| P2 | Implemented locally; browser/integration coverage present | Web Content ZIP upload uses strict archive/path/size limits, staging and atomic publication with one-version rollback; supported error pages are served from the public site root and the admin origin remains separate. Verify custom error status behavior again in the final release gate. |
+| P2 | Implemented locally; focused tests and disposable-VM checks passed | Web Content ZIP upload uses strict archive/path/size limits, staging and atomic publication with one-version rollback; supported error pages are served from the public site root and the admin origin remains separate. Dev.19 Caddy returned the built-in 404 and 403 pages with their original HTTP statuses on the disposable VM. The 502/503 handlers were not induced at runtime; public TLS remains pending. |
 | P2 | Implemented locally; actual runtime inventory verified through VM observer | About page reports application/build, install date and restricted host/container component versions. The observer reports host inventory only through the authorized maintenance Unix socket. |
 | P2 | Implemented; focused tests and disposable-VM fault check passed | The maintenance service uses a fixed five-service allowlist, Docker-observed failure states, persisted retry/backoff limits and bounded recovery events. On the disposable Ubuntu clone, `docker stop jellyfin-proxy-admin-1` was followed by `restart_requested`/`restart_sent` in the recovery record; the admin container returned healthy and `proxyctl doctor` passed. The recorded attempt count included prior recovery history, so this was not a clean retry-limit test. |
 | P2 | Disposable Ubuntu 26.04.1 install, update, rollback, recovery and maintenance checks passed | Host journal access, Fail2ban jails, IPv4/IPv6 nftables, reboot, doctor, container health, local TLS, automatic backups, maintenance service, package cleanup, host update, and privilege boundaries passed. A full 16 KiB tmpfs produced the expected backup `no space left on device` failure without affecting the install; doctor still passed. Public DNS/ACME/provider networking and native Windows checks remain unverified. |
@@ -637,3 +637,49 @@ absent.
   WireGuard/playback and native Windows client/firewall checks remain
   unverified. No production VPS or stable release was used. See
   [`../TESTING.md`](../TESTING.md) for exact package and command evidence.
+
+### v1.6.0-dev.17 maintenance self-restart fix — 2026-10-22
+
+- A dashboard update previously restarted the restricted maintenance systemd
+  service from inside its own job process. The restart could terminate the
+  updater before the dashboard received durable terminal job state.
+- The dashboard path now updates the service definition without restarting the
+  active worker, persists the job's terminal state, then schedules a bounded,
+  job-ID-named systemd refresh. CLI maintenance retains immediate service
+  refresh behavior. Update, rollback, restore and interrupted-update recovery
+  pass the deferred-refresh signal through their deployment paths.
+- Focused Go tests and the clean dev.17 `build.ps1 release` gate passed. The
+  exact package updated a disposable Ubuntu 26.04.1 guest from dev.14 via CLI;
+  package checksum, pre-update backup, all five healthy containers, `proxyctl
+  doctor`, and the maintenance binary version passed. A delayed systemd-run
+  refresh changed the service invocation ID and the post-refresh doctor and
+  container checks passed.
+- The authenticated dashboard update/rollback flow has not yet been repeated
+  on the VM because the test browser session expired and needs a fresh admin
+  sign-in. Public provider/DNS/ACME and Windows client checks remain pending;
+  the production VPS was not touched. The change is draft PR #79 into `dev`.
+
+### v1.6.0-dev.19 release gate and content migration correction — 2026-10-22
+
+- The update test from dev.18 showed that the older `proxyctl` performs its
+  package migration before replacing itself, so error-page migration code
+  introduced in the new binary does not run during that update. Added an
+  idempotent migration at admin startup, while retaining the package/fresh
+  store initialization path. Tests cover migration of an existing content
+  revision and retention of the existing homepage/custom content.
+- Clean commit `dd026e4a2faa84285745c7cb63a05bf66174d6f4` passed
+  `pwsh -NoProfile -File .\build.ps1 release -Version 1.6.0-dev.19
+  -SupportedUpgradeSources 1.6.0-dev.18`, exit 0. Go, frontend, four-browser
+  admin, M1–M6 integration/security/streaming, and offline package install,
+  update, rollback, retention and password recovery checks passed. The report
+  records local gate passed and host-specific readiness blocked.
+- The exact package updated the disposable Ubuntu VM from dev.18 after the
+  transferred SHA-256 matched. The CLI created its mandatory pre-update
+  backup, loaded packaged images, and passed service/HTTPS readiness. Doctor
+  reported dev.19/build `dd026e4a2faa`; all five services were healthy. The
+  active persistent content revision contained the existing `index.html` and
+  all four default error pages (403, 404, 502, 503) after admin startup.
+- Dashboard update/rollback is still awaiting a fresh local administrator
+  sign-in. Public provider/DNS/ACME, internet WireGuard, and native Windows
+  checks remain unverified. No production VPS was changed and no stable
+  release is claimed. Detailed evidence is in [`../TESTING.md`](../TESTING.md).

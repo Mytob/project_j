@@ -80,7 +80,7 @@ func TestAdminUnbanCannotBeUndoneByStaleReconciliation(t *testing.T) {
 			run: func(_ context.Context, _ string, args ...string) (string, error) {
 				for i := 0; i+2 < len(args); i++ {
 					if args[i] == "get" && args[i+2] == "banned" {
-						return "1", nil
+						return "['203.0.113.44']", nil
 					}
 				}
 				return "ok", nil

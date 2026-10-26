@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,100 @@ func TestCleanupBackupsHonorsRetentionAndProductOwnedNames(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(directory, name)); err != nil {
 			t.Errorf("cleanup removed or lost unrelated/recent file %q: %v", name, err)
 		}
+	}
+}
+
+func TestCleanupBackupsKeepsNewestManagedLimit(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < MaxManagedBackups+2; i++ {
+		name := fmt.Sprintf("jellyfin-proxy-1.6.0-dev-build-%04d-%s.bak", i, now.Add(time.Duration(i)*time.Second).Format("20060102T150405.000000000Z"))
+		path := filepath.Join(directory, name)
+		if err := os.WriteFile(path, []byte("archive"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, now.Add(time.Duration(i)*time.Second), now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(directory, "operator-backup.bak"), []byte("operator archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := CleanupBackups(directory, 30, now.Add(time.Hour))
+	if err != nil || removed != 2 {
+		t.Fatalf("CleanupBackups() = %d, %v; want 2 count-pruned archives", removed, err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedCount := 0
+	for _, entry := range entries {
+		if generatedBackupName.MatchString(entry.Name()) {
+			managedCount++
+		}
+	}
+	if managedCount != MaxManagedBackups {
+		t.Fatalf("managed backups remaining = %d, want %d", managedCount, MaxManagedBackups)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "operator-backup.bak")); err != nil {
+		t.Fatalf("operator backup was removed: %v", err)
+	}
+}
+
+func TestCleanupBackupsCountsProtectedRecoveryBackupTowardLimit(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	paths := make([]string, MaxManagedBackups+1)
+	for i := range paths {
+		name := fmt.Sprintf("jellyfin-proxy-1.6.0-dev-build-%04d-%s.bak", i, now.Add(time.Duration(i)*time.Second).Format("20060102T150405.000000000Z"))
+		paths[i] = filepath.Join(directory, name)
+		if err := os.WriteFile(paths[i], []byte("archive"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(paths[i], now.Add(time.Duration(i)*time.Second), now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := newInstallID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUpdateJournal(root, updateJournal{
+		Format: 1, ID: id, PreviousVersion: "1.5.0-dev", TargetVersion: "1.6.0-dev",
+		Stage: ".update-" + id, State: "verifying", BackupPath: paths[0],
+	}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := cleanupBackups(directory, root, 30, now.Add(time.Hour))
+	if err != nil || removed != 1 {
+		t.Fatalf("cleanupBackups() = %d, %v; want one excess archive removed", removed, err)
+	}
+	if _, err := os.Stat(paths[0]); err != nil {
+		t.Fatalf("active recovery archive was removed: %v", err)
+	}
+	if _, err := os.Stat(paths[1]); !os.IsNotExist(err) {
+		t.Fatalf("oldest unprotected archive remains: %v", err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedCount := 0
+	for _, entry := range entries {
+		if generatedBackupName.MatchString(entry.Name()) {
+			managedCount++
+		}
+	}
+	if managedCount != MaxManagedBackups {
+		t.Fatalf("managed backups remaining = %d, want %d including recovery copy", managedCount, MaxManagedBackups)
 	}
 }
 
@@ -153,6 +248,62 @@ func TestActiveUpdateBackupIsProtectedFromRetention(t *testing.T) {
 	protected, err = updateBackupProtected(root, backupPath)
 	if err != nil || protected {
 		t.Fatalf("completed update backup protection = %v, %v", protected, err)
+	}
+}
+
+func TestDeleteStoredBackupRemovesOnlySelectedArchiveAndChecksum(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name := "operator-backup.bak"
+	archive := filepath.Join(directory, name)
+	checksum := archive + ".sha256"
+	for path, content := range map[string]string{archive: "archive", checksum: "digest", filepath.Join(directory, "keep.bak"): "keep"} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := DeleteStoredBackup(directory, t.TempDir(), name); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{archive, checksum} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("selected file %q remains: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(directory, "keep.bak")); err != nil {
+		t.Fatalf("unselected backup was removed: %v", err)
+	}
+	if err := DeleteStoredBackup(directory, t.TempDir(), "../keep.bak"); err == nil {
+		t.Fatal("path traversal backup name was accepted")
+	}
+}
+
+func TestDeleteStoredBackupProtectsActiveUpdateRecoveryArchive(t *testing.T) {
+	root := t.TempDir()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name := "operator-backup.bak"
+	path := filepath.Join(directory, name)
+	if err := os.WriteFile(path, []byte("archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := newInstallID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := updateJournal{Format: 1, ID: id, PreviousVersion: "1.5.0", TargetVersion: "1.6.0", Stage: ".update-" + id, State: "verifying", BackupPath: path}
+	if err := writeUpdateJournal(root, journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteStoredBackup(directory, root, name); err == nil {
+		t.Fatal("active recovery backup was deleted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("protected recovery backup disappeared: %v", err)
 	}
 }
 

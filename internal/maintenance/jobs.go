@@ -59,6 +59,14 @@ func (m *JobManager) StartBackup(run func() (string, error)) (Job, error) {
 // persists its bounded progress. The callback receives no HTTP or filesystem
 // input other than values already validated by the maintenance handler.
 func (m *JobManager) StartOperation(action string, total int, run func(func(int, string)) (string, error)) (Job, error) {
+	return m.StartOperationWithCompletion(action, total, run, nil)
+}
+
+// StartOperationWithCompletion runs a fixed operation and invokes its optional
+// completion hook only after the terminal job state has been durably written.
+// The hook is intended for narrowly scoped follow-up work that must not stop the
+// operation process before its result is available to clients.
+func (m *JobManager) StartOperationWithCompletion(action string, total int, run func(func(int, string)) (string, error), completion func(Job) error) (Job, error) {
 	if !validJobAction(action) || total <= 0 || total > 20 || run == nil {
 		return Job{}, errors.New("maintenance job request is invalid")
 	}
@@ -89,7 +97,7 @@ func (m *JobManager) StartOperation(action string, total int, run func(func(int,
 	m.jobs[job.ID] = job
 	m.trimLocked()
 	m.mu.Unlock()
-	go m.runOperation(job.ID, run)
+	go m.runOperation(job.ID, run, completion)
 	return job, nil
 }
 
@@ -136,7 +144,7 @@ func (m *JobManager) List() []Job {
 	return values
 }
 
-func (m *JobManager) runOperation(id string, run func(func(int, string)) (string, error)) {
+func (m *JobManager) runOperation(id string, run func(func(int, string)) (string, error), completion func(Job) error) {
 	m.change(id, func(job *Job) {
 		job.State = "running"
 		job.Message = "Starting " + job.Action
@@ -157,24 +165,42 @@ func (m *JobManager) runOperation(id string, run func(func(int, string)) (string
 			job.Error = cleanJobError(err)
 			job.CompletedAt = time.Now().UTC()
 		})
-		return
+	} else {
+		m.change(id, func(job *Job) {
+			job.State = "completed"
+			job.Step = job.Total
+			if job.Action == "backup" {
+				job.Message = "Backup created and verified"
+			} else {
+				job.Message = operationTitle(job.Action) + " completed"
+			}
+			job.Result = result
+			job.CompletedAt = time.Now().UTC()
+		})
 	}
-	m.change(id, func(job *Job) {
-		job.State = "completed"
-		job.Step = job.Total
-		if job.Action == "backup" {
-			job.Message = "Backup created and verified"
-		} else {
-			job.Message = operationTitle(job.Action) + " completed"
+	if completion != nil {
+		job, ok := m.Get(id)
+		if ok {
+			if completionErr := completion(job); completionErr != nil {
+				m.change(id, func(job *Job) {
+					job.State = "failed"
+					job.Message = operationTitle(job.Action) + " finished but a required service refresh failed"
+					job.Error = cleanJobError(completionErr)
+					if job.CompletedAt.IsZero() {
+						job.CompletedAt = time.Now().UTC()
+					}
+				})
+			}
 		}
-		job.Result = result
-		job.CompletedAt = time.Now().UTC()
-	})
+	}
 }
 
 func operationTitle(action string) string {
 	if action == "" {
 		return "Maintenance operation"
+	}
+	if action == "delete-backup" {
+		return "Backup deletion"
 	}
 	return strings.ToUpper(action[:1]) + action[1:]
 }
@@ -282,7 +308,7 @@ func validJobState(state string) bool {
 
 func validJobAction(action string) bool {
 	switch action {
-	case "backup", "cleanup", "update", "restore", "rollback":
+	case "backup", "cleanup", "update", "restore", "rollback", "delete-backup":
 		return true
 	default:
 		return false

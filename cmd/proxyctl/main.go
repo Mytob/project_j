@@ -60,8 +60,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return manualHostUpdate(ctx, stdin, stdout)
 	}
 	if args[0] == "sync-host-services" {
-		if len(args) != 1 || !runningAsRoot() {
+		if !runningAsRoot() || (len(args) != 1 && !(len(args) == 2 && args[1] == "--defer-maintenance-restart")) {
 			return errors.New("host service reconciliation must be run as root")
+		}
+		if len(args) == 2 {
+			return deployment.RefreshHostServicesDeferred(ctx, deployment.DefaultInstallRoot, "", "", deployment.ExecRunner{})
 		}
 		return deployment.RefreshHostServices(ctx, deployment.DefaultInstallRoot, "", "", deployment.ExecRunner{})
 	}
@@ -169,7 +172,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "Verified backup created: %s\nVersion: %s · Build: %s\nSHA-256: %s\nExpired backups removed: %d\n", path, manifest.Version, manifest.BuildID, checksum, removed)
+		fmt.Fprintf(stdout, "Verified backup created: %s\nVersion: %s · Build: %s\nSHA-256: %s\nBackups removed by retention: %d\n", path, manifest.Version, manifest.BuildID, checksum, removed)
 		return nil
 	}
 	if args[0] == "verify-backup" {

@@ -517,7 +517,7 @@ try {
     $wireguardCsrf = (Get-AdminInitial -CookieJar $adminJar).csrf
     $wireguardDownload = Invoke-AdminRequest -Path '/wireguard/config' -Method 'POST' -CookieJar $adminJar -CSRF $wireguardCsrf
     Assert-Equal '200' ([string][int]$wireguardDownload.StatusCode) 'Authenticated administrator could not download the Windows WireGuard config.'
-    if ($wireguardDownload.Headers -notmatch '(?i)Content-Disposition: attachment; filename="jellyfin-proxy.conf"') { throw 'WireGuard config response lacks an attachment filename.' }
+    if ($wireguardDownload.Headers -notmatch '(?i)Content-Disposition: attachment; filename="windows-peer.conf"') { throw 'WireGuard config response lacks an attachment filename.' }
     if ($wireguardDownload.Headers -notmatch '(?i)Content-Type: application/octet-stream') { throw 'WireGuard config response has an unexpected content type.' }
     if ($wireguardDownload.Headers -notmatch '(?i)Cache-Control: no-store') { throw 'WireGuard config download is cacheable.' }
     foreach ($expected in @('[Interface]', 'Address = 10.66.66.2/32', 'Endpoint = wireguard:51820', 'AllowedIPs = 10.66.66.1/32', 'PersistentKeepalive = 25')) {

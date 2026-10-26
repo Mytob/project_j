@@ -98,6 +98,59 @@ func TestCreateValidateAndExtractConsistentBackup(t *testing.T) {
 	}
 }
 
+func TestBackupExcludesTemporaryReleasePackageUploads(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"config", "data/package-uploads", "site"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, contents := range map[string]string{
+		"config/admin.json":    "credential hash",
+		"config/totp.key":     "totp key",
+		"data/whitelist.json": "[]",
+		"data/totp-state.json": `{"version":1,"status":"unconfigured"}`,
+		"data/keep.json":      "persistent data",
+		"site/index.html":     "Jellyfin Proxy",
+		"compose.yaml":        "services: {}\n",
+		".env":                "DOMAIN=example.test\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "data", "package-uploads", "candidate.pkg"), bytes.Repeat([]byte("package"), 1024), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "data", "package-uploads", "upload.json"), []byte(`{"upload":"temporary"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(t.TempDir(), "without-uploads.bak")
+	manifest, err := Create(CreateOptions{InstallRoot: root, OutputPath: archive, Version: "1.6.0", BuildID: "testbuild", DatabaseSchema: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range manifest.Files {
+		if strings.HasPrefix(item.Path, "data/package-uploads/") {
+			t.Fatalf("temporary package upload included in backup manifest: %s", item.Path)
+		}
+	}
+	if _, err := Validate(archive); err != nil {
+		t.Fatal(err)
+	}
+	restored := filepath.Join(t.TempDir(), "restored")
+	if _, err := Extract(archive, restored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(restored, "data", "package-uploads")); !os.IsNotExist(err) {
+		t.Fatalf("temporary package upload directory was restored: %v", err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(restored, "data", "keep.json")); err != nil || string(contents) != "persistent data" {
+		t.Fatalf("persistent data was not retained: %q, %v", contents, err)
+	}
+}
+
 func TestBackupReconstructsValidatedWebContentPointers(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{"config", "data", "site", "data/site-content"} {

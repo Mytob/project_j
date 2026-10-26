@@ -56,7 +56,7 @@ func main() {
 		path, err := createMaintenanceBackup()
 		return filepath.Base(path), err
 	})
-	server.ConfigureOperations(maintenance.Operations{ValidateUpdate: validateUpdate, ReleaseState: releaseState, Run: runOperation})
+	server.ConfigureOperations(maintenance.Operations{ValidateUpdate: validateUpdate, ReleaseState: releaseState, Run: runOperation, RestartMaintenance: scheduleMaintenanceRestart})
 	if err := server.ConfigureRecovery(maintenance.DefaultRecoveryStatePath); err != nil {
 		logger.Error("configure bounded application service recovery", "error", err)
 	} else {
@@ -150,7 +150,7 @@ func runOperation(ctx context.Context, operation maintenance.OperationRequest, r
 		if err != nil {
 			return "", err
 		}
-		manifest, err := deployment.Update(ctx, deployment.UpdateOptions{PackagePath: path, PackageSHA256: operation.SHA256, InstallRoot: deployment.DefaultInstallRoot, Host: host, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, Progress: toProgress})
+		manifest, err := deployment.Update(ctx, deployment.UpdateOptions{PackagePath: path, PackageSHA256: operation.SHA256, InstallRoot: deployment.DefaultInstallRoot, Host: host, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, MaintenanceUpdated: operation.MaintenanceUpdated, Progress: toProgress})
 		if err != nil {
 			return "", err
 		}
@@ -160,13 +160,23 @@ func runOperation(ctx context.Context, operation maintenance.OperationRequest, r
 		if err != nil {
 			return "", err
 		}
-		manifest, err := deployment.Restore(ctx, deployment.RestoreOptions{InstallRoot: deployment.DefaultInstallRoot, BackupPath: path, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, Progress: toProgress})
+		manifest, err := deployment.Restore(ctx, deployment.RestoreOptions{InstallRoot: deployment.DefaultInstallRoot, BackupPath: path, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, MaintenanceUpdated: operation.MaintenanceUpdated, Progress: toProgress})
 		if err != nil {
 			return "", err
 		}
 		return manifest.Version + " · " + manifest.BuildID, nil
+	case "delete-backup":
+		path, err := safeBackupDeletePath(operation.BackupName)
+		if err != nil {
+			return "", err
+		}
+		if err := deployment.DeleteStoredBackup(deployment.DefaultBackupRoot, deployment.DefaultInstallRoot, filepath.Base(path)); err != nil {
+			return "", err
+		}
+		report(maintenance.OperationProgress{Step: 1, Total: 1, Message: "Backup deleted"})
+		return filepath.Base(path), nil
 	case "rollback":
-		manifest, err := deployment.RollbackPrevious(ctx, deployment.RollbackOptions{InstallRoot: deployment.DefaultInstallRoot, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, Progress: toProgress})
+		manifest, err := deployment.RollbackPrevious(ctx, deployment.RollbackOptions{InstallRoot: deployment.DefaultInstallRoot, Runner: deployment.ExecRunner{}, ConfigureHostServices: true, MaintenanceUpdated: operation.MaintenanceUpdated, Progress: toProgress})
 		if err != nil {
 			return "", err
 		}
@@ -174,6 +184,17 @@ func runOperation(ctx context.Context, operation maintenance.OperationRequest, r
 	default:
 		return "", errors.New("unsupported maintenance operation")
 	}
+}
+
+func scheduleMaintenanceRestart(ctx context.Context, jobID string) error {
+	if !uploadID.MatchString(jobID) {
+		return errors.New("maintenance job identifier is invalid")
+	}
+	unit := "jellyfin-proxy-maintenance-refresh-" + jobID
+	if _, err := (deployment.ExecRunner{}).Run(ctx, "/usr/bin/systemd-run", "--quiet", "--collect", "--unit="+unit, "--on-active=5s", "/usr/bin/systemctl", "restart", "jellyfin-proxy-maintenance.service"); err != nil {
+		return fmt.Errorf("schedule the maintenance service refresh: %w", err)
+	}
+	return nil
 }
 
 func cleanupUnusedApplicationImages(ctx context.Context) (containerhealth.ImageCleanupResult, error) {
@@ -254,6 +275,20 @@ func safeBackupPath(name string) (string, error) {
 	}
 	if _, err := deployment.ValidateBackup(path); err != nil {
 		return "", fmt.Errorf("stored backup failed validation: %w", err)
+	}
+	return path, nil
+}
+
+func safeBackupDeletePath(name string) (string, error) {
+	if !safeBackupName.MatchString(name) || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
+		return "", errors.New("backup name is invalid")
+	}
+	if err := requireOwnedDirectory(deployment.DefaultBackupRoot, 0, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(deployment.DefaultBackupRoot, name)
+	if err := requireOwnedRegular(path, 0, 0o600, 2<<30); err != nil {
+		return "", err
 	}
 	return path, nil
 }

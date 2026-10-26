@@ -23,6 +23,9 @@ func TestPublishZipAddsDefaultErrorsAndRollbackRestoresPriorRevision(t *testing.
 	if err != nil || status.Current != "default" || status.Previous != "" {
 		t.Fatalf("initial content status = %+v, %v", status, err)
 	}
+	for name, content := range defaultErrors {
+		assertContent(t, root, status.Current, "errors/"+name, content)
+	}
 	archive := makeZip(t, map[string][]byte{"index.html": []byte("custom home"), "assets/site.css": []byte("body{color:#fff}"), "errors/403.html": []byte("custom denied")})
 	status, err = PublishZip(root, bytes.NewReader(archive), int64(len(archive)))
 	if err != nil {
@@ -42,6 +45,50 @@ func TestPublishZipAddsDefaultErrorsAndRollbackRestoresPriorRevision(t *testing.
 		t.Fatalf("rollback revisions = %+v", status)
 	}
 	assertContent(t, root, "default", "index.html", "default home")
+}
+
+func TestInitializeAddsMissingDefaultErrorsToExistingSite(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "public")
+	defaultDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(defaultDir, "index.html"), []byte("existing homepage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Initialize(root, defaultDir); err != nil {
+		t.Fatal(err)
+	}
+	before, err := GetStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentRoot := filepath.Join(root, "revisions", before.Current)
+	if err := os.WriteFile(filepath.Join(currentRoot, "errors", "403.html"), []byte("administrator custom denial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(currentRoot, "errors", "503.html")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Initialize(root, defaultDir); err != nil {
+		t.Fatal(err)
+	}
+	after, err := GetStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Current == before.Current || after.Previous != before.Current {
+		t.Fatalf("legacy error-page migration revisions = before %+v, after %+v", before, after)
+	}
+	assertContent(t, root, after.Current, "index.html", "existing homepage")
+	assertContent(t, root, after.Current, "errors/403.html", "administrator custom denial")
+	assertContent(t, root, after.Current, "errors/503.html", defaultErrors["503.html"])
+
+	if err := Initialize(root, defaultDir); err != nil {
+		t.Fatal(err)
+	}
+	stable, err := GetStatus(root)
+	if err != nil || stable != after {
+		t.Fatalf("complete error pages were republished: %+v, %v; want %+v", stable, err, after)
+	}
 }
 
 func TestPublishZipRejectsUnsafeAndNonStaticArchivesWithoutChangingCurrent(t *testing.T) {
